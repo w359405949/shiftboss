@@ -16,7 +16,7 @@
    **并行的单位是工作副本，不是分支**：一个工作树同时只能 checkout 一条分支，
    两个执行方在同一个目录里，谁切分支都会带走或撞掉对方的未提交改动。
 3. **装门铃 hook**（`post-receive`）。hook 不进 git，所以装它必须是代码。
-   同时把包内通用文档装进项目的 `docs_dir`（见 `shiftboss.docs_install`）。
+   同时把包内通用文档装进项目的 `shiftboss/`（见 `shiftboss.docs_install`）。
 4. **把本机配置模板拷进每个副本**（若 `shiftboss.toml` 声明了本机配置文件且项目有其 `.example`）。
    它被 gitignore，所以每个副本各要一份，克隆不会带过去。
 5. **装提交守卫 hook**（`pre-commit`）。`shiftboss.merge` 还在跑闸时，

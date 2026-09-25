@@ -38,14 +38,14 @@
 派生物因此可能比源码略旧一轮，**这是这套设计接受的代价**。
 
 **报红要有人接**：每条新红进派活方待派队列并生成修复任务书草稿，不是无人负责的日志。
-派活方在 `docs/plans` 开任务书、正常派出，再用 `claim` 关联；
+派活方在 `shiftboss/plans` 开任务书、正常派出，再用 `claim` 关联；
 没有 main 上的任务书、没有有效会话号、或派活记录已关闭的，认领会拒绝。
 **红不自动阻断合并**，未认领的红持续显示负责方与待派状态。
 
 可复现判据：`python -B -m unittest test_verify`。
 """
 from __future__ import annotations
-from shiftboss.paths import project_root
+from shiftboss.paths import PLANS_DIR, PROJECT_DIR, project_root
 import argparse
 import hashlib
 import json
@@ -274,7 +274,7 @@ def taskbooks_touching(remote: Path, paths: list[str]) -> list[str]:
     **它给候选，派活方定夺**——任务书里那几行范围是自由文本，匹配到不等于归属。
     """
     # -r 才能看进目录布局的 <name>/contract.md；单文件布局照旧命中 <name>.md。
-    listing=git(remote,'ls-tree','-r','--name-only','refs/heads/main','docs/plans/',check=False)
+    listing=git(remote,'ls-tree','-r','--name-only','refs/heads/main',PLANS_DIR+'/',check=False)
     hits=[]
     for name in listing.stdout.split():
         if not name.endswith('.md'): continue
@@ -282,7 +282,7 @@ def taskbooks_touching(remote: Path, paths: list[str]) -> list[str]:
         if text.returncode: continue
         if not any(path in text.stdout for path in paths): continue
         rel=Path(name)
-        # 目录布局：docs/plans/<name>/contract.md → 线名是那个目录名。
+        # 目录布局：shiftboss/plans/<name>/contract.md → 线名是那个目录名。
         stem=rel.parent.name if rel.parent.name not in ('plans','archive') else rel.stem
         if stem not in hits: hits.append(stem)
     return hits
@@ -327,7 +327,7 @@ def conflict_leftovers(workspace: Path) -> list[str]:
     listing = git(workspace, 'ls-files', '-z', check=False)
     from shiftboss.paths import package_dir_in
     package = package_dir_in(ROOT)
-    skip = ('docs/plans/', config.docs_dir().rstrip('/') + '/') + ((package + '/',) if package else ())
+    skip = (PROJECT_DIR + '/',) + ((package + '/',) if package else ())
     hits = []
     for name in listing.stdout.split('\0'):
         if not name or name.startswith(skip):

@@ -49,11 +49,6 @@ def assertion_dirs(root: Path | None = None) -> list[str]:
     return list(_get("merge", "assertion_dirs", [], root))
 
 
-def docs_dir(root: Path | None = None) -> str:
-    """包内通用文档装进项目的哪个目录（相对项目根）。"""
-    return _get("project", "docs_dir", "docs/shiftboss", root)
-
-
 def default_worker(root: Path | None = None) -> str:
     """任务书没写执行方时派给谁。"""
     return _get("workers", "default", "codex", root)

@@ -33,15 +33,17 @@ shiftboss/                   # 包仓库（本仓库），以可编辑模式安�
     docs/                    # 通用流程规则与任务书骨架（源）
     docs_install.py          # 把 docs/ 装进项目
   tests/
-<项目>/docs/shiftboss/        # 由 `shiftboss init` 装入的 docs/ 逐字节副本，只读
+<项目>/shiftboss/             # 由 `shiftboss init` 装入的 docs/ 逐字节副本，只读
+<项目>/shiftboss/plans/       # 任务书；归档在 plans/archive/
 <项目>/shiftboss.toml         # 项目配置
 <项目>.shiftboss/             # 家目录：hub.git、control/、执行方副本、verify/
 ```
 
 1. 包内不出现任何项目专有路径、模块名或领域概念；项目的东西只经 `shiftboss.toml` 进来，项目专有约定写在项目文档里。
-2. 命令行只有一个入口 `shiftboss`，子命令：`inbox`、`taskbook`、`dispatch`、`merge`、`bell`、`recover`、`regen`、`verify`、`bootstrap`（`init` 同义）。
-3. 执行方只读得到自己副本里的东西，所以通用规则要装进项目仓库；项目里的那份与包内源不一致时，`bootstrap --check` 与合并快速检查都会报出。
-4. shiftboss 不设常驻验证：常驻验证验的是项目；shiftboss 改动不频繁，改后由派活方做语法检查与点名到单条测试方法的反证。
+2. 包在项目里只占顶层 `shiftboss/` 与 `shiftboss.toml`，不假定项目有其他目录（如 `docs/`）。
+3. 命令行只有一个入口 `shiftboss`，子命令：`inbox`、`taskbook`、`dispatch`、`merge`、`bell`、`recover`、`regen`、`verify`、`bootstrap`（`init` 同义）。
+4. 执行方只读得到自己副本里的东西，所以通用规则要装进项目仓库；项目里的那份与包内源不一致时，`bootstrap --check` 与合并快速检查都会报出。
+5. shiftboss 不设常驻验证：常驻验证验的是项目；shiftboss 改动不频繁，改后由派活方做语法检查与点名到单条测试方法的反证。
 
 ## 3. 可见性分区
 
@@ -114,6 +116,5 @@ assertion_dirs     = ["engine/tests"]   # 合并时列出断言增删的测试�
 
 ## 8. 暂不做
 
-1. 本项目 `docs/plans/` 的目录搬动（见 `docs/lessons.md`「派活方与执行方的文件隔离靠打补丁」）。
-2. 发布到 PyPI；第一版只在本机以可编辑模式安装。
-3. 项目的对外发布：使用 shiftboss 的项目仓库在 git 历史里留下高频提交与协作细节（轮次交代、交回、派生物提交），不直接公开；发布时另开发布副本，在那里整理历史详略后推送到公开远端。工作仓库的 `origin` 始终是本地 hub，与公开远端互不相干。
+1. 发布到 PyPI；第一版只在本机以可编辑模式安装。
+2. 项目的对外发布：使用 shiftboss 的项目仓库在 git 历史里留下高频提交与协作细节（轮次交代、交回、派生物提交），不直接公开；发布时另开发布副本，在那里整理历史详略后推送到公开远端。工作仓库的 `origin` 始终是本地 hub，与公开远端互不相干。

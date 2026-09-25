@@ -51,7 +51,7 @@ import time
 from pathlib import Path
 
 from shiftboss import native
-from shiftboss.paths import same_dir
+from shiftboss.paths import PLANS_DIR, same_dir
 from shiftboss.workers import WORKERS, default as default_worker
 
 EXECUTORS = tuple(WORKERS)
@@ -798,9 +798,9 @@ def main(argv: list[str] | None = None) -> int:
     # 文件，可台账里那条仍然叫 `<名字>`——不归一化的话，`--close` 会杀掉 TUI 却把
     # 标记写到一个不存在的键上，那条就永远占着额度（2026-09-04 我自己踩了两次）。
     args.taskbook = Path(args.taskbook).name
-    plans = REPO / "docs" / "plans"
+    plans = REPO / PLANS_DIR
     # **归档目录也要找。** 一份活做完的顺序是「核对 → 合并 → 移进 archive → --close」，
-    # 而移进 archive 之后 `docs/plans/<名字>` 就不在原处了：`--close` 直接报「没有这份
+    # 而移进 archive 之后 `shiftboss/plans/<名字>` 就不在原处了：`--close` 直接报「没有这份
     # 任务书」退 2，台账里那条永远占着额度，只剩手改台账一条路。
     # 2026-09-05 归档 autosave-scene-and-shop 时撞上。**先归档再收摊是正常顺序，
     # 不该要求人反过来做。**

@@ -29,7 +29,7 @@ def taskbook_at(path):
 class TaskbookLayoutOwnership(unittest.TestCase):
     """任务书是单文件还是目录，只许 `shiftboss.taskbook` 一个模块知道。
 
-    **这条不是洁癖。** `inbox status` 曾经按 `docs/plans/*.md` 自己列目录，
+    **这条不是洁癖。** `inbox status` 曾经按 `shiftboss/plans/*.md` 自己列目录，
     于是目录布局的线一条都不显示：表是空的、末尾还报「共 0 份在办任务书」，
     而那张表是「现在什么在跑」的唯一入口。
     **散在外面的布局知识不会报错，它只是安静地少给你几行**——
@@ -48,7 +48,7 @@ class TaskbookLayoutOwnership(unittest.TestCase):
                 # 写死的固定路径（测试夹具里那种）不算：它不随布局变。
                 if '.glob(' in line or '.iterdir(' in line or ('.md' in line and '{' in line):
                     offenders.append(f'{module.name}:{number}: {line.strip()}')
-        self.assertEqual(offenders, [], '自己列 docs/plans 的地方（改走 shiftboss.taskbook）：'
+        self.assertEqual(offenders, [], '自己列 shiftboss/plans 的地方（改走 shiftboss.taskbook）：'
                                         + chr(10).join(offenders))
 
 
@@ -209,7 +209,7 @@ class FastMergeAcceptance(unittest.TestCase):
         remote = Path(self.temp.name) / 'origin.git'
         subprocess.run(['git', 'init', '--bare', '-q', str(remote)], check=True)
         self.git('remote', 'add', 'origin', str(remote))
-        plans = self.repo / 'docs/plans'; plans.mkdir(parents=True)
+        plans = self.repo / 'shiftboss/plans'; plans.mkdir(parents=True)
         (plans/'probe.md').write_text(
             f'| 状态 | `待派` |\n| 交付模式 | `{mode}` |\n| 分支 | `codex/probe` |\n'
             f'| 你的工作副本 | `{self.repo}` |\n', encoding='utf-8')
@@ -269,7 +269,7 @@ class FastMergeAcceptance(unittest.TestCase):
         remote = Path(self.temp.name)/'origin.git'
         subprocess.run(['git', 'init', '--bare', '-q', str(remote)], check=True)
         self.git('remote', 'add', 'origin', str(remote))
-        plans = self.repo/'docs/plans'; plans.mkdir(parents=True)
+        plans = self.repo/'shiftboss/plans'; plans.mkdir(parents=True)
         (plans/'probe.md').write_text(
             '| 状态 | `待派` |\n| 分支 | `codex/probe` |\n', encoding='utf-8')
         self.commit('task without integration branch')
@@ -293,7 +293,7 @@ class FastMergeAcceptance(unittest.TestCase):
         remote = Path(self.temp.name)/'origin.git'
         subprocess.run(['git', 'init', '--bare', '-q', str(remote)], check=True)
         self.git('remote', 'add', 'origin', str(remote))
-        plans = self.repo/'docs/plans'; plans.mkdir(parents=True)
+        plans = self.repo/'shiftboss/plans'; plans.mkdir(parents=True)
 
         def task(name, status):
             (plans/f'{name}.md').write_text(
@@ -430,7 +430,7 @@ class ForeignSessionAcceptance(unittest.TestCase):
             self.assertIsNotNone(dispatch.foreign_session_reason(str(self.copy), entry))
 
     def test_recover_and_dispatch_refuse_foreign_then_close(self):
-        plans = self.root/'docs/plans'; plans.mkdir(parents=True)
+        plans = self.root/'shiftboss/plans'; plans.mkdir(parents=True)
         (plans/'probe.md').write_text(
             f'| 状态 | `待派` |\n| 你的工作副本 | `{self.copy}` |\n'
             '| 分支 | `codex/probe` |\n| 完成标准 | `原型` |\n', encoding='utf-8')

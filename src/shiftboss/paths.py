@@ -5,6 +5,10 @@ import subprocess
 from functools import lru_cache
 from pathlib import Path
 
+PROJECT_DIR = "shiftboss"
+"""shiftboss 在项目里只占这一个顶层目录：装入的工作流文档与任务书都在这里，不假定项目有 `docs/`。"""
+PLANS_DIR = f"{PROJECT_DIR}/plans"
+
 
 @lru_cache(maxsize=1)
 def project_root() -> Path:

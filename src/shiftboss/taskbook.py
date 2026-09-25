@@ -10,7 +10,7 @@ Markdown 命名空间里，于是机器要从排版里**猜**边界——而且�
 
 **新布局按访问权分，一块一个文件**（用户 2026-09-12 定的方向）：
 
-    docs/plans/<name>/
+    shiftboss/plans/<name>/
       meta.json     机器事实（副本、分支、状态、交付模式、来源、轮次号）
                     **只经入口改**，两边都不手写
       contract.md   甲方读写 / 乙方只读
@@ -23,12 +23,12 @@ Markdown 命名空间里，于是机器要从排版里**猜**边界——而且�
 **「双方永远只读」那一层不进任务书**——它每份都一样，指向 `shiftboss/README.md`
 就够；每份抄一遍只会让它们互相漂移。
 
-**存量布局（单文件 `docs/plans/<name>.md`）继续支持**，两种并存：
+**存量布局（单文件 `shiftboss/plans/<name>.md`）继续支持**，两种并存：
 在办的线各自在「空闲的那一刻」迁，262 份归档不迁——它们只会被偶尔读一次表头。
 """
 
 from __future__ import annotations
-from shiftboss.paths import project_root
+from shiftboss.paths import PLANS_DIR, project_root
 
 import json
 import re
@@ -98,7 +98,7 @@ class Taskbook:
         **归档过的也要找得到**：`--close` 恰恰是最该收摊的时候，
         而那时文件已经挪进 `archive/`。
         """
-        plans = repo / "docs/plans"
+        plans = repo / PLANS_DIR
         for base, archived in ((plans, False), (plans / "archive", True)):
             directory = base / name
             if (directory / META).exists():
@@ -111,7 +111,7 @@ class Taskbook:
     @classmethod
     def iter_active(cls, repo: Path):
         """在办的那些（不含 `archive/`）。"""
-        plans = repo / "docs/plans"
+        plans = repo / PLANS_DIR
         if not plans.exists():
             return
         for entry in sorted(plans.iterdir()):
@@ -258,8 +258,8 @@ def new(repo: Path, name: str, *, copy: str, kind: str, branch: str = "") -> str
     if kind not in KINDS:
         raise ValueError(f"子类型只能是 {' / '.join(KINDS)}；选哪种见 shiftboss/TEMPLATE.md 开头那张表")
     template = TEMPLATES / kind
-    directory = repo / "docs/plans" / name
-    if directory.exists() or (repo / "docs/plans" / f"{name}.md").exists():
+    directory = repo / PLANS_DIR / name
+    if directory.exists() or (repo / PLANS_DIR / f"{name}.md").exists():
         raise ValueError(f"{name} 已经存在")
     meta = {
         DISPATCH_STATUS: "编写中",
@@ -276,7 +276,7 @@ def new(repo: Path, name: str, *, copy: str, kind: str, branch: str = "") -> str
     (directory / CONTRACT).write_text(contract, encoding="utf-8")
     (directory / ROUNDS).write_text(SCAFFOLD_ROUNDS, encoding="utf-8")
     (directory / DELIVERY).write_text(SCAFFOLD_DELIVERY, encoding="utf-8")
-    return (f"已按「{kind}」建 docs/plans/{name}/：{META} / {CONTRACT} / {ROUNDS} / {DELIVERY}\n"
+    return (f"已按「{kind}」建 {PLANS_DIR}/{name}/：{META} / {CONTRACT} / {ROUNDS} / {DELIVERY}\n"
             f"状态是「编写中」——写完合同再改成「待派」才派得出去。")
 
 
@@ -372,7 +372,7 @@ def from_ref(read, name: str):
     `read(rel)` 读一个仓库相对路径，读不到返回 None/空。
     → `(meta, delivery_text)`；两种布局都认，找不到返回 `(None, None)`。
     """
-    for base in ("docs/plans", "docs/plans/archive"):
+    for base in (PLANS_DIR, f"{PLANS_DIR}/archive"):
         raw = read(f"{base}/{name}/{META}")
         if raw:
             # 逐条状态的勾目前横跨合同与交回两块（见 Taskbook.status_text），两块都给。

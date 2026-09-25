@@ -29,7 +29,7 @@ class VerificationAcceptance(unittest.TestCase):
         (self.repo/'checks').mkdir();(self.repo/'checks/__init__.py').touch()
         (self.repo/'checks/test_ok.py').write_text('import unittest\nclass Check(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n')
         (self.repo/'checks/test_payload.py').write_text("import unittest\nfrom pathlib import Path\nclass Check(unittest.TestCase):\n def test_value(self): self.assertEqual(Path('value.txt').read_text(),'good')\n")
-        task=self.repo/'docs/plans/repair.md';task.parent.mkdir(parents=True);task.write_text('# Repair\n\n| 状态 | 在办 |\n')
+        task=self.repo/'shiftboss/plans/repair.md';task.parent.mkdir(parents=True);task.write_text('# Repair\n\n| 状态 | 在办 |\n')
         steps=[['python','-B','producer.py']]
         plan={'steps':steps,'gates':[['python','-c','print("structural")']],
               'verification':{'test_directories':['checks'],'build':[['python','-c',"from pathlib import Path; Path('out/package.bin').write_bytes(Path('value.txt').read_bytes())"]]}}
@@ -210,7 +210,7 @@ class VerificationAcceptance(unittest.TestCase):
         self.assertIn('| 稳定性 |',finding)
         self.assertIn('| 同一失败的旧票据 |',finding)
         self.assertIn('| 提到这些路径的在办任务书 |',finding)
-        self.assertNotIn('由派活方在 docs/plans 开修复任务书并派出',finding)
+        self.assertNotIn('由派活方在 shiftboss/plans 开修复任务书并派出',finding)
         print(f'BISECT: N=16 k=6 suites={runs} introduced_by={failure["introduced_by"]}')
         self.git('fetch','-q','origin','main');self.git('merge','--ff-only','origin/main')
         self.batch(5)

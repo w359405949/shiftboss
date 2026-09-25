@@ -5,7 +5,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 
 ## 0. 工具
 
-本目录由 `shiftboss` 包安装进项目（`shiftboss.toml` 的 `docs_dir`，缺省 `docs/shiftboss/`），不在此处修改；改动在包内 `docs/` 做，`shiftboss bootstrap` 同步，`--check` 报出不一致。
+本目录由 `shiftboss` 包安装进项目顶层 `shiftboss/`，不在此处修改（同目录的 `plans/` 是任务书，不属于装入的文件）；改动在包内 `docs/` 做，`shiftboss bootstrap` 同步，`--check` 报出不一致。
 项目专有的约定（架构依据、文档写法、测试目录、证据目录、完成标准的不放松清单）见 `AGENTS.md` 指向的项目文档。
 家目录：项目旁的 `<项目名>.shiftboss/`（`shiftboss.toml` 的 `copies_dir` 可改），放 bare 仓库 `hub.git`、全部执行方副本（`<执行方><序号>`）与验证工作区 `verify/`。
 控制目录：家目录下的 `control/`（`shiftboss.toml` 的 `control_dir` 可改），放仅派活方读写的私有文档（执行方评估 `EXECUTORS.md`、错题本 `mistakes.md`）、台账、配额、门铃与验证报告；工作副本内不存放、不链接。
@@ -28,13 +28,13 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 
 | 标准流程 | 本工作流 |
 | --- | --- |
-| issue | 任务书 `docs/plans/<动词>-<对象>/` |
+| issue | 任务书 `shiftboss/plans/<动词>-<对象>/` |
 | feature branch | `codex/<任务书名>` |
 | checkout | 工作副本，一份任务书独占一个 |
 | pull request | 交回 `delivery.md` |
 | code review | 核对：派活方重跑判据 |
 | CI | 常驻验证 |
-| 关闭 issue | 归档至 `docs/plans/archive/` |
+| 关闭 issue | 归档至 `shiftboss/plans/archive/` |
 
 ### 1.1 任务书
 
@@ -187,7 +187,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 
 1. 先 `git fetch origin`。**任务书在 `origin/main` 上，不在当前工作树里**：
    新开的线、改过表头的线，都要取到 `origin/main` 才读得到。
-2. 从 `origin/main` 读这份任务书的 `meta.json`（`git show origin/main:docs/plans/<名字>/meta.json`），
+2. 从 `origin/main` 读这份任务书的 `meta.json`（`git show origin/main:shiftboss/plans/<名字>/meta.json`），
    取出「你的工作副本」与「分支」。**不要用工作树里那一份判**——旧分支上它可能根本不存在。
 3. 比对当前目录与表头的「你的工作副本」：**路径对不上才停下**。
    工作树里没有这份任务书、当前在别条分支、目录内容不像这条线，**都不是停下的理由**。
