@@ -99,7 +99,7 @@ js_module_prefixes = ["engine/"]        # 合并时按 ES 模块检查语法的�
 assertion_dirs     = ["engine/tests"]   # 合并时列出断言增删的测试目录
 ```
 
-1. 缺文件或缺项时取中性缺省值，包内不假设任何项目路径。
+1. 缺项时取中性缺省值，包内不假设任何项目路径；缺文件时 `dispatch` 拒派，由派活方从项目 README 提取、向用户补问后生成。
 2. 生成计划结构复杂，放在 `plan` 指向的 JSON 文件里；`shiftboss.toml` 只放设置。
 
 ## 7. 迁移步骤

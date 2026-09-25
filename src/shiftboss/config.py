@@ -1,4 +1,7 @@
-"""项目配置 `shiftboss.toml`：项目专有的名字与路径只从这里进包。缺文件或缺项时取中性缺省值。"""
+"""项目配置 `shiftboss.toml`：项目专有的名字与路径只从这里进包。缺项时取中性缺省值；缺文件时 `dispatch` 拒派。
+
+各项的含义见下方各读取函数；派活方生成这份文件时以它们为清单。
+"""
 from __future__ import annotations
 
 import tomllib
@@ -8,6 +11,12 @@ from pathlib import Path
 from shiftboss.paths import project_root
 
 CONFIG_NAME = "shiftboss.toml"
+
+
+def missing(root: Path | None = None) -> Path | None:
+    """缺配置文件时返回它应在的路径，否则 None。"""
+    path = (root or project_root()) / CONFIG_NAME
+    return None if path.exists() else path
 
 
 @lru_cache(maxsize=None)

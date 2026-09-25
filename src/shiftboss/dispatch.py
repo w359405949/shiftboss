@@ -760,6 +760,12 @@ def main(argv: list[str] | None = None) -> int:
                          "也是 --quota 作用的执行方。--recover 沿用台账里的执行方。")
     args = ap.parse_args(argv)
 
+    # 缺项目配置时各项静默取中性缺省，派出去的线会带着错的路径跑；配置由派活方生成（README 3.0）。
+    from shiftboss import config
+    if args.taskbook and not (args.close or args.recover) and (path := config.missing()):
+        print(f"缺项目配置 {path}：先按 shiftboss/README.md 3.0 生成再派")
+        return 2
+
     # **交代里带反引号就要走 `-F`。** 命令行是经 shell 的：没引起来的反引号是命令
     # 替换，`shiftboss.dispatch ... -m "…`mount_mask` 和 `equipped_mask` 是两件事…"`
     # 到这里已经变成「… 和  是两件事…」——**名字被吃掉，句子还读得像句子**，

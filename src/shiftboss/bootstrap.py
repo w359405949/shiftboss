@@ -293,6 +293,9 @@ def main(argv: list[str] | None = None) -> int:
         guarded = ensure_commit_guard(REPO, [], args.check)
         from shiftboss.docs_install import install as install_docs
         documented = install_docs(REPO, args.check)
+        from shiftboss import config
+        if path := config.missing(REPO):
+            print(f"缺项目配置 {path}：派活方按 shiftboss/README.md 3.0 生成，生成前 dispatch 拒派。")
         copies_ready = True
         for executor in executors:
             count = read_quota(bare, executor) if args.copies is None else args.copies
