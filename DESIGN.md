@@ -41,6 +41,7 @@ shiftboss/                   # 包仓库（本仓库），以可编辑模式安�
 1. 包内不出现任何项目专有路径、模块名或领域概念；项目的东西只经 `shiftboss.toml` 进来，项目专有约定写在项目文档里。
 2. 命令行只有一个入口 `shiftboss`，子命令：`inbox`、`taskbook`、`dispatch`、`merge`、`bell`、`recover`、`regen`、`verify`、`bootstrap`（`init` 同义）。
 3. 执行方只读得到自己副本里的东西，所以通用规则要装进项目仓库；项目里的那份与包内源不一致时，`bootstrap --check` 与合并快速检查都会报出。
+4. shiftboss 不设常驻验证：常驻验证验的是项目；shiftboss 改动不频繁，改后由派活方做语法检查与点名到单条测试方法的反证。
 
 ## 3. 可见性分区
 
