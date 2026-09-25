@@ -134,7 +134,7 @@ def survey(repo: Path, git_dir: Path) -> list[dict]:
         meta, text = taskbook_of(git_dir, branch, name)
         if meta is None:
             rows.append(dict(name=name, tip=tip, pushed=pushed, state="没有任务书",
-                             total=0, ticked=0, pending=0, copy="", status=""))
+                             total=0, ticked=0, pending=0, copy="", status="", mode="单轮"))
             continue
         total, ticked, pending = read_status(text)
         # 执行状态由执行方写在交回顶部（README 2.4）：完成与停下都等派活方处理。
