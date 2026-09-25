@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shiftboss"
+version = "0.1.0"
+description = "An AI shift boss that dispatches taskbooks to coding agents, merges their work and keeps a night-shift verifier running, all on top of git."
+requires-python = ">=3.11"
+dependencies = ["psutil"]
+
+[project.scripts]
+shiftboss = "shiftboss.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+shiftboss = ["scripts/*/*", "docs/*.md", "docs/templates/*/*"]

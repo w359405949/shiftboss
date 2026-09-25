@@ -1,0 +1,550 @@
+#!/usr/bin/env python3
+"""合并一个 ref，自动解明确列出的派生物冲突，完成快速结构检查后提交；不生成、不运行测试。
+
+    shiftboss merge origin/codex/example
+
+要求干净工作树。不 fetch、不 push；失败保留现场，绝不替人解名单外的冲突。
+生产端的精确产物报告在 `shiftboss.toml` 的 `[regen] catalog`，不支持目录或通配符。
+"""
+
+from __future__ import annotations
+from shiftboss.paths import project_root
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import time
+import sys
+from collections import Counter
+from pathlib import Path
+
+from shiftboss import regen
+from shiftboss import config
+from shiftboss.outputs import CATALOG, catalog_files
+
+REPO = project_root()
+
+
+class MergeError(RuntimeError):
+    pass
+
+
+# 合并在飞时下锁，拦住同一个副本里任何别的 `git commit`——理由与实现见
+# `shiftboss.state` 里的「合并在飞的锁」。手工恢复那条路由 `shiftboss.regen` 下同一把锁。
+from shiftboss.state import acquire_merge_lock, release_merge_lock  # noqa: E402
+
+
+def acquire_lock(ref: str) -> None:
+    acquire_merge_lock(REPO, f"ref={ref}")
+
+
+def release_lock() -> None:
+    release_merge_lock(REPO)
+
+
+def git(*args: str, check: bool = True, input: str | None = None) -> subprocess.CompletedProcess:
+    proc = subprocess.run(
+        ["git", "-c", "core.quotePath=false", *args], cwd=REPO,
+        capture_output=True, text=True, encoding="utf-8", errors="strict", input=input,
+    )
+    if check and proc.returncode:
+        raise MergeError(f"git {' '.join(args)}\n{proc.stdout}{proc.stderr}".strip())
+    return proc
+
+
+def show(proc: subprocess.CompletedProcess) -> None:
+    for output in (proc.stdout, proc.stderr):
+        if output.strip():
+            print(output.rstrip(), flush=True)
+
+
+def derived_files() -> list[str]:
+    path = REPO / CATALOG
+    config = json.loads(path.read_text(encoding="utf-8"))
+    files = catalog_files(config, regen.load_plan()["steps"])
+    for name in files:
+        output = REPO / name
+        if not output.is_file() or output.is_symlink() or output.resolve() != output:
+            raise MergeError(f"生产端声明的产物不存在或不是普通文件：{name}；请重新生成")
+    return files
+
+
+def preflight() -> None:
+    root = Path(git("rev-parse", "--show-toplevel").stdout.strip()).resolve()
+    if root != REPO:
+        raise MergeError(f"模块所在目录不是仓库根：{REPO}（实际 {root}）")
+    for state in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"):
+        path = Path(git("rev-parse", "--git-path", state).stdout.strip())
+        if (REPO / path).exists():
+            raise MergeError(f"已有 {state}，先人工处理现有操作")
+    if git("symbolic-ref", "--quiet", "HEAD", check=False).returncode:
+        raise MergeError("当前是 detached HEAD，请先切到接收合并的分支")
+    status = git("status", "--porcelain=v1", "--untracked-files=all").stdout
+    if status:
+        raise MergeError(f"工作树不干净，尚未开始合并：\n{status.rstrip()}")
+    generation_plan()
+
+
+def generation_plan() -> None:
+    # 合并前检查一次，合并后再检查新清单，避免空清单被当成“全绿”。
+    plan = regen.load_plan()
+    if not isinstance(plan, dict):
+        raise MergeError("regen.json 必须是包含 steps 与 gates 的对象")
+    for key in ("steps", "gates"):
+        commands = plan.get(key)
+        if (not isinstance(commands, list) or not commands
+                or any(not isinstance(cmd, list) or not cmd
+                       or any(not isinstance(arg, str) or not arg for arg in cmd)
+                       for cmd in commands)):
+            raise MergeError(f"regen.json 的 {key} 必须是非空命令列表")
+
+
+OLD_WORKFLOW_MODULE = re.compile(
+    r"\bworkflow\.(?:tools\.)?(agy|bootstrap|codex|dispatch|doorbell|inbox|merge|omp|outputs|recover"
+    r"|regen|state|taskbook|verify_tests|verify)\b(?!-|\.v1|ication)")
+
+
+# 编辑器按 ES 模块加载；`node --check` 对 `.js` 按脚本解析，函数内误嵌的 `export` 查不出。
+# 手工合成冲突漏掉括号时正是这样蒙混过关，所以复制成 `.mjs` 再查。
+def check_js_module(path: Path, name: str) -> None:
+    import shutil
+    import tempfile
+    node = shutil.which("node")
+    if not node:
+        raise MergeError("找不到 node，无法检查改动的 JS")
+    with tempfile.TemporaryDirectory() as temp:
+        copy = Path(temp) / "check.mjs"
+        copy.write_bytes(path.read_bytes())
+        result = subprocess.run([node, "--check", str(copy)], capture_output=True,
+                                text=True, encoding="utf-8", errors="replace")
+    if result.returncode:
+        raise MergeError(f"JS 模块语法错误：{name}\n{result.stderr.strip()[:600]}")
+
+
+def fast_checks(before: str) -> None:
+    """Only structural checks; freshness and semantic correctness belong to verification.
+
+    合并必须保持快速：这里只放语法、配置与产物清单这类秒级结构检查；规则扫描、生成、浏览器等可能卡住的检查一律放常驻验证。
+    """
+    started = time.monotonic()
+    generation_plan()
+    # 未归层的测试文件会让常驻验证的生成阶段整体失败；在引入它的那次合并就拦下。
+    # 分层是可选声明，与 regen 的判法一致：没声明就不查。
+    plan = regen.load_plan()
+    if "gate_layers" in plan:
+        try:
+            regen.validate_layers(plan)
+        except (ValueError, KeyError) as exc:
+            raise MergeError(f"测试归层检查失败：{exc}；在生成计划（{config.plan_file()}）的对应 gate 中登记后再合并") from exc
+    # 只拦改过的已装文档；没装的由 `shiftboss bootstrap --check` 报。
+    from shiftboss.docs_install import drift
+    if stale := drift(REPO, missing=False):
+        raise MergeError("工作流文档与包内不一致（改动在包内 docs/ 做，再 `shiftboss bootstrap` 同步）："
+                         + "、".join(stale))
+    files = derived_files()
+    print(f"快速检查 配置与产物清单: {len(files)} 路径 {time.monotonic()-started:.3f}s", flush=True)
+    started = time.monotonic()
+    names = git("diff", "--name-only", "--no-renames", "-z", before).stdout.split("\0")
+    counts = {".json": 0, ".py": 0, ".js": 0, ".mjs": 0}
+    for name in names:
+        path = REPO / name
+        if not name or not path.is_file() or path.suffix not in counts:
+            continue
+        if path.is_symlink():
+            raise MergeError(f"不检查符号链接源码：{name}")
+        if path.suffix == ".json":
+            json.loads(path.read_text(encoding="utf-8"))
+        elif path.suffix == ".py":
+            compile(path.read_bytes(), name, "exec")
+            # 工作流代码在 `shiftboss` 包里；旧分支带进来的 `workflow.<模块>`、`workflow.tools.<模块>` 要到运行时才报错。
+            stale = OLD_WORKFLOW_MODULE.search(path.read_text(encoding="utf-8"))
+            if stale:
+                raise MergeError(f"{name} 引用旧路径 `{stale.group(0)}`，改为 `shiftboss.{stale.group(1)}`"
+                                 "（执行方插件在 `shiftboss.workers`）")
+        elif any(name.startswith(prefix) for prefix in config.js_module_prefixes()):
+            check_js_module(path, name)
+        else:
+            continue
+        counts[path.suffix] += 1
+    print(f"快速检查 改动 JSON/Python/JS 语法: {counts} {time.monotonic()-started:.3f}s", flush=True)
+    assertion_delta(before)
+
+
+_TOKEN = re.compile(r'"[^"]*"|\'[^\']*\'|\w+|[^\s\w]')
+
+
+def assertion_delta(before: str) -> None:
+    """在合并输出中列出测试断言的增删；不拦合并。
+
+    1. 删除的断言须在交回中说明。
+    2. 只增不减的改写不计为删除：旧行的全部记号都保留在同一文件的某一新增断言行中。
+    """
+    started = time.monotonic()
+    dirs = config.assertion_dirs()
+    if not dirs:
+        return
+    diff = git("diff", "--no-renames", "-U0", before, "--", *dirs).stdout
+    removed_by_file: dict[str, list[str]] = {}
+    added_by_file: dict[str, list[str]] = {}
+    path = ""
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            path = line[4:]
+        elif line.startswith("---"):
+            continue
+        elif "assert" in line and line[:1] in "+-":
+            bucket = added_by_file if line[0] == "+" else removed_by_file
+            bucket.setdefault(path, []).append(line[1:].strip())
+    added = sum(len(lines) for lines in added_by_file.values())
+    removed: list[str] = []
+    extended = 0
+    for name, lines in removed_by_file.items():
+        candidates = [Counter(_TOKEN.findall(text)) for text in added_by_file.get(name, [])]
+        for text in lines:
+            need = Counter(_TOKEN.findall(text))
+            match = next((c for c in candidates if all(c[t] >= n for t, n in need.items())), None)
+            if match is None:
+                removed.append(text)
+            else:
+                candidates.remove(match)
+                extended += 1
+    print(f"快速检查 测试断言: +{added} -{len(removed)} {time.monotonic()-started:.3f}s", flush=True)
+    if extended:
+        print(f"    只增不减的改写 {extended} 行（不计入删除）", flush=True)
+    for line in removed[:20]:
+        print(f"    删除的断言 {line[:120]}", flush=True)
+    if len(removed) > 20:
+        print(f"    （另有 {len(removed)-20} 行未列）", flush=True)
+    if removed:
+        print("    **这些要在交回里有交代**：重写、换等值判法、换更强的检查都算；"
+              "没有交代就是放宽，按合同退回。", flush=True)
+
+
+def finish(before: str) -> None:
+    """
+    仍有冲突会拒绝。
+    """
+    if git("rev-parse", "--verify", "--quiet", "MERGE_HEAD", check=False).returncode:
+        raise MergeError("没有待完成合并；--finish 不提交普通工作树改动")
+    if git("ls-files", "--unmerged").stdout:
+        raise MergeError("仍有未解决的冲突")
+    target = git("rev-parse", "MERGE_HEAD").stdout.strip()
+    fast_checks(before)
+    git("add", "--all")
+    show(git("commit", "--no-edit"))
+    if git("status", "--porcelain=v1", "--untracked-files=all").stdout:
+        raise MergeError("提交后工作树不干净")
+    seal_stale_derived()
+    print("合并完成；未生成、未跑测试、未推送。派生物可能陈旧，需后台验证补齐。", flush=True)
+    close_merged_sessions(target)
+
+
+def archive_after_merge(name: str, book) -> Path:
+    """`--done` 时把任务书**直接归档**——不是「核对中」。
+
+    **核对认定结束就是验收动作**，不必等常驻验证跑完再确认一次。
+    2026-09-09 用户点出这条：等验证线回话导致 8 份任务书堆在「核对中」，
+    而收件箱又把它们算成「在办」，于是同一份活被重复派了出去。
+
+    **后来发现的 bug 不重开旧任务书**：那是一条新的修复线，把这份归档的
+    当参考引进去就行。重开等于让一份任务书没有终点。
+
+    只动状态那一格并把文件挪进 `archive/`，正文一个字不碰；
+    交回里还留着「待议 / 待定夺」的，**这里只喊一声**——裁定是派活方的事，
+    但那也不该把任务书吊在半空。**合同里的勾不作数**：勾是执行方早几轮打的，
+    交回改回待议时不会有人回去改勾，两边不一致没有一处会报错。
+    """
+    import re
+    import shutil
+    path = book.path
+    sha = git("rev-parse", "--short", "HEAD").stdout.strip()
+    # **两种交回格式都要认。** 只匹配 `| 2.` 开头的表格行时，写成编号列表的
+    # 「2. 合同 3.2 保持待议」整条溜过去——`move-python-to-browser` 就是这么
+    # 带着两条待议被归档的，而它合同里的勾还停在早几轮打的「完成」。
+    pending = [line.strip() for line in book.delivery_text().splitlines()
+               if ("待议" in line or "待定夺" in line)
+               and re.match(r"\s*(\||\d+[.、])", line)]
+    already = path.parent.name == "archive"
+    target = path if already else path.parent / "archive" / path.name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if book.is_dir:
+        # **目录布局：状态那格在 meta.json，正文一个字不碰。**
+        book.set_meta(调度状态=f"已归档（合并 {sha}）")
+        if not already:
+            shutil.move(str(path), str(target))
+            git("add", "--", str(path.relative_to(REPO)))
+    else:
+        text = path.read_text(encoding="utf-8")
+        new = re.sub(r"^\| 状态 \| .*$", f"| 状态 | `已归档`（合并 `{sha}`） |",
+                     text, count=1, flags=re.M)
+        if new == text and already:
+            return path
+        target.write_text(new, encoding="utf-8")
+        if not already:
+            path.unlink()
+            git("add", "--", str(path.relative_to(REPO)))
+    git("add", "--", str(target.relative_to(REPO)))
+    git("commit", "-q", "-m", f"plans: {name} 交付已合并，归档")
+    print(f"{name}：已归档（{target.relative_to(REPO)}）。", flush=True)
+    if pending:
+        print(f"  ⚠ 交回里还有 {len(pending)} 条待议/待定夺，归档不代表裁定过了：\n    "
+              + "\n    ".join(line[:110] for line in pending), flush=True)
+    return target
+
+
+def close_merged_sessions(target: str) -> None:
+    """合并只把提交带进 main，不关会话、不归档：做没做完由派活方核对后用 `--done` 定。
+
+    任务书不再分长线短线，合并这一刻判断不出「这条线到头了」；
+    按表头猜的那几版把还在跑的线掐过，也把没做完的线归档过。
+    """
+    if git("symbolic-ref", "--short", "HEAD").stdout.strip() != "main":
+        return
+    refs = git("for-each-ref", "--format=%(objectname)",
+               "refs/heads/codex/", "refs/remotes/origin/codex/").stdout.splitlines()
+    if target not in refs:
+        return
+    from shiftboss import dispatch
+    for name, entry in dispatch.load_sessions().items():
+        branch = entry.get("branch", "")
+        if not branch.startswith("codex/"):
+            continue
+        tip = git("rev-parse", "--verify", f"origin/{branch}", check=False)
+        if tip.returncode:
+            tip = git("rev-parse", "--verify", branch, check=False)
+        if tip.returncode == 0 and tip.stdout.strip() == target:
+            from shiftboss.taskbook import Taskbook, execution_status
+            book = Taskbook.find(REPO, name)
+            signal = execution_status(book.delivery_text() if book else "") or "未标"
+            print(f"{name}：已合入，执行状态「{signal}」，会话未动。"
+                  f"完成或拆分后用 `shiftboss.merge --done {name}` 收摊归档；否则续派。", flush=True)
+
+
+def finish_line(name: str, superseded_by: str | None = None) -> None:
+    """`--done`：派活方核对认定这份任务书结束（做完，或已拆出新任务书），关会话并归档。
+
+    只收已合进当前分支的线：分支上还有没合的提交就拒，免得把交付丢在分支上。
+    """
+    from shiftboss import dispatch
+    from shiftboss.taskbook import Taskbook
+    book = Taskbook.find(REPO, name)
+    if book is None or "archive" in book.path.parts:
+        raise MergeError(f"{name} 不在在办任务书里")
+    branch = book.meta().get("分支", f"codex/{name}")
+    for ref in (f"origin/{branch}", branch):
+        if git("rev-parse", "--verify", "--quiet", ref, check=False).returncode == 0:
+            if git("merge-base", "--is-ancestor", ref, "HEAD", check=False).returncode:
+                raise MergeError(f"{ref} 还有没合进当前分支的提交；先合或确认丢弃再 --done")
+            break
+    from shiftboss.taskbook import execution_status
+    # 派活方已把余下的活交给另一份任务书时，执行方停在「进展」也可收；接手方写进台账输出。
+    if execution_status(book.delivery_text()) == "进展" and not superseded_by:
+        raise MergeError(f"{name} 的执行状态是「进展」，执行方还要接着做；等它标「完成」或「停下」")
+    ledger = dispatch.load_sessions()
+    entry = ledger.get(name)
+    if entry and not entry.get("closed"):
+        dispatch.close_line(name, entry["copy"], ledger)
+    archive_after_merge(name, book)
+
+
+def report_failure_state() -> None:
+    """Make a failed command's remaining Git state and next action explicit."""
+    try:
+        pending = git("rev-parse", "--verify", "--quiet", "MERGE_HEAD", check=False)
+        if pending.returncode == 0:
+            conflicts = git("diff", "--name-only", "--diff-filter=U", "-z").stdout
+            count = len([name for name in conflicts.split("\0") if name])
+            print(f"当前状态：存在 MERGE_HEAD，合并尚未提交；未解决冲突 {count} 个。", file=sys.stderr)
+            print("下一步：当场取简单方案（shiftboss/README.md 2.3）——选定一边、落选一边以 "
+                  "CONFLICT-KEPT 注释保留并写明取舍，git add 后用新进程运行 "
+                  "shiftboss merge --finish HEAD 提交推送；再另开 conflict 任务书复核，"
+                  "第 1 节贴上方冲突原文与 git diff --name-only --diff-filter=U。该线照常，不打回。",
+                  file=sys.stderr)
+        else:
+            dirty = bool(git("status", "--porcelain=v1", "--untracked-files=all").stdout)
+            print("当前状态：无 MERGE_HEAD；" + ("索引或工作树有改动，先用 git status 核对已有工作。"
+                  if dirty else "索引和工作树干净。"), file=sys.stderr)
+    except (MergeError, OSError) as exc:
+        print(f"无法读取失败现场：{exc}；先运行 git status 核对，不能视为合并成功。", file=sys.stderr)
+
+
+def stale_derived_path():
+    from shiftboss.inbox import origin_git_dir
+    from shiftboss.verify import state_dir
+    return state_dir(origin_git_dir(REPO)) / "derived-stale.json"
+
+
+def note_stale_derived(files) -> None:
+    """派生物取了旧侧，把这笔债记到 origin 上，让收件箱看得见。
+
+    **取旧侧本身是对的**：两边都改过的生成物没法逐块解。
+    问题是这笔债此前**只活在那一行回显里**——下一个消费者读到的是缺了内容的生成物，
+    而重新生成要等后台验证轮到这个提交。2026-09-09 因此丢过两次：
+    一次 `battle_message_sequences` 整块消失，一次场景索引从 11 条掉回 9 条，
+    后者靠消费端自己加的守卫才发现。
+
+    **这里只让它可见，不负责修**：后台验证验到这个提交（或它的后代）并补齐派生物后，
+    收件箱自然不再显示。
+    """
+    # **记账不许挡住合并。** 这是给收件箱看的附带信息，写不成就说一声继续走：
+    # 合并停在半路的代价，比少一条提示大得多。
+    try:
+        from shiftboss.state import write_state
+        write_state(stale_derived_path(), {"commit": None, "files": sorted(files), "at": time.time()})
+    except (Exception, SystemExit) as exc:  # noqa: BLE001  origin_git_dir 用 sys.exit 退场
+        print(f"（派生物欠账没记下：{exc}）", flush=True)
+
+
+def seal_stale_derived() -> None:
+    """提交之后把这笔债钉在具体提交上。"""
+    try:
+        from shiftboss.state import read_state, write_state
+        path = stale_derived_path()
+        note = read_state(path)
+        if note and note.get("commit") is None:
+            note["commit"] = git("rev-parse", "HEAD").stdout.strip()
+            write_state(path, note)
+    except (Exception, SystemExit) as exc:  # noqa: BLE001  origin_git_dir 用 sys.exit 退场
+        print(f"（派生物欠账没钉到提交上：{exc}）", flush=True)
+
+
+def resolve_derived(files: list[str], before: str) -> set[str]:
+    """
+    只认 `derived-artifacts.json` 中生产端报告的精确路径；报告外冲突一律停下
+
+    仅自动处理产物清单（`[regen] catalog`）中精确普通文件的内容冲突；
+    有名单外冲突或增删/类型冲突就停止，不自动解任何文件。纯派生物内容冲突
+    整组（含无冲突成员及报告本身）取合并前当前侧，保留单一版本。
+    """
+    entries: dict[str, list[tuple[str, str]]] = {}
+    for record in git("ls-files", "--unmerged", "-z").stdout.split("\0"):
+        if record:
+            meta, name = record.split("\t", 1)
+            mode, _oid, stage = meta.split()
+            entries.setdefault(name, []).append((mode, stage))
+    refused = sorted(set(entries) - set(files))
+    # 增删、改名或文件类型冲突不按内容冲突处理；即使命中名单也交给人。
+    refused += sorted(name for name, stages in entries.items()
+                      if name in files and (set(stage for _, stage in stages) != {"1", "2", "3"}
+                                            or any(mode != "100644" for mode, _ in stages)))
+    if refused:
+        raise MergeError("冲突拒绝：含名单外文件或非普通内容冲突；没有自动解任何文件：\n"
+                         + "\n".join(f"  {name}" for name in refused)
+                         + "\n保留合并现场；逐块人工解决，或 git merge --abort。")
+    if not entries:
+        return set()
+    # 一组文件都取合并前同一个提交，包括这一轮没有冲突的成员。
+    # 先核对完整组存在且全是普通文件，再一次性恢复，不能逐个取不同侧。
+    tree = {}
+    for row in git("ls-tree", "-r", "-z", before).stdout.split("\0"):
+        if row:
+            meta, name = row.split("\t", 1)
+            tree[name] = meta
+    for name in files:
+        if not tree.get(name, "").startswith("100644 blob "):
+            raise MergeError(f"派生物整组无法取当前侧：{name} 不存在或不是普通文件")
+    print(f"派生物冲突 {len(entries)} 个；整组 {len(files)} 个文件统一取合并前当前分支：", flush=True)
+    for name in sorted(entries):
+        print(f"  {name}", flush=True)
+    # NUL-delimited exact pathspecs avoid Windows' command-line length limit.
+    git("--literal-pathspecs", "restore", f"--source={before}", "--staged", "--worktree",
+        "--pathspec-from-file=-", "--pathspec-file-nul", input="\0".join(files) + "\0")
+    if git("ls-files", "--unmerged").stdout:
+        raise MergeError("仍有未解决的冲突；停止，不运行生成")
+    note_stale_derived(files)
+    return set(entries)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """
+    合并、解纯派生物冲突、快速结构检查后提交
+
+    不 fetch、不 push
+
+    合并路径只留快速结构检查。
+
+    默认不生成、不跑测试、不 push；
+
+    快速检查保留：Git 操作状态与干净工作树、非空生成/验证命令配置、产物报告格式与
+    生成步骤一致、报告内路径安全且普通文件存在，以及改动 JSON/Python 的解析/语法。
+    它们挡住不可读取的输入和破损产物清单；不证明产物新鲜或语义正确。
+
+    合并可能更新工作流代码，冲突处理后用新进程执行
+    `shiftboss merge --finish <合并前HEAD>`，读取新代码做快速检查并提交。
+
+    失败保留现场，不自动回滚，不报告成功。已有另一进程的合并锁不能被失败入口删除。
+    """
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("ref", nargs="?", help="合入当前分支的单个 ref（先自行 fetch）")
+    ap.add_argument("--finish", metavar="BEFORE", help="用新进程检查并提交已经解决冲突的合并")
+    ap.add_argument("--done", metavar="TASKBOOK",
+                    help="核对认定该任务书结束（做完或已拆分）：关会话并归档；不合并")
+    ap.add_argument("--superseded-by", metavar="TASKBOOK",
+                    help="与 --done 同用：余下的活已由该任务书接手，执行状态为「进展」也收")
+    args = ap.parse_args(argv)
+    holding = False
+    try:
+        if args.done:
+            preflight()
+            acquire_lock(f"done:{args.done}")
+            holding = True
+            if args.superseded_by:
+                print(f"{args.done}：余下的活由 {args.superseded_by} 接手。", flush=True)
+            finish_line(args.done, superseded_by=args.superseded_by)
+            return 0
+        if args.finish:
+            # The parent owns the lock; a manual recovery owns its own lock.
+            if not os.environ.get("MM_WORKFLOW_MERGE"):
+                acquire_lock("finish")
+                holding = True
+            finish(args.finish)
+            return 0
+        if not args.ref:
+            ap.error("需要 ref 或 --finish BEFORE")
+        preflight()
+        acquire_lock(args.ref)
+        holding = True
+        files = derived_files()
+        before = git("rev-parse", "HEAD").stdout.strip()
+        target = git("rev-parse", "--verify", "--end-of-options", f"{args.ref}^{{commit}}").stdout.strip()
+        # 没 fetch 时远端跟踪 ref 可能还停在核对退回的旧 tip 上；退回过的提交一律不合。
+        from shiftboss.inbox import load_rejected, origin_git_dir
+        try:
+            rejected = load_rejected(origin_git_dir(Path.cwd()))
+        except SystemExit:
+            rejected = {}  # 没有本机 origin 就没有收件箱，也就没有退回记录
+        if any(target in tips for tips in rejected.values()):
+            raise MergeError(f"{args.ref} 指向核对时已退回的 {target[:12]}；先 fetch 取到新 tip 再合")
+        print(f"合并 {args.ref} ({target[:12]})：", flush=True)
+        merged = git("-c", "rerere.enabled=false", "-c", "merge.autoStash=false",
+                     "merge", "--no-ff", "--no-commit", "--no-edit", target, check=False)
+        show(merged)
+        if merged.returncode and not git("ls-files", "--unmerged").stdout:
+            raise MergeError(f"git merge 失败（退出码 {merged.returncode}）")
+        resolve_derived(files, before)
+        if git("rev-parse", "--verify", "--quiet", "MERGE_HEAD", check=False).returncode:
+            print("目标已合入；未生成、未跑测试。", flush=True)
+            close_merged_sessions(target)
+            return 0
+        # A merge may replace this module, its dependencies or the configuration.
+        # Never keep evaluating the pre-merge implementation against the new tree.
+        result = subprocess.run([sys.executable, "-B", "-m", "shiftboss.merge",
+                                 "--finish", before], cwd=REPO)
+        if result.returncode:
+            raise MergeError(f"合并后快速检查/提交失败（退出码 {result.returncode}）")
+        return 0
+    except Exception as exc:
+        print(f"[合并失败] {exc}", file=sys.stderr, flush=True)
+        report_failure_state()
+        return 1
+    finally:
+        if holding:
+            release_lock()
+
+
+if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    sys.stderr.reconfigure(encoding="utf-8", newline="\n")
+    raise SystemExit(main())

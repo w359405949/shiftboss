@@ -1,0 +1,2 @@
+{"timestamp": "2026-09-08T11:59:21.073Z", "type": "turn_context", "payload": {"cwd": "E:\\MMEditor\\MMEditor.codex2", "sandbox_policy": {"type": "danger-full-access"}}}
+{"timestamp": "2026-09-08T23:20:41.484Z", "type": "turn_context", "payload": {"cwd": "E:\\MMEditor\\MMEditor.codex2", "sandbox_policy": {"type": "workspace-write", "network_access": false, "exclude_tmpdir_env_var": false, "exclude_slash_tmp": false}}}
