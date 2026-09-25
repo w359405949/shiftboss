@@ -209,7 +209,7 @@ KINDS = tuple(sorted(d.name for d in TEMPLATES.iterdir()
 SCAFFOLD_ROUNDS = """# 轮次记录
 
 > 这一节由派活方写，执行方只读。**末尾那一条就是这一轮的交代，照读。**
-> 轮次上限与拆分见 [README](../../../shiftboss/README.md) 2.4。
+> 轮次上限与拆分见 [README](../../README.md) 2.4。
 """
 
 EXECUTION_STATUSES = ("进展", "完成", "停下")

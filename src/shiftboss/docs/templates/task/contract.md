@@ -28,4 +28,4 @@
 
 ### 交付条件
 
-1. 推进、停下与拆分按 [README](../../shiftboss/README.md) 2.4。
+1. 推进、停下与拆分按 [README](../../README.md) 2.4。
