@@ -129,10 +129,12 @@ def rival_listeners(path: Path, fallback: Path) -> list[psutil.Process]:
     而它们盯的是另一个文件、另一把锁，根本不冲突。
 
     监听器是参数恰为模块名或脚本路径的那个进程；把整条命令串成一个参数的外壳（含本进程的祖先）不算。"""
-    me = os.getpid()
+    # 本进程与它的祖先都不算：`shiftboss.exe bell` 启动器是本监听器的父进程，
+    # 命令行同样形如监听器，杀了它等于新门铃自杀（任务以 15 退出）。
+    me = {os.getpid(), *(p.pid for p in psutil.Process().parents())}
     out = []
     for proc in psutil.process_iter(["pid", "cmdline"]):
-        if proc.pid == me:
+        if proc.pid in me:
             continue
         argv = proc.info.get("cmdline") or []
         names = [a.replace("\\", "/") for a in argv]
