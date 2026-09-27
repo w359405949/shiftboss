@@ -156,7 +156,7 @@ def executor_of(value: str | None) -> str:
     return next((name for name in WORKERS if text.startswith(name)), default_worker())
 
 
-LAUNCH_WAIT = 15
+LAUNCH_WAIT = 30
 
 
 def launch_tui(copy_win: str, prompt: str, title: str, *,
