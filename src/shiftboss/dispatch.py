@@ -156,11 +156,25 @@ def executor_of(value: str | None) -> str:
     return next((name for name in WORKERS if text.startswith(name)), default_worker())
 
 
+LAUNCH_WAIT = 15
+
+
 def launch_tui(copy_win: str, prompt: str, title: str, *,
-               resume_id: str | None = None, executor: str | None = None) -> None:
-    """一份活一个以任务书命名的终端标签页，几份并行也认得出谁是谁。"""
+               resume_id: str | None = None, executor: str | None = None) -> bool:
+    """一份活一个以任务书命名的终端标签页，几份并行也认得出谁是谁。
+
+    **起没起来以副本上有没有执行方进程为准**：`wt.exe` 开完标签页就返回 0，TUI 随即退出也照样成功，
+    曾因此多条线「已派出」却从没开工。等不到进程就重拉一次，仍没有返回 False，调用方不得记成已派出。
+    """
     worker = WORKERS[executor or default_worker()]
-    native.launch(worker.tui_command(copy_win, prompt, resume_id=resume_id), copy_win, title)
+    for _ in range(2):
+        native.launch(worker.tui_command(copy_win, prompt, resume_id=resume_id), copy_win, title)
+        for _ in range(LAUNCH_WAIT):
+            if tui_alive(copy_win):
+                return True
+            time.sleep(1)
+        print(f"{LAUNCH_WAIT} 秒内副本上没有执行方进程，重新拉起一次")
+    return False
 
 
 def origin_bare() -> Path:
@@ -929,7 +943,10 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         since = time.time()
         steps = worker.step_count(old_id)
-        launch_tui(copy_win, RECOVER_PROMPT, args.taskbook, resume_id=old_id, executor=executor)
+        if not launch_tui(copy_win, RECOVER_PROMPT, args.taskbook, resume_id=old_id,
+                          executor=executor):
+            print("恢复失败：执行方进程两次都没起来；台账不改。")
+            return 2
         # 恢复出来的会话是活的，**要重新计进额度**，否则它不占位、下一份就能挤进来。
         entry.pop("closed", None)
         entry["executor"] = executor
@@ -1064,8 +1081,10 @@ def main(argv: list[str] | None = None) -> int:
             close_session(copy_win)   # 换新会话之前把旧的关掉，别在同一副本上留两个
         since = time.time()
         steps = None if fresh else WORKERS[executor].step_count(old_id)
-        launch_tui(copy_win, prompt, args.taskbook, resume_id=None if fresh else old_id,
-                   executor=executor)
+        if not launch_tui(copy_win, prompt, args.taskbook, resume_id=None if fresh else old_id,
+                          executor=executor):
+            print("派活失败：执行方进程两次都没起来；台账不记，这一轮的交代已推送，查明后重派。")
+            return 2
         new_id = None
         for _ in range(WORKERS[executor].SESSION_WAIT):
             new_id = newest_session(copy_win, since, executor, None if fresh else old_id, steps)
