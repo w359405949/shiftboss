@@ -257,6 +257,9 @@ def new(repo: Path, name: str, *, copy: str, kind: str, branch: str = "") -> str
     """
     if kind not in KINDS:
         raise ValueError(f"子类型只能是 {' / '.join(KINDS)}；选哪种见 shiftboss/TEMPLATE.md 开头那张表")
+    # --copy 是执行方工作副本目录，不是合同草稿；合同正文写进建好的 contract.md。
+    if not Path(copy).is_dir():
+        raise ValueError(f"--copy 须是已存在的执行方工作副本目录，收到的是 {copy}")
     template = TEMPLATES / kind
     directory = repo / PLANS_DIR / name
     if directory.exists() or (repo / PLANS_DIR / f"{name}.md").exists():
