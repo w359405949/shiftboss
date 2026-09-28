@@ -272,20 +272,21 @@ def session_state(name: str, row: dict | None, entry: dict | None,
         # 照着它派会往正在干活的副本上再派一轮。**不知道就说不知道**，
         # 下一次派活会把这个字段补上。
         return "停着" if not (entry or {}).get("session_id") else "?（台账缺派出时刻）"
-    # 进程数不出「在干活」，但副本上没有执行方进程就一定没在干活：会话中途被杀时
-    # rollout 停不到等输入，只看它会一直报「在干活」。
-    if entry and entry.get("copy") and not entry.get("closed"):
+    pushed = last_push(git_dir, name)
+    # **这里只用会话时间戳做一次拆分，不用它替代 refs 的判断。**
+    # 会话最后一次动静**晚于这一轮派出时刻**、而且停在等输入上，
+    # 才说明它确实跑过这一轮然后停住了。早于派出时刻的，是还没接手。
+    stopped = _later(session_parked_at(entry), sent)
+    # 进程数不出「在干活」，但没停下的会话在副本上没有执行方进程就一定没在干活：
+    # 会话中途被杀时 rollout 停不到等输入，只看它会一直报「在干活」。
+    # 已停下的不看进程：标签页关没关不改变它在等什么，`recover` 只接回这一档。
+    if not stopped and entry and entry.get("copy") and not entry.get("closed"):
         try:
             from shiftboss.dispatch import copy_processes
             if not copy_processes(entry["copy"]):
                 return "进程已退出"
         except (RuntimeError, OSError, ImportError):
             pass
-    pushed = last_push(git_dir, name)
-    # **这里只用会话时间戳做一次拆分，不用它替代 refs 的判断。**
-    # 会话最后一次动静**晚于这一轮派出时刻**、而且停在等输入上，
-    # 才说明它确实跑过这一轮然后停住了。早于派出时刻的，是还没接手。
-    stopped = _later(session_parked_at(entry), sent)
     if pushed and sent <= pushed:
         # 这一轮已经推过了。**连做／自走推完一段还会往下做**，而那一段一旦被合掉，
         # `row` 就没了，从 refs 上看它和「交完停住了」一模一样。
