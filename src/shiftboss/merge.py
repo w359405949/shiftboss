@@ -484,6 +484,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--superseded-by", metavar="TASKBOOK",
                     help="与 --done 同用：余下的活已由该任务书接手，执行状态为「进展」也收")
     args = ap.parse_args(argv)
+    from shiftboss.state import require_dispatcher
+    require_dispatcher()
     holding = False
     try:
         if args.done:

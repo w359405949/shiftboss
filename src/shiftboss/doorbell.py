@@ -379,6 +379,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ignore-green", action="store_true",
                         help="全绿的验证行照样打印但不算响，不叫醒派活方")
     args = parser.parse_args(argv)
+    from shiftboss.state import require_dispatcher
+    require_dispatcher()
     fallback = default_path()
     try:
         return watch(args.path or fallback, args.heartbeat_minutes, fallback, args.once,

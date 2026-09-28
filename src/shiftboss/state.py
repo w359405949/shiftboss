@@ -81,6 +81,36 @@ def read_state(path: Path) -> dict:
             f"当空会静默重置游标/计数。先看它是不是写坏了，同目录的 .tmp 可能是好的。")
 
 
+DISPATCHER_NAME = "dispatcher.json"
+
+
+def claim_dispatcher(session_id: str) -> None:
+    """记下用户最后对话的会话：它就是派活方。由 UserPromptSubmit 钩子调用。"""
+    from shiftboss.config import control_dir
+    from shiftboss.inbox import origin_git_dir
+    from shiftboss.paths import project_root
+    write_state(control_dir(origin_git_dir(project_root())) / DISPATCHER_NAME,
+                {"session": session_id, "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+
+
+def require_dispatcher() -> None:
+    """派活方是用户最后对话的那个会话，其余会话的派活命令一律拒绝。
+
+    门铃重挂时无条件挤掉别的监听器；被挤掉的会话醒来会照常重挂，只有这里能让它停手。
+    不在 Claude Code 会话里（没有 `CLAUDE_CODE_SESSION_ID`）的调用是用户自己跑的，不拦。
+    """
+    from shiftboss.config import control_dir
+    from shiftboss.inbox import origin_git_dir
+    from shiftboss.paths import project_root
+    me = os.environ.get("CLAUDE_CODE_SESSION_ID")
+    owner = read_state(control_dir(origin_git_dir(project_root())) / DISPATCHER_NAME).get("session")
+    if me and owner and me != owner:
+        raise SystemExit(
+            f"拒绝：本会话不是派活方——用户最后对话的是会话 {owner}。\n"
+            "退出派活流程：不重挂门铃、不派活、不合并、不接回。用户在本会话发话后自动接手；"
+            "发话后仍被拒，说明本会话启动时还没有认领钩子，请用户重开本会话。")
+
+
 QUOTA_NAME = "quota.json"
 
 

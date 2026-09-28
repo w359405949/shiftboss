@@ -780,6 +780,9 @@ def main(argv: list[str] | None = None) -> int:
                          "也是 --quota 作用的执行方。--recover 沿用台账里的执行方。")
     args = ap.parse_args(argv)
 
+    from shiftboss.state import require_dispatcher
+    require_dispatcher()
+
     # 缺项目配置时各项静默取中性缺省，派出去的线会带着错的路径跑；配置由派活方生成（README 3.0）。
     from shiftboss import config
     if args.taskbook and not (args.close or args.recover) and (path := config.missing()):
