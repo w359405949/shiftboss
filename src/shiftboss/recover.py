@@ -33,8 +33,8 @@ from pathlib import Path
 REPO = project_root()
 
 def still_running(state: str, mode: str | None) -> bool:
-    """断电时这条线是不是确实还在执行：会话没停在等输入就是。`mode` 不再参与判断。"""
-    return state == "在干活"
+    """断电时这条线是不是确实还在执行：会话没停在等输入就是（进程已退出的也算，正是要接回的）。`mode` 不再参与判断。"""
+    return state in ("在干活", "进程已退出")
 
 
 def running_lines(repo: Path) -> list[tuple[str, str]]:
