@@ -246,7 +246,20 @@ SCAFFOLD_DELIVERY = """# 执行方交回
 """
 
 
-def new(repo: Path, name: str, *, copy: str, kind: str, branch: str = "") -> str:
+# 副本只按名字给（如 `codex6`），绝对路径由这里从 shiftboss 家目录算出；手写路径一律拒收。
+def copy_path(repo: Path, name: str) -> str:
+    """副本名 → 表头「你的工作副本」要写的绝对路径。"""
+    if not re.fullmatch(r"[A-Za-z]+[1-9][0-9]*", name):
+        raise ValueError(f"工作副本只给名字（如 codex6），不给路径：收到 {name}")
+    from shiftboss.config import copies_dir
+    from shiftboss.inbox import origin_git_dir
+    path = copies_dir(origin_git_dir(repo)) / name
+    if not path.is_dir():
+        raise ValueError(f"没有这个工作副本：{path}")
+    return str(path)
+
+
+def new(repo: Path, name: str, *, copy: str = "", kind: str, branch: str = "") -> str:
     """按子类型搭一份新任务书的目录骨架。**新建走这里，不要手抄模板。**
 
     **子类型必须选**（`task`／`repair`／`conflict`）：它只决定合同骨架，
@@ -257,9 +270,6 @@ def new(repo: Path, name: str, *, copy: str, kind: str, branch: str = "") -> str
     """
     if kind not in KINDS:
         raise ValueError(f"子类型只能是 {' / '.join(KINDS)}；选哪种见 shiftboss/TEMPLATE.md 开头那张表")
-    # --copy 是执行方工作副本目录，不是合同草稿；合同正文写进建好的 contract.md。
-    if not Path(copy).is_dir():
-        raise ValueError(f"--copy 须是已存在的执行方工作副本目录，收到的是 {copy}")
     template = TEMPLATES / kind
     directory = repo / PLANS_DIR / name
     if directory.exists() or (repo / PLANS_DIR / f"{name}.md").exists():
@@ -269,7 +279,7 @@ def new(repo: Path, name: str, *, copy: str, kind: str, branch: str = "") -> str
         "阻塞于": "—",
         "编写时间": __import__("datetime").date.today().isoformat(),
         "分支": branch or f"codex/{name}",
-        "你的工作副本": copy,
+        "你的工作副本": copy_path(repo, copy) if copy else "",
         "轮次": 0,
     }
     meta.update(json.loads((template / META).read_text(encoding="utf-8")))
@@ -399,7 +409,7 @@ def main(argv=None) -> int:
     ap.add_argument("name")
     ap.add_argument("--field", action="append", default=[], metavar="键=值",
                     help="set：改 meta.json 的一格；可重复。**这是改它的唯一入口**")
-    ap.add_argument("--copy", default="", help="new：工作副本绝对路径")
+    ap.add_argument("--copy", default="", help="new：工作副本名（如 codex6）；不给则派活时自动分空闲副本")
     ap.add_argument("--branch", default="", help="new：分支名，默认 codex/<名字>")
     ap.add_argument("--kind", choices=KINDS, default=None,
                     help="new：子类型（shiftboss/templates/ 下的目录名）；见 TEMPLATE.md 开头那张表")
@@ -407,14 +417,13 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     repo = project_root()
     if args.command == "new":
-        if not args.copy:
-            print("new 要 --copy <工作副本绝对路径>：那一格只有派活方给得出")
-            return 2
         if not args.kind:
             print(f"new 要 --kind {'|'.join(KINDS)}：选哪种见 shiftboss/TEMPLATE.md 开头那张表")
             return 2
-        print(new(repo, args.name, copy=args.copy, kind=args.kind, branch=args.branch))
         pairs = dict(f.split("=", 1) for f in args.field if "=" in f)
+        if pairs.get("你的工作副本"):
+            pairs["你的工作副本"] = copy_path(repo, pairs["你的工作副本"])
+        print(new(repo, args.name, copy=args.copy, kind=args.kind, branch=args.branch))
         if pairs:
             Taskbook.find(repo, args.name).set_meta(**pairs)
             print("表头：" + "；".join(f"{k} → {v}" for k, v in pairs.items()))
@@ -428,6 +437,8 @@ def main(argv=None) -> int:
         if not pairs:
             print("set 要 --field 键=值")
             return 2
+        if pairs.get("你的工作副本"):
+            pairs["你的工作副本"] = copy_path(repo, pairs["你的工作副本"])
         book.set_meta(**pairs)
         print(f"{args.name}：" + "；".join(f"{k} → {v}" for k, v in pairs.items()))
         return 0

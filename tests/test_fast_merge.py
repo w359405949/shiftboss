@@ -62,7 +62,7 @@ class TaskbookKinds(unittest.TestCase):
             repo = Path(root)
             for kind in KINDS:
                 name = f'probe-{kind}'
-                new(repo, name, copy='C:/copy', kind=kind)
+                new(repo, name, kind=kind)
                 book = Taskbook.find(repo, name)
                 meta, contract = book.meta(), book.contract_text()
                 self.assertEqual(meta['子类型'], kind)
@@ -73,7 +73,13 @@ class TaskbookKinds(unittest.TestCase):
                 self.assertTrue(dispatch.keeps_going(meta['交付模式']), kind)
                 self.assertIn('2.4', contract, kind)
             with self.assertRaises(ValueError):
-                new(repo, 'probe-bogus', copy='C:/copy', kind='bogus')
+                new(repo, 'probe-bogus', kind='bogus')
+
+    def test_copy_is_given_by_name_not_path(self):
+        from shiftboss.taskbook import copy_path
+        for bad in (r'C:\scratch\boss-mode.md', 'E:/x/codex6', 'boss-mode.md'):
+            with self.assertRaises(ValueError):
+                copy_path(Path('.'), bad)
 
 
 class FastMergeAcceptance(unittest.TestCase):
@@ -372,7 +378,7 @@ class RoundNumbering(unittest.TestCase):
         from shiftboss.taskbook import Taskbook, new
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            new(root, 'probe', copy=str(root), kind='task')
+            new(root, 'probe', kind='task')
             book = Taskbook.find(root, 'probe')
             (book.path/'rounds.md').write_text(
                 '# 轮次记录\n\n## 当前盘面\n\n1. x\n\n## 已压掉的 35 轮记录（第 1–35 轮，见 git）\n',
@@ -462,8 +468,8 @@ class ForeignSessionAcceptance(unittest.TestCase):
         from shiftboss.taskbook import Taskbook, new
         for index, (kind, mode) in enumerate((('task', None), ('repair', None), ('task', '连做 15'))):
             name = f'probe-{index}'
-            new(self.root, name, copy=str(self.copy), kind=kind)
-            fields = {'状态': '待派', '完成标准': '原型', **({'交付模式': mode} if mode else {})}
+            new(self.root, name, kind=kind)
+            fields = {'你的工作副本': str(self.copy), '状态': '待派', '完成标准': '原型', **({'交付模式': mode} if mode else {})}
             Taskbook.find(self.root, name).set_meta(**fields)
             with patch.object(dispatch, 'REPO', self.root), \
                  patch.object(dispatch, 'read_quota', return_value=5), \

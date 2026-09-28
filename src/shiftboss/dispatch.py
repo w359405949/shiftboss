@@ -607,10 +607,17 @@ def switch_copy(executor: str, entry: dict, old_copy: str, branch: str, ledger: 
         if git(old_copy, "rev-parse", "--abbrev-ref", "HEAD") == branch and git(
                 old_copy, "rev-list", "--count", f"origin/{branch}..HEAD") not in ("", "0"):
             raise ValueError(f"拒绝换执行方：旧副本 {old_copy} 上 {branch} 有未推送提交")
+    return free_copy(executor, ledger)
+
+
+def free_copy(executor: str, ledger: dict) -> str:
+    """该执行方池里的空闲副本：台账没人占、工作树干净、上面没有进程。"""
     for candidate in copies_by_preference(executor):
         copy = str(candidate)
         held = any(not e.get("closed") and same_dir(e.get("copy"), copy) for e in ledger.values())
-        if not held and not git(copy, "status", "--porcelain") and not copy_processes(copy):
+        clean = not subprocess.run(["git", "-C", copy, "status", "--porcelain"], capture_output=True,
+                                   text=True, encoding="utf-8", errors="replace").stdout.strip()
+        if not held and clean and not copy_processes(copy):
             return copy
     raise ValueError(f"拒绝：{executor} 没有空闲副本")
 
@@ -834,6 +841,14 @@ def main(argv: list[str] | None = None) -> int:
     copy_win = cells.get("你的工作副本", "")
     branch = cells.get("分支", "")
     status = cells.get("调度状态", "")
+    # 表头没写副本：首派时从执行方的池里分一个空闲的，随本轮交代一并写回表头。
+    assigned_copy = ""
+    if not copy_win and not args.close and not args.recover:
+        try:
+            copy_win = assigned_copy = free_copy(args.executor, load_sessions())
+        except ValueError as exc:
+            print(exc)
+            return 2
     if not copy_win or not branch:
         print("任务书表头缺「你的工作副本」或「分支」，补齐再派")
         return 2
@@ -876,7 +891,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # 执行方按轮定：恢复沿用台账里那一轮的，其余取本次参数；副本不在该执行方的池里就换一个空闲的。
     executor = executor_of(entry.get("executor")) if args.recover else args.executor
-    new_copy = ""
+    new_copy = assigned_copy
     if not args.recover and copy_pool(copy_win) != executor:
         try:
             new_copy = switch_copy(executor, entry, copy_win, branch, ledger)
