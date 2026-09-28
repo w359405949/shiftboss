@@ -19,7 +19,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 | `shiftboss inbox` | 各线状态与验证状态的唯一来源 |
 | `shiftboss merge` | 合并；`--done` 关会话并归档 |
 | `shiftboss verify` | 常驻验证：生成、全量测试、打包、归因、报红 |
-| `shiftboss recover` | 拉起该在执行而进程没了的线；派活方的会话启动钩子每次开会话都跑它 |
+| `shiftboss recover` | 拉起该在执行而进程没了的线；派活方会话恢复时由钩子跑 |
 | `shiftboss bell` | 推送通知 |
 | `shiftboss bootstrap` | 准备 bare、工作副本、钩子与本目录文档 |
 | `shiftboss regen` | 分层生成；产物名单由生产端经 `shiftboss.outputs` 声明 |
@@ -113,7 +113,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 
 ### 3.1 流程
 
-1. 开工与换会话接手先读会话启动钩子的 `recover` 输出，再跑 `shiftboss inbox status`；状态从 hub 的分支与任务书现算，不依赖会话记忆。
+1. 开工与换会话接手先跑 `shiftboss inbox status` 与 `shiftboss recover --check`；状态从 hub 的分支与任务书现算，不依赖会话记忆。
 2. 写任务书，提交并推送。**例外**：shiftboss 自身由派活方直接修改，不派。
 3. 派活由派活方自己运行 `shiftboss dispatch`，不交给用户；目标副本须空闲。执行方命令行不在 PATH 上是常态，由执行方插件解析，判断「没装」前先查插件。
 4. 各线状态只以收件箱为准，不看进程与会话记录。
@@ -181,7 +181,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 
 ### 3.8 断电／崩溃
 
-各线由会话启动钩子的 `recover` 拉起，派活方恢复 3.0 的基础设施。不做现场检查；拉起不是核对。
+派活方会话恢复时，钩子跑 `recover` 拉起各线，派活方按 3.0 重挂门铃、恢复基础设施。不做现场检查；拉起不是核对。
 
 ## 4. 执行方
 
