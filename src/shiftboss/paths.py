@@ -1,6 +1,8 @@
 """项目根：使用 shiftboss 的那个 git 工作树。"""
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -29,9 +31,38 @@ def package_dir_in(root: Path) -> str | None:
         return None
 
 
+def origin_url(repo: Path) -> str:
+    """`remote.origin.url` 原文；没配置给空串。"""
+    return subprocess.run(["git", "-C", str(repo), "config", "remote.origin.url"],
+                          capture_output=True, text=True, encoding="utf-8").stdout.strip()
+
+
+def origin_path(repo: Path) -> Path | None:
+    """本机 origin 的绝对路径；相对写法按 `repo` 所在工作树的顶层解析（与 git 一致）。不是本机路径给 None。"""
+    url = origin_url(repo)
+    if not url or "://" in url or url.startswith("git@"):
+        return None
+    top = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True, encoding="utf-8").stdout.strip()
+    return (Path(top or repo) / url).resolve()
+
+
+def relative_url(target: Path, repo: Path) -> str:
+    """写进 origin 的写法：相对工作树顶层、正斜杠。Windows 与 WSL 的 git 都按顶层解析，两边都认。"""
+    return Path(os.path.relpath(Path(target).resolve(), Path(repo).resolve())).as_posix()
+
+
+_DRIVE = re.compile(r"^([A-Za-z]):[\\/]")
+
+
+def _dir_key(path: str) -> str:
+    """Windows 盘符路径换成 WSL 挂载写法（`E:\\x` → `/mnt/e/x`），再统一斜杠、大小写与末尾分隔符。"""
+    path = _DRIVE.sub(lambda m: f"/mnt/{m[1].lower()}/", path)
+    return path.replace("\\", "/").rstrip("/").lower()
+
+
 def same_dir(a: str | None, b: str | None) -> bool:
-    """两个目录写法是否指同一处：不分大小写、不分斜杠方向、不计末尾分隔符。"""
+    """两个目录写法是否指同一处：Windows 盘符与 `/mnt/<盘>` 视为同一处，不分大小写、斜杠方向与末尾分隔符。"""
     if not a or not b:
         return False
-    return (a.replace("/", "\\").rstrip("\\").lower()
-            == b.replace("/", "\\").rstrip("\\").lower())
+    return _dir_key(a) == _dir_key(b)

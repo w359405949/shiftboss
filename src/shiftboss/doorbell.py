@@ -102,11 +102,11 @@ def default_path() -> Path:
     """门铃在 origin 里。**位置从仓库配置读，不写死**——改目录层级时写死的那份会指到
     仓库外面，返回空，然后在第一次用到它的地方才报错。"""
     repo = project_root()
-    url = subprocess.run(["git", "-C", str(repo), "config", "remote.origin.url"],
-                         capture_output=True, text=True).stdout.strip()
-    if not url:
-        raise SystemExit(f"在 {repo} 读不到 remote.origin，不知道去哪儿盯")
-    return bell_path(Path(url))
+    from shiftboss.paths import origin_path
+    path = origin_path(repo)
+    if path is None:
+        raise SystemExit(f"在 {repo} 读不到本机 remote.origin，不知道去哪儿盯")
+    return bell_path(path)
 
 
 def watched_path(proc: psutil.Process, fallback: Path) -> Path | None:
@@ -170,6 +170,16 @@ def listening(path: Path | None = None) -> bool:
         return True          # 判不了就别报警，宁可不说也不误报
 
 
+def lock_nowait(handle) -> None:
+    """不等待地独占锁住文件，抢不到抛 OSError；锁随进程释放。"""
+    if os.name == "nt":
+        import msvcrt
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
 def acquire(lock_path: Path, path: Path, fallback: Path):
     """独占锁：**后来的挤掉先来的。**
 
@@ -182,11 +192,10 @@ def acquire(lock_path: Path, path: Path, fallback: Path):
     杀掉再抢。代价是万一那个会话真的还开着，它会失去门铃，**那只影响快慢**：
     它开工跑的 `shiftboss.inbox list` 不依赖门铃。
     """
-    import msvcrt
     for attempt in (1, 2):
         handle = open(lock_path, "a+b")
         try:
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            lock_nowait(handle)
             return handle
         except OSError:
             handle.close()

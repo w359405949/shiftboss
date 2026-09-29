@@ -28,7 +28,7 @@ Codex 副本信任由 dispatch 启动 TUI 时用 `-c` 逐次传入，这里不�
 """
 
 from __future__ import annotations
-from shiftboss.paths import project_root
+from shiftboss.paths import origin_path, origin_url, project_root, relative_url
 
 import argparse
 import re
@@ -56,11 +56,11 @@ def copy_paths(bare: Path, count: int, executor: str = "codex") -> list[Path]:
 
 def ensure_bare(repo: Path, check: bool) -> Path:
     # 从执行副本运行也沿用同一个 origin，不在副本旁另建 bare 或副本。
-    url = run("git", "-C", str(repo), "config", "remote.origin.url").stdout.strip()
-    if url and "://" not in url and not url.startswith("git@"):
-        configured = (repo / url).resolve()
+    configured = origin_path(repo)
+    if configured is not None:
         require_bare(configured)
         return configured
+    url = origin_url(repo)
     from shiftboss.config import HUB_NAME
     bare = repo.parent / (repo.name + ".shiftboss") / HUB_NAME
     if not bare.exists():
@@ -70,14 +70,14 @@ def ensure_bare(repo: Path, check: bool) -> Path:
         run("git", "clone", "--bare", str(repo), str(bare), check=True)
         print(f"建好 bare origin：{bare}")
     require_bare(bare)
-    if Path(url or ".").resolve() != bare.resolve():
+    if url != relative_url(bare, repo):
         if check:
             print(f"origin 没指向 bare（现在是 {url or '空'}）")
         else:
             if url:
                 run("git", "-C", str(repo), "remote", "remove", "origin", check=True)
             run("git", "-C", str(repo), "remote", "add", "origin",
-                str(bare).replace("\\", "/"), check=True)
+                relative_url(bare, repo), check=True)
             print(f"origin 指向 {bare}")
     return bare
 
@@ -106,8 +106,8 @@ def require_copy(path: Path, bare: Path) -> None:
     if Path(top).resolve() != path.resolve():
         raise ValueError(f"副本路径不是独立工作树：{path}")
     run("git", "-C", str(path), "rev-parse", "--verify", "HEAD", check=True)
-    url = run("git", "-C", str(path), "config", "remote.origin.url", check=True).stdout.strip()
-    if (path / url).resolve() != bare.resolve():
+    url = origin_url(path)
+    if origin_path(path) != bare.resolve():
         raise ValueError(f"已有副本指向不同 origin，保持原样：{path} → {url}")
 
 
@@ -139,7 +139,10 @@ def ensure_copies(repo: Path, bare: Path, count: int, check: bool,
             print(f"缺工作副本：{path}")
             continue
         if new:
-            run("git", "clone", str(bare).replace("\\", "/"), str(path), check=True)
+            run("git", "clone", str(bare), str(path), check=True)
+            # clone 记下的是绝对路径，换成相对写法。
+            run("git", "-C", str(path), "remote", "set-url", "origin",
+                relative_url(bare, path), check=True)
             print(f"克隆工作副本：{path.name}")
         require_copy(path, bare)
         # 已有副本绝不补写本机文件，缺配置就明确失败。提交守卫在 .git/hooks、不在工作树里，

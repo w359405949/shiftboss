@@ -3,7 +3,8 @@
 file=$1
 fail() { printf '{"ok": false, "error": "%s"}\n' "$1"; exit 1; }
 command -v tmux >/dev/null 2>&1 || fail "没有 tmux"
-tmux has-session 2>/dev/null || fail "没有运行中的 tmux 会话"
-xargs -0 sh -c 'cwd=$1; title=$2; shift 2; exec tmux new-window -n "$title" -c "$cwd" "$@"' sh < "$file" \
+# 没有 tmux 会话就建一个后台的 shiftboss 会话，用 `tmux attach -t shiftboss` 查看。
+tmux has-session 2>/dev/null || tmux new-session -d -s shiftboss || fail "建不了 tmux 会话"
+xargs -0 sh -c 'cwd=$1; title=$2; shift 2; exec tmux new-window -d -n "$title" -c "$cwd" "$@"' sh < "$file" \
     || fail "tmux new-window 失败"
 printf '{"ok": true, "terminal": "tmux"}\n'

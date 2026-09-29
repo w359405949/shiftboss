@@ -43,14 +43,12 @@ def _git(git_dir: Path, *args: str) -> str:
 
 def origin_git_dir(repo: Path) -> Path:
     """origin 的路径从仓库配置里读，不写死——换个项目也能用。"""
-    url = subprocess.run(
-        ["git", "-C", str(repo), "config", "remote.origin.url"],
-        capture_output=True, text=True, encoding="utf-8",
-    ).stdout.strip()
+    from shiftboss.paths import origin_path, origin_url
+    url = origin_url(repo)
     if not url:
         raise SystemExit("没有配置 remote.origin，不知道去哪儿看分支")
-    path = Path(url)
-    if not path.exists():
+    path = origin_path(repo)
+    if path is None or not path.exists():
         raise SystemExit(f"origin 不是本机路径，这个工具只认本机 bare 仓库：{url}")
     return path
 
@@ -114,18 +112,16 @@ def survey(repo: Path, git_dir: Path) -> list[dict]:
     """
     rows = []
     rejected = load_rejected(git_dir)
-    refs = _git(git_dir, "for-each-ref", "--format=%(refname:short)%09%(committerdate:iso-strict)",
+    # 已并进 main 的一次筛掉：逐分支起 git 进程在 WSL 的 /mnt 上每次要几秒。origin 还没有 main 时全算未并入。
+    has_main = subprocess.run(["git", f"--git-dir={git_dir}", "rev-parse", "--verify", "-q",
+                               "refs/heads/main"], capture_output=True).returncode == 0
+    refs = _git(git_dir, "for-each-ref", *(["--no-merged=main"] if has_main else []),
+                "--format=%(refname:short)%09%(committerdate:iso-strict)",
                 "refs/heads/codex/*").splitlines()
     for entry in refs:
         if "\t" not in entry:
             continue
         branch, pushed = entry.split("\t", 1)
-        merged = subprocess.run(
-            ["git", f"--git-dir={git_dir}", "merge-base", "--is-ancestor", branch, "main"],
-            capture_output=True,
-        ).returncode == 0
-        if merged:
-            continue
         name = branch.split("/", 1)[1]
         tip = _git(git_dir, "rev-parse", branch).strip()
         # 退回的轮次永远不会被合并，光靠「并没并进 main」判不出「核过没有」。

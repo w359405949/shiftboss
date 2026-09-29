@@ -1,6 +1,6 @@
 """Codex 执行方插件：定位 CLI、起 TUI、读 rollout、往活会话投消息。**Codex 的会话细节只有这一份。**
 
-`codex.exe` 不在 `PATH` 上，安装路径里夹着一段随版本变的哈希：
+非 Windows（含 WSL）下 `codex` 在 `PATH` 上，直接用。Windows 下 `codex.exe` 不在 `PATH` 上，安装路径里夹着一段随版本变的哈希：
 
     %LOCALAPPDATA%\\OpenAI\\Codex\\bin\\<hash>\\codex.exe
 
@@ -37,12 +37,17 @@ MISSING = """找不到 codex.exe。依次查过：
 
 
 def resolve_codex() -> Path:
-    """找到 `codex.exe`。
+    """找到 `codex.exe`；非 Windows（含 WSL）只认 `PATH` 上的 `codex`。
 
     **调用方不要经过 bash 去找它**——`bash` 在 `PATH` 上可能是 WSL 的那个，
     WSL 坏掉时它会失败，而 `Popen` 依然成功返回，于是「已派出」是假的：
     派活台账记下了会话，实际什么都没起来。
     """
+    if os.name != "nt":
+        found = shutil.which("codex")
+        if found:
+            return Path(found)
+        raise SystemExit("找不到 codex：非 Windows 只查 PATH。")
     localapp = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
     hits = sorted((localapp / "OpenAI/Codex/bin").glob("*/codex.exe"),
                   key=lambda q: q.stat().st_mtime, reverse=True)
