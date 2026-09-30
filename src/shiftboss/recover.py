@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把该在执行而进程没了的那几条线接回来。**只做这一件事。**
+"""把该在执行而进程没了的那几条线接回来；常驻验证留下旧锁而进程没了时一并重起。
 
     shiftboss recover --check     # 只报告，不动手
     shiftboss recover             # 逐条 resume
@@ -64,6 +64,21 @@ def running_lines(repo: Path) -> list[tuple[str, str]]:
     return out
 
 
+def restart_verifier(check: bool) -> None:
+    """旧锁在、进程没了＝重启前在跑、被中断；没有锁的不起（那是有意停的）。"""
+    import psutil
+    from shiftboss.verify import origin, state_dir
+    lock = state_dir(origin(REPO)) / "worker.lock"
+    if not lock.exists():
+        return
+    holder = lock.read_text(encoding="utf-8").strip()
+    if holder.isdigit() and psutil.pid_exists(int(holder)):
+        return
+    print(f"常驻验证 PID {holder or '无'} 已不在{'（只检查）' if check else '，重起'}")
+    if not check:
+        subprocess.run([sys.executable, "-B", "-m", "shiftboss.verify", "start", "--publish"], cwd=REPO)
+
+
 def main(argv: list[str] | None = None) -> int:
     """把该在执行而进程没了的那几条线接回来；收拾现场是执行方的活。"""
     ap = argparse.ArgumentParser(description=__doc__,
@@ -71,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--check", action="store_true", help="只报告，不动手")
     args = ap.parse_args(argv)
 
+    restart_verifier(args.check)
     lines = running_lines(REPO)
     if not lines:
         print(f"shiftboss recover：{REPO.parent} 没有该在执行而进程没了的线。")
