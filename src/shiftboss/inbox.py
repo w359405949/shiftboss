@@ -127,6 +127,11 @@ def survey(repo: Path, git_dir: Path) -> list[dict]:
         # 退回的轮次永远不会被合并，光靠「并没并进 main」判不出「核过没有」。
         if tip in rejected.get(name, []):
             continue
+        # 归档后执行方仍可能再推（改措辞等），分支因此「未并入」；归档即已收摊，不再挂出。
+        from shiftboss.taskbook import Taskbook
+        book = Taskbook.find(repo, name)
+        if book is not None and book.archived:
+            continue
         meta, text = taskbook_of(git_dir, branch, name)
         if meta is None:
             rows.append(dict(name=name, tip=tip, pushed=pushed, state="没有任务书",
