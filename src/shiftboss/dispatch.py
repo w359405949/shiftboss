@@ -1087,6 +1087,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"会话 {old_id} 停在等输入，已关掉，改为带着新一轮提示词恢复"
               + (f"（第 {attempts} 次返工）" if args.rework else ""))
 
+    launched = False
     if fresh or not delivered:
         # `resume <id> <prompt>` 带着历史重开；`fresh` 时不带 id，就是全新的干净上下文。
         denied = foreign_session_reason(copy_win, entry)
@@ -1114,6 +1115,7 @@ def main(argv: list[str] | None = None) -> int:
         new_id = new_id or (None if fresh else old_id)
         if burned:
             print(f"\n返工已满 {MAX_ATTEMPTS} 次，换了新会话（历史丢掉是有意的）")
+        launched = True
         entry = {"session_id": new_id, "copy": copy_win, "branch": branch,
                  "processes": launched_identities(copy_win),
                  "attempts": 0 if (args.fresh or burned) else attempts,
@@ -1142,6 +1144,12 @@ def main(argv: list[str] | None = None) -> int:
     from shiftboss.inbox import origin_git_dir, write_status
     write_status(REPO, origin_git_dir(REPO))
 
+    if launched and not entry.get("processes"):
+        # 标签页开了、执行方进程 30 秒内没起来：照样报「已派出」会让这条线静静躺着。
+        # 台账已记，`shiftboss recover` 能按「进程已退出」接回。
+        print(f"\n派活失败：{args.taskbook} 的执行方进程 30 秒内没起来；"
+              f"台账已记，`shiftboss inbox status` 确认后 `shiftboss dispatch {args.taskbook} --fresh` 重派。")
+        return 2
     on = subprocess.run(["git", "-C", str(copy), "rev-parse", "--abbrev-ref", "HEAD"],
                         capture_output=True, text=True).stdout.strip()
     print(f"\n已派出。标签页 {args.taskbook}，目标分支 {branch}"
