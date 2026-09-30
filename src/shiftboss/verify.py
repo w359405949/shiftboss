@@ -204,7 +204,14 @@ def show_report(remote: Path) -> str:
     if active.get('commit') and active['commit'] != latest:
         gap += f"；正在验 {active['commit'][:12]}"
     lines.append(f"  已验到 {(latest or '未知')[:12]}；{gap}。")
-    if not (state_dir(remote)/'worker.lock').exists(): lines.append('  常驻验证当前未持锁；派活方需确认进程已启动。')
+    lock=state_dir(remote)/'worker.lock'
+    if not lock.exists(): lines.append('  常驻验证当前未持锁；派活方需确认进程已启动。')
+    else:
+        # 重启或崩溃后锁文件留着、进程没了：「正在验」是旧状态，不能当作在跑。
+        import psutil
+        holder=lock.read_text(encoding='utf-8').strip()
+        if not (holder.isdigit() and psutil.pid_exists(int(holder))):
+            lines.append(f'  常驻验证进程 PID {holder or "无"} 已不在，以下「正在验」为旧状态；重起：shiftboss verify start --publish')
     # **门铃停了没有任何东西会说。** 它每响一次就退出，要派活方重挂；
     # 忙别的事忘了重挂时，推送照常进来而这边一无所知——2026-09-21 就这么漏掉了
     # 四条线共六段。常驻验证有「未持锁」这条提醒，门铃没有，这里补齐。
