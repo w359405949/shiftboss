@@ -259,9 +259,11 @@ def claim(remote: Path, ticket: str, taskbook: str):
     claims=read_state(state_dir(remote)/'claims.json')
     claims[ticket]={'taskbook':taskbook,'session_id':entry['session_id'],'claimed':time.time()}
     write_state(state_dir(remote)/'claims.json',claims)
+    # 二分归因期间报告已发布、筛查还没写；那时认领只记 claims.json，筛查写出时照它填。
     path=state_dir(remote)/'findings'/f'{ticket}.md'
-    text=path.read_text(encoding='utf-8').replace('| 状态 | 待派 |','| 状态 | 已认领 |').replace('| 负责 | 派活方 |',f"| 负责 | {taskbook} / {entry['session_id']} |")
-    path.write_text(text,encoding='utf-8')
+    if path.is_file():
+        text=path.read_text(encoding='utf-8').replace('| 状态 | 待派 |','| 状态 | 已认领 |').replace('| 负责 | 派活方 |',f"| 负责 | {taskbook} / {entry['session_id']} |")
+        path.write_text(text,encoding='utf-8')
     ring(remote,f'claimed {ticket} {taskbook}')
     print(f"已认领 {ticket} → {taskbook} / 会话 {entry['session_id']}")
 
@@ -709,7 +711,9 @@ class Verifier:
         owners=taskbooks_touching(self.remote,paths[:40]) if paths else []
         same=[q.stem for q in (self.directory/'findings').glob('*.md')
               if q.stem!=item['ticket'] and item['id'] in q.read_text(encoding='utf-8')]
-        rows=[f"| 状态 | 待派 |", f"| 负责 | 派活方 |",
+        claim=read_state(self.directory/'claims.json').get(item['ticket'])
+        rows=[f"| 状态 | {'已认领' if claim else '待派'} |",
+              f"| 负责 | {claim['taskbook']+' / '+claim['session_id'] if claim else '派活方'} |",
               f"| 首次观察提交 | {sha} |",
               f"| 引入提交 | {introduced or '基线已红，起点未知'} |",
               f"| 稳定性 | {flaky_history(self.directory,item['id'])} |",

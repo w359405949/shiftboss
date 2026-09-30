@@ -126,6 +126,18 @@ class VerificationAcceptance(unittest.TestCase):
                 try: process.wait(timeout=15)
                 except subprocess.TimeoutExpired: process.terminate();process.wait();raise
         self.assertEqual(process.returncode,0,log.read_text(encoding='utf-8'))
+    def test_claim_before_finding_is_written(self):
+        """二分归因期间报告已发布、筛查未写：认领照样成立，筛查写出时带上认领。"""
+        (self.repo/'value.txt').write_text('bad');bad=self.commit('deliberately break payload');self.git('push','-q','origin','main')
+        worker=Verifier(self.repo,self.workspace,publish=False)
+        failure=worker.run(bad,False)['failures'][0]
+        finding=state_dir(self.remote)/'findings'/f"{failure['ticket']}.md"
+        finding.unlink()
+        write_state(control_dir(self.remote)/'sessions.json',{'repair':{'session_id':'early-session','closed':False}})
+        claim(self.remote,failure['ticket'],'repair')
+        text=worker.finding(failure,bad)
+        self.assertIn('| 状态 | 已认领 |',text)
+        self.assertIn('| 负责 | repair / early-session |',text)
     def test_stale_generation_merges_onto_new_main(self):
         """main 前进时生成提交三方合并后发布：新源保留，派生物不再饿死。"""
         (self.repo/'asset.json').write_text('{}');old=self.commit('stale published artifact');self.git('push','-q','origin','main')
