@@ -400,10 +400,12 @@ def stalled_lines(repo: Path, git_dir: Path,
         if state != "进程已退出" and (age is None or age < STALE_HOURS):
             continue
         meta = book.meta()
+        signs = started_signs(meta.get("你的工作副本", ""), meta.get("分支", ""))
+        if state == "进程已退出":
+            # 不看年龄就报；刚派出、进程尚未起来时也会短暂出现，持续才需 recover。
+            signs = "进程已退出（刚派出时可能短暂出现；持续则 shiftboss recover）；" + signs
         out.append((book.name, age or 0.0,
-                    (meta.get("你的工作副本") or "").split(chr(92))[-1],
-                    started_signs(meta.get("你的工作副本", ""),
-                                  meta.get("分支", ""))))
+                    (meta.get("你的工作副本") or "").split(chr(92))[-1], signs))
     return out
 
 
@@ -636,7 +638,7 @@ def write_status(repo: Path, git_dir: Path) -> str:
             lines_out.append(f"- `{copy}`：" + "、".join(f"`{n}`" for n in names))
     stalled = stalled_lines(repo, git_dir, live)
     if stalled:
-        lines_out += ["", f"## ⚠ 在干活、超过 {STALE_HOURS:g} 小时没动静", "",
+        lines_out += ["", f"## ⚠ 在干活、超过 {STALE_HOURS:g} 小时没动静或进程已退出", "",
                       "**去那个标签页看一眼；确实死了就 `--fresh` 重派。"
                       "不要去数 `codex.exe`**——理由见 `stalled_lines`。", ""]
         for name, age, copy, signs in stalled:
@@ -765,7 +767,7 @@ def main(argv: list[str] | None = None) -> int:
                         + unattended_warning(repo, git_dir, load_sessions())))
     stalled = stalled_lines(repo, git_dir, live)
     if stalled:
-        print(f"\n在干活、超过 {STALE_HOURS:g} 小时没动静的 {len(stalled)} 条"
+        print(f"\n在干活、超过 {STALE_HOURS:g} 小时没动静或进程已退出的 {len(stalled)} 条"
               f"（**去那个标签页看一眼；确实死了就 `--fresh` 重派**）：")
         for name, age, copy, signs in stalled:
             print(f"  {name:<40} 已 {humanize(age):<14} {copy}")
