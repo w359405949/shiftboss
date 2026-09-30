@@ -57,7 +57,12 @@ def test_ownership(plan: dict) -> dict[str, str]:
     gates = plan["gates"]
     indices = [index for layer in layers.values() for index in layer["gates"]]
     if sorted(indices) != list(range(len(gates))):
-        raise ValueError("每道闸必须恰好归属一层")
+        missing = [i for i in range(len(gates)) if i not in indices]
+        extra = sorted({i for i in indices if indices.count(i) > 1 or i >= len(gates)})
+        detail = "；".join(filter(None, [
+            "未归层：" + "、".join(f"{i} {' '.join(gates[i])}" for i in missing) if missing else "",
+            f"重复或越界下标：{extra}" if extra else ""]))
+        raise ValueError(f"每道闸必须恰好归属一层（{detail}；gates 中间插入会使其后下标顺移）")
     owners = {}
     for name, layer in layers.items():
         if not layer["gates"]:
