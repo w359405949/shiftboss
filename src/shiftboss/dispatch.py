@@ -956,7 +956,9 @@ def main(argv: list[str] | None = None) -> int:
         if tui_alive(copy_win) and not worker.CAN_QUEUE and worker.parked_at(old_id):
             close_session(copy_win)
         if tui_alive(copy_win):
-            print("拒绝：活会话未确认收到消息；先关掉那个标签页再来，不开第二个。")
+            # 消息可能已进队列、只是确认超时：会话随后照样开工，重派会撞上「还在做本轮」。
+            print("拒绝：消息已投进活会话但未在时限内确认，它可能随后开工；"
+                  "先 `shiftboss inbox status` 看是否转为在干活，仍停着再关掉那个标签页重来，不开第二个。")
             return 2
         since = time.time()
         steps = worker.step_count(old_id)
