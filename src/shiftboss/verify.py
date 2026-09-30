@@ -287,6 +287,8 @@ def taskbooks_touching(remote: Path, paths: list[str]) -> list[str]:
     hits=[]
     for name in listing.stdout.split():
         if not name.endswith('.md'): continue
+        # 名为「在办」：归档的线已收摊，列进来只会淹没真正该看的那几条。
+        if f'{PLANS_DIR}/archive/' in name: continue
         text=git(remote,'show',f'refs/heads/main:{name}',check=False)
         if text.returncode: continue
         if not any(path in text.stdout for path in paths): continue
