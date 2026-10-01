@@ -218,7 +218,8 @@ def show_report(remote: Path) -> str:
     try:
         from shiftboss.doorbell import listening
         if not listening():
-            lines.append('  门铃当前没人听；重挂：shiftboss bell --once --ignore-green --heartbeat-minutes 120')
+            from shiftboss.doorbell import REARM_COMMAND
+            lines.append(f'  门铃当前没人听；重挂：{REARM_COMMAND}')
     except Exception:
         pass
     stale=stale_worker_code(remote,index)

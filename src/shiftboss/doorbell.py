@@ -285,6 +285,12 @@ def _event_time(line: str) -> float | None:
     return (moment if moment.tzinfo else moment.astimezone()).timestamp()
 
 
+# 推荐的重挂命令只在这里写一处。**心跳必须短于宿主的后台时限**：Claude Code 的后台命令
+# 满 30 分钟即被结束，心跳设 120 时永远等不到，挂住检查只在门铃被杀后靠人补。
+HEARTBEAT_MINUTES = 25
+REARM_COMMAND = f"shiftboss bell --once --ignore-green --heartbeat-minutes {HEARTBEAT_MINUTES}"
+
+
 def last_event(path: Path) -> float:
     """门铃文件里最后一件**会叫醒派活方**的事的时刻；全绿的验证行不算。
 
@@ -381,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--path", type=Path, default=None,
                         help="门铃文件；默认取控制目录里的 bell.log")
-    parser.add_argument("--heartbeat-minutes", type=int, default=120,
+    parser.add_argument("--heartbeat-minutes", type=int, default=HEARTBEAT_MINUTES,
                         help="门铃文件里最后一件事（全绿验证不算）过去这么久就敲一次心跳，心跳本身也记进门铃；0 表示只听门铃")
     parser.add_argument("--once", action="store_true",
                         help="响一次（门铃或心跳）就退出，供后台等待一次事件")

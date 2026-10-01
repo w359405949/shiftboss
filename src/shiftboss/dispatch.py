@@ -1164,8 +1164,8 @@ def main(argv: list[str] | None = None) -> int:
         from shiftboss.doorbell import listening
         if not listening():
             print("\n⚠ 门铃当前没人听，这一轮的推送不会叫醒你。重挂：")
-            print("  shiftboss bell --once --ignore-green "
-                  "--heartbeat-minutes 120")
+            from shiftboss.doorbell import REARM_COMMAND
+            print(f"  {REARM_COMMAND}")
             print("  **单独起一条后台命令**，别折进带 `&` 或重定向的复合命令——"
                   "那样起的进程不受跟踪，退出时叫不醒人。")
     except Exception:

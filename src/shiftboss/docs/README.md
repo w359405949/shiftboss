@@ -104,7 +104,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 1. 派活方只做初步检验、合并与派发，不启动生成、全量测试或打包来替代常驻验证。
    派活方是用户最后对话的会话，由 UserPromptSubmit 钩子认领；其余会话的门铃、派活、合并一律被拒，被拒即退出派活流程。
 2. **被任何事件唤醒后先重挂门铃，再干别的**：
-   `shiftboss bell --once --ignore-green --heartbeat-minutes 120`。
+   `shiftboss bell --once --ignore-green --heartbeat-minutes 25`；心跳须短于宿主的后台时限。
    它每响一次就退出；忘了重挂，推送照常进来而派活方一无所知。
    **单独起一条后台命令**——折进带 `&` 或重定向的复合命令里，起的进程不受跟踪，退出时叫不醒人。
 3. 门铃与常驻验证没在跑时 `inbox status` 会报出来；`dispatch` 的回显也报门铃。
