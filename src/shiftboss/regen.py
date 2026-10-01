@@ -86,10 +86,13 @@ def test_ownership(plan: dict) -> dict[str, str]:
 
 def validate_layers(plan: dict) -> dict[str, str]:
     owners = test_ownership(plan)
-    actual = ({path.relative_to(REPO).as_posix()
-              for path in (REPO / plan["test_root"]).rglob("test_*.py")}
-              if plan.get("test_root") else set())
-    missing, stale = actual - owners.keys(), owners.keys() - actual
+    if plan.get("test_root"):
+        actual = {path.relative_to(REPO).as_posix()
+                  for path in (REPO / plan["test_root"]).rglob("test_*.py")}
+        missing, stale = actual - owners.keys(), owners.keys() - actual
+    else:
+        # 没声明测试根就不查未归层，只查登记的模块是否存在。
+        missing, stale = set(), {path for path in owners if not (REPO / path).is_file()}
     if missing or stale:
         raise ValueError(f"测试归层不完整：未归层={sorted(missing)}；不存在={sorted(stale)}")
     layers = plan["gate_layers"]
