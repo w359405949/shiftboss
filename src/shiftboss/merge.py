@@ -142,6 +142,32 @@ def js_exports(path: Path) -> set[str] | None:
     return names
 
 
+def duplicate_definitions(source: str) -> list[str]:
+    """模块顶层与类体内重复的 def/class 名；`@overload`、`@x.setter` 这类装饰器定义不计。"""
+    import ast
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    found = []
+    def scan(body, prefix=""):
+        seen = set()
+        for node in body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if any(isinstance(d, ast.Attribute) or (isinstance(d, ast.Name) and d.id == "overload")
+                   for d in getattr(node, "decorator_list", [])):
+                continue
+            key = prefix + node.name
+            if key in seen:
+                found.append(f"{key}（第 {node.lineno} 行）")
+            seen.add(key)
+            if isinstance(node, ast.ClassDef):
+                scan(node.body, key + ".")
+    scan(tree.body)
+    return found
+
+
 def check_js_imports(names: list[str]) -> None:
     """改动的 JS 模块与引用它们的模块：相对路径的具名导入须在目标模块中导出。
 
@@ -212,6 +238,9 @@ def fast_checks(before: str) -> None:
         elif path.suffix == ".py":
             compile(path.read_bytes(), name, "exec")
             # 工作流代码在 `shiftboss` 包里；旧分支带进来的 `workflow.<模块>`、`workflow.tools.<模块>` 要到运行时才报错。
+            duplicated = duplicate_definitions(path.read_text(encoding="utf-8"))
+            if duplicated:
+                raise MergeError(f"{name} 同一作用域重复定义（后者静默覆盖前者，多为两线各加一份后合并）：{'、'.join(duplicated)}")
             stale = OLD_WORKFLOW_MODULE.search(path.read_text(encoding="utf-8"))
             if stale:
                 raise MergeError(f"{name} 引用旧路径 `{stale.group(0)}`，改为 `shiftboss.{stale.group(1)}`"
