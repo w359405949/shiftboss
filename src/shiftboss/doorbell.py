@@ -222,14 +222,14 @@ def say(text: str) -> None:
     print(text, flush=True)
 
 
-# 不叫醒派活方的行：全绿的验证，以及派活方自己 `verify claim` 回响的认领。
-GREEN = re.compile(r"verification (?:[0-9a-f]{40} red=0 |claimed )")
+# 不叫醒派活方的行：全绿的验证、红数与上一份相同的验证（上一份已响过），以及派活方自己 `verify claim` 回响的认领。
+GREEN = re.compile(r"verification (?:[0-9a-f]{40} red=(?:0 |\d+ delta=0;)|claimed )")
 
 
 def drain(path: Path, offset: int, ignore_green: bool = False) -> tuple[int, bool]:
     """把 `offset` 之后新长出来的字节读出来，一行一条；返回新的 offset 与响没响。
 
-    `ignore_green` 时全绿的验证行与认领回响照样打印，但不算响：那一行没有要派活方做的事。
+    `ignore_green` 时全绿、红数未变的验证行与认领回响照样打印，但不算响：那一行没有要派活方做的新事。
     """
     try:
         size = path.stat().st_size
