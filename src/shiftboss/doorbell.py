@@ -286,8 +286,9 @@ def _event_time(line: str) -> float | None:
 
 
 # 推荐的重挂命令只在这里写一处。**心跳必须短于宿主的后台时限**：Claude Code 的后台命令
-# 默认满 30 分钟即被结束，起门铃时把时限设为 60 分钟（`timeout` 3600000）；超过时限的心跳永远等不到。
-HEARTBEAT_MINUTES = 55
+# 默认满 30 分钟即被结束，起门铃时把时限设为 6 小时（`timeout` 21600000，工作区 settings 的
+# BASH_MAX_TIMEOUT_MS 把上限抬到 6 小时）；超过时限的心跳永远等不到。
+HEARTBEAT_MINUTES = 120
 REARM_COMMAND = f"shiftboss bell --once --ignore-green --heartbeat-minutes {HEARTBEAT_MINUTES}"
 
 
