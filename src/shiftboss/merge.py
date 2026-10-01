@@ -123,6 +123,59 @@ def check_js_module(path: Path, name: str) -> None:
         raise MergeError(f"JS 模块语法错误：{name}\n{result.stderr.strip()[:600]}")
 
 
+_NAMED_IMPORT = re.compile(r'import\s*\{([^}]*)\}\s*from\s*["\'](\.{1,2}/[^"\']+)["\']')
+_EXPORT_NAME = re.compile(r'export\s+(?:async\s+)?(?:function\*?|const|let|var|class)\s+([A-Za-z_$][\w$]*)')
+_EXPORT_LIST = re.compile(r'export\s*\{([^}]*)\}')
+
+
+def js_exports(path: Path) -> set[str] | None:
+    """模块的具名导出；含 `export *` 时无法静态确定，返回 None。"""
+    text = path.read_text(encoding="utf-8")
+    if re.search(r'export\s*\*', text):
+        return None
+    names = set(_EXPORT_NAME.findall(text))
+    for group in _EXPORT_LIST.findall(text):
+        for item in group.split(","):
+            item = item.strip()
+            if item:
+                names.add(item.split(" as ")[-1].strip())
+    return names
+
+
+def check_js_imports(names: list[str]) -> None:
+    """改动的 JS 模块与引用它们的模块：相对路径的具名导入须在目标模块中导出。
+
+    合并取一边时，另一边留下的导入或被删的导出只有运行时才报错，语法检查看不出来。
+    """
+    prefixes = config.js_module_prefixes()
+    changed = [n for n in names if n.endswith((".js", ".mjs")) and any(n.startswith(p) for p in prefixes)
+               and (REPO / n).is_file()]
+    importers = set(changed)
+    for name in changed:
+        found = git("grep", "-l", "-F", Path(name).name, "--", *prefixes, check=False).stdout.split()
+        importers.update(found)
+    missing = []
+    for name in sorted(importers):
+        path = REPO / name
+        if not path.is_file() or path.suffix not in (".js", ".mjs"):
+            continue
+        for group, target in _NAMED_IMPORT.findall(path.read_text(encoding="utf-8")):
+            module = (path.parent / target).resolve()
+            if not module.is_file():
+                missing.append(f"{name} → {target}（模块不存在）")
+                continue
+            exported = js_exports(module)
+            if exported is None:
+                continue
+            for item in group.split(","):
+                item = item.strip()
+                imported = item.split(" as ")[0].strip()
+                if imported and imported not in exported:
+                    missing.append(f"{name} → {target}：{imported}")
+    if missing:
+        raise MergeError("JS 具名导入在目标模块中没有导出：\n  " + "\n  ".join(missing))
+
+
 def fast_checks(before: str) -> None:
     """Only structural checks; freshness and semantic correctness belong to verification.
 
@@ -169,6 +222,9 @@ def fast_checks(before: str) -> None:
             continue
         counts[path.suffix] += 1
     print(f"快速检查 改动 JSON/Python/JS 语法: {counts} {time.monotonic()-started:.3f}s", flush=True)
+    started = time.monotonic()
+    check_js_imports(names)
+    print(f"快速检查 JS 具名导入: {time.monotonic()-started:.3f}s", flush=True)
     assertion_delta(before)
 
 
