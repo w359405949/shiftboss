@@ -543,7 +543,8 @@ class Verifier:
                                  'detail':'合并残留没清干净（规矩见 shiftboss/README.md 第 2 节）：\n'
                                           +'\n'.join(f'  {x}' for x in leftovers)})
             old_catalog=json.loads((self.workspace/CATALOG).read_text(encoding='utf-8'))
-            old_files=set(catalog_files(old_catalog,plan['steps']))
+            # 旧清单只用来认定可改写的旧产物，按它自己记录的步骤读；本次改了生成步骤时也成立。
+            old_files=set(catalog_files(old_catalog,[p['command'] for p in old_catalog.get('producers') or []]))
             base=self.index.get('last_consistent')
             inputs=git(self.workspace,'diff','--name-only','-z',base,sha,check=False) if base else None
             skip=(inputs is not None and inputs.returncode==0
