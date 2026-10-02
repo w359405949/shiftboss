@@ -60,10 +60,17 @@ def show(proc: subprocess.CompletedProcess) -> None:
             print(output.rstrip(), flush=True)
 
 
-def derived_files() -> list[str]:
-    path = REPO / CATALOG
-    config = json.loads(path.read_text(encoding="utf-8"))
-    files = catalog_files(config, regen.load_plan()["steps"])
+def derived_files(before: str | None = None) -> list[str]:
+    """`before` 给定时，本次合并改了生成步骤也放行：产物清单只由常驻验证的完整生成刷新，
+    合并时它仍对应合并前的步骤（常驻验证同样按旧清单放行）。"""
+    catalog = json.loads((REPO / CATALOG).read_text(encoding="utf-8"))
+    try:
+        files = catalog_files(catalog, regen.load_plan()["steps"])
+    except ValueError:
+        if before is None:
+            raise
+        old_plan = json.loads(git("show", f"{before}:{config.plan_file()}").stdout)
+        files = catalog_files(catalog, old_plan["steps"])
     for name in files:
         output = REPO / name
         if not output.is_file() or output.is_symlink() or output.resolve() != output:
@@ -222,7 +229,7 @@ def fast_checks(before: str) -> None:
     if stale := drift(REPO, missing=False):
         raise MergeError("工作流文档与包内不一致（改动在包内 docs/ 做，再 `shiftboss bootstrap` 同步）："
                          + "、".join(stale))
-    files = derived_files()
+    files = derived_files(before)
     print(f"快速检查 配置与产物清单: {len(files)} 路径 {time.monotonic()-started:.3f}s", flush=True)
     started = time.monotonic()
     names = git("diff", "--name-only", "--no-renames", "-z", before).stdout.split("\0")

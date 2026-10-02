@@ -172,13 +172,13 @@ def catalog_document(producers: list[dict]) -> dict:
     return {"schema": SCHEMA, "publisher": [CATALOG], "producers": producers}
 
 
-def catalog_files(config: dict, commands: list[list[str]]) -> list[str]:
-    if config.get("schema") != SCHEMA or config.get("publisher") != [CATALOG]:
+def catalog_files(catalog: dict, commands: list[list[str]]) -> list[str]:
+    if catalog.get("schema") != SCHEMA or catalog.get("publisher") != [CATALOG]:
         raise ValueError("缺少生产端产物报告；先运行 shiftboss regen --steps")
-    producers = config.get("producers")
+    producers = catalog.get("producers")
     if not isinstance(producers, list) or [p["command"] for p in producers] != commands:
         raise ValueError(f"生产端产物报告与 {config.plan_file()} 的 steps 不符；请重新生成")
-    files = set(exact_paths(config["publisher"]))
+    files = set(exact_paths(catalog["publisher"]))
     for producer in producers:
         files.update(exact_paths(producer["files"]))
     return sorted(files)
