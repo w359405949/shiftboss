@@ -432,6 +432,25 @@ def finish_line(name: str, superseded_by: str | None = None) -> None:
     if entry and not entry.get("closed"):
         dispatch.close_line(name, entry["copy"], ledger)
     archive_after_merge(name, book)
+    prune_line_evidence(name, (entry or {}).get("copy") or book.meta().get("你的工作副本"))
+
+
+def prune_line_evidence(name: str, copy: str | None) -> None:
+    """归档即删这条线在执行副本里的证据：`out/<name>` 与 `out/*/<name>`。
+
+    证据只为核对存在，核对认定结束就用完了；`out/` 本是可整根删除的目录。
+    不留着它，20 个副本轮换承接几百条线，`out/` 会无界增长到上百 GB。
+    **只按名删**：一个副本先后承接多条线，按名才不碰在办线的证据。
+    """
+    import shutil
+    if not copy:
+        return
+    out = Path(copy) / "out"
+    for target in [out / name, *out.glob(f"*/{name}")]:
+        if target.is_dir():
+            size = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
+            shutil.rmtree(target)
+            print(f"  已删证据 {target}（{size / 2**30:.2f} GiB）", flush=True)
 
 
 def report_failure_state() -> None:
