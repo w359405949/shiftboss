@@ -414,6 +414,8 @@ def main(argv=None) -> int:
     ap.add_argument("--kind", choices=KINDS, default=None,
                     help="new：子类型（shiftboss/templates/ 下的目录名）；见 TEMPLATE.md 开头那张表")
     ap.add_argument("--apply", action="store_true", help="migrate：真切；不加只打印怎么切")
+    ap.add_argument("--file", choices=["contract", "rounds", "delivery"], default=None,
+                    help="show：打印该文件全文；在办与归档都按名字找到，引用处只写任务书名")
     args = ap.parse_args(argv)
     repo = project_root()
     if args.command == "new":
@@ -449,8 +451,17 @@ def main(argv=None) -> int:
     if book is None:
         print(f"没有这份任务书：{args.name}")
         return 2
+    if args.file:
+        if not book.is_dir:
+            print(f"{book.name} 是单文件布局：{book.path.relative_to(repo)}")
+            print(book.path.read_text(encoding="utf-8"))
+            return 0
+        file = book.path / {"contract": "contract.md", "rounds": ROUNDS, "delivery": "delivery.md"}[args.file]
+        print(f"# {file.relative_to(repo)}")
+        print(file.read_text(encoding="utf-8") if file.exists() else "（无此文件）")
+        return 0
     print(f"{book.name}  布局={'目录' if book.is_dir else '单文件'}  "
-          f"归档={book.archived}  轮次标题级别={book.round_level()}")
+          f"归档={book.archived}  轮次标题级别={book.round_level()}  路径={book.path.relative_to(repo)}")
     print(json.dumps(book.meta(), ensure_ascii=False, indent=2))
     return 0
 
