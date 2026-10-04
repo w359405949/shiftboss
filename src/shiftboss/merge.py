@@ -371,12 +371,40 @@ def archive_after_merge(name: str, book) -> Path:
             path.unlink()
             git("add", "--", str(path.relative_to(REPO)))
     git("add", "--", str(target.relative_to(REPO)))
+    for changed in relink_archived(name, path.parent):
+        git("add", "--", str(changed.relative_to(REPO)))
     git("commit", "-q", "-m", f"plans: {name} 交付已合并，归档")
     print(f"{name}：已归档（{target.relative_to(REPO)}）。", flush=True)
     if pending:
         print(f"  ⚠ 交回里还有 {len(pending)} 条待议/待定夺，归档不代表裁定过了：\n    "
               + "\n    ".join(line[:110] for line in pending), flush=True)
     return target
+
+
+def relink_archived(name: str, plans: Path) -> list[Path]:
+    """归档把任务书挪进 `archive/`，在办任务书里指向它的路径随之改写。
+
+    不改写就是断链：执行方按引用去读交回，读到的是不存在的路径。
+    只改在办任务书的派活方文件（合同与轮次记录），交回归执行方，不碰。
+    """
+    import re
+    if plans.name == "archive":
+        return []
+    patterns = [(re.compile(rf"plans/{re.escape(name)}/"), f"plans/archive/{name}/"),
+                (re.compile(rf"\(\.\./{re.escape(name)}/"), f"(../archive/{name}/")]
+    changed = []
+    for book in sorted(p for p in plans.iterdir() if p.is_dir() and p.name != "archive"):
+        for file in (book / "contract.md", book / "rounds.md"):
+            if not file.exists():
+                continue
+            text = file.read_text(encoding="utf-8")
+            new = text
+            for pattern, replacement in patterns:
+                new = pattern.sub(replacement, new)
+            if new != text:
+                file.write_text(new, encoding="utf-8")
+                changed.append(file)
+    return changed
 
 
 def close_merged_sessions(target: str) -> None:
