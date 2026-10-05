@@ -455,6 +455,25 @@ def prune_line_evidence(name: str, copy: str | None) -> None:
             print(f"  已删证据 {target}（{size / 2**30:.2f} GiB）", flush=True)
 
 
+def moving_branch_reason(ref: str, target: str) -> str | None:
+    """仍在推进的线只许按提交号合，不许按分支名合。
+
+    **验证的是某个提交，合并的却是分支名此刻指向的提交**：自走线在验证与合并之间
+    又推了新提交，没验证过的那段就跟着进了 main，后台生成随之变红。
+    交回写着「执行状态：进展」的线还会继续推，分支名靠不住；
+    把验证时 `git rev-parse` 得到的提交号交给本命令，合的就是验证过的那一个。
+    """
+    if re.fullmatch(r"[0-9a-f]{7,40}", ref):
+        return None
+    name = ref.rsplit("/", 1)[-1]
+    shown = git("show", f"{target}:shiftboss/plans/{name}/delivery.md", check=False)
+    if shown.returncode or not re.search(r"执行状态[：:]\s*进展", shown.stdout):
+        return None
+    return (f"{ref} 的交回是「执行状态：进展」，这条线还在推进，分支名随时会前进。\n"
+            f"按验证过的提交号合：先 `git rev-parse {ref}` 记下提交号、在该提交上验证，"
+            f"再 `shiftboss merge <提交号>`（此刻是 {target[:12]}）。")
+
+
 def report_failure_state() -> None:
     """Make a failed command's remaining Git state and next action explicit."""
     try:
@@ -625,6 +644,8 @@ def main(argv: list[str] | None = None) -> int:
             rejected = {}  # 没有本机 origin 就没有收件箱，也就没有退回记录
         if any(target in tips for tips in rejected.values()):
             raise MergeError(f"{args.ref} 指向核对时已退回的 {target[:12]}；先 fetch 取到新 tip 再合")
+        if moving := moving_branch_reason(args.ref, target):
+            raise MergeError(moving)
         print(f"合并 {args.ref} ({target[:12]})：", flush=True)
         merged = git("-c", "rerere.enabled=false", "-c", "merge.autoStash=false",
                      "merge", "--no-ff", "--no-commit", "--no-edit", target, check=False)
