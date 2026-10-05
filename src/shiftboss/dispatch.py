@@ -586,6 +586,31 @@ def source_fences(message: str) -> list[str]:
     return hits
 
 
+USER_CLAIM = re.compile(r"用户(?:要求|指出|确认|选定|希望|认为|决定|提出|反馈|说|定)")
+USER_QUOTE = re.compile(r"用户原话[：:]\s*「")
+
+
+def unquoted_user_claims(contract: str) -> list[str]:
+    """合同背景里把要求归给用户、却没附用户原话的句子。
+
+    **用户没说过的要求被写成「用户要求」，后面的任务书照抄，整条链就偏了。**
+    写背景时最省力的是凭印象转述；转述一旦脱离原话，下一个读者无从分辨
+    哪些是用户定的、哪些是派活方推断的。所以背景里出现「用户要求／指出／确认……」，
+    同一节里必须有「用户原话：「……」」；派活方自己的判断写「派活方定」，不归给用户。
+    """
+    lines = contract.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.startswith("## ") and "背景" in line)
+    except StopIteration:
+        return []
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    section = "\n".join(lines[start + 1:end])
+    if USER_QUOTE.search(section):
+        return []
+    return [sentence.strip() + "。" for sentence in re.split(r"[。\n]", section)
+            if USER_CLAIM.search(sentence)]
+
+
 def copy_pool(copy_win: str) -> str:
     """副本属于哪个执行方的池：目录名 `<执行方名><序号>`；认不出的归缺省执行方。"""
     match = re.fullmatch(r"(" + "|".join(map(re.escape, WORKERS)) + r")\d+", Path(copy_win).name)
@@ -1000,6 +1025,12 @@ def main(argv: list[str] | None = None) -> int:
               "**甲方只给目标，不给细节。** 合同贴源码就是把「怎么做」从乙方手上收走。\n"
               "改写成「要成立什么」与「算不算做到了」；字节表、地址、发布数据的形状\n"
               "是事实，用 ```text 或不带标签的围栏照写不误。")
+        return 2
+
+    if claims := unquoted_user_claims(book.contract_text()):
+        print(f"派活拒绝：{book.name} 的合同背景把 {len(claims)} 处要求归给用户，却没附用户原话：\n"
+              + "".join(f"  · {claim}\n" for claim in claims)
+              + "背景里写「用户原话：「……」」原样引用；查不到原话的是派活方推断，写成「派活方定」。")
         return 2
 
     # 额度有限，先看还有没有位置。**和下面那条工作树检查一样，必须紧挨着派活命令。**
