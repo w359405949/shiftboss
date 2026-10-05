@@ -436,17 +436,19 @@ def finish_line(name: str, superseded_by: str | None = None) -> None:
 
 
 def prune_line_evidence(name: str, copy: str | None) -> None:
-    """归档即删这条线在执行副本里的证据：`out/<name>` 与 `out/*/<name>`。
+    """归档即删这条线的证据：执行副本里的 `out/<name>`、`out/*/<name>`，与系统临时目录下名字含 `<name>` 的目录。
 
     证据只为核对存在，核对认定结束就用完了；`out/` 本是可整根删除的目录。
     不留着它，20 个副本轮换承接几百条线，`out/` 会无界增长到上百 GB。
     **只按名删**：一个副本先后承接多条线，按名才不碰在办线的证据。
+    临时目录里的干净检出每份约 1 GiB，落在内存盘上；不带名就删不到，十几份就能把它写满。
     """
     import shutil
-    if not copy:
-        return
-    out = Path(copy) / "out"
-    for target in [out / name, *out.glob(f"*/{name}")]:
+    import tempfile
+    temp = [target for target in Path(tempfile.gettempdir()).glob(f"*{name}*") if target.is_dir()]
+    out = Path(copy) / "out" if copy else None
+    local = [out / name, *out.glob(f"*/{name}")] if out else []
+    for target in [*local, *temp]:
         if target.is_dir():
             size = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
             shutil.rmtree(target)
