@@ -325,14 +325,13 @@ def finish(before: str) -> None:
     if git("status", "--porcelain=v1", "--untracked-files=all").stdout:
         raise MergeError("提交后工作树不干净")
     seal_stale_derived()
-    generated = regenerate(before)
-    print(f"合并完成；{'派生物已随合并生成（' + generated[:12] + '）' if generated else '派生物无需随合并生成'}；"
-          "未跑测试、未推送。", flush=True)
+    _, summary = regenerate(before)
+    print(f"合并完成；{summary}；未跑测试、未推送。", flush=True)
     close_merged_sessions(target)
 
 
-def regenerate(before: str) -> str | None:
-    """合并改了生成输入时，在隔离工作树里生成派生物，提交后快进并入当前分支，返回生成提交。
+def regenerate(before: str) -> tuple[str | None, str]:
+    """合并改了生成输入时，在隔离工作树里生成派生物，提交后快进并入当前分支；返回（生成提交, 结果摘要）。
 
     **为什么在合并这一步生成**：源码合入与派生物生成之间若有空窗，共用的主副本里页面读到
     新源码、旧派生物，报出与真错误无法区分的不一致（如「只读代码字段声明不符」）。推送前补齐，
@@ -343,12 +342,10 @@ def regenerate(before: str) -> str | None:
     from shiftboss.verify import generation_needed
     plan = regen.load_plan()
     if not plan.get("path_layers"):
-        print("生成计划未声明生成输入（path_layers），合并时不生成；派生物由后台验证补齐。", flush=True)
-        return None
+        return None, "生成计划未声明生成输入（path_layers），合并时不生成，派生物由后台验证补齐"
     paths = [p for p in git("diff", "--name-only", "-z", before, "HEAD").stdout.split("\0") if p]
     if not generation_needed(plan, paths):
-        print("本次合并未改生成输入，不需重新生成。", flush=True)
-        return None
+        return None, "本次合并未改生成输入，不需重新生成"
     merged = git("rev-parse", "HEAD").stdout.strip()
     work = Path(tempfile.gettempdir()) / f"shiftboss-merge-regen-{merged[:12]}"
     if work.exists():
@@ -374,12 +371,11 @@ def regenerate(before: str) -> str | None:
         except (ValueError, subprocess.CalledProcessError) as exc:
             raise MergeError(f"合并后生成的派生物不能提交：{exc}。{retry}") from exc
         if generated is None:
-            print("生成结果与合并提交一致，无需提交派生物。", flush=True)
-            return None
+            return None, "派生物已随合并重新生成，与合并提交一致，无需另行提交"
         if git("rev-parse", "HEAD").stdout.strip() != merged:
             raise MergeError(f"生成期间当前分支已离开 {merged[:12]}，不并入生成提交 {generated[:12]}。{retry}")
         show(git("merge", "--ff-only", generated))
-        return generated
+        return generated, f"派生物已随合并生成（{generated[:12]}）"
     finally:
         git("worktree", "remove", "--force", str(work), check=False)
         shutil.rmtree(work, ignore_errors=True)
@@ -687,9 +683,8 @@ def main(argv: list[str] | None = None) -> int:
             preflight()
             acquire_lock("regen")
             holding = True
-            generated = regenerate(args.regen)
-            print(f"{'派生物已生成并入（' + generated[:12] + '）' if generated else '无需提交派生物'}；未推送。",
-                  flush=True)
+            _, summary = regenerate(args.regen)
+            print(f"{summary}；未推送。", flush=True)
             return 0
         if args.finish:
             # The parent owns the lock; a manual recovery owns its own lock.
