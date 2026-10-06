@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""合并一个 ref，自动解明确列出的派生物冲突，完成快速结构检查后提交；不生成、不运行测试。
+"""合并一个 ref，自动解明确列出的派生物冲突，完成快速结构检查后提交；改了生成输入时随合并生成派生物；不运行测试。
 
     shiftboss merge origin/codex/example
+    shiftboss merge --regen <合并前HEAD>     # 合并时生成失败，修好后重试生成
 
 要求干净工作树。不 fetch、不 push；失败保留现场，绝不替人解名单外的冲突。
 生产端的精确产物报告在 `shiftboss.toml` 的 `[regen] catalog`，不支持目录或通配符。
@@ -14,7 +15,9 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import time
 import sys
 from collections import Counter
@@ -22,7 +25,7 @@ from pathlib import Path
 
 from shiftboss import regen
 from shiftboss import config
-from shiftboss.outputs import CATALOG, catalog_files
+from shiftboss.outputs import CATALOG, catalog_files, commit_generated
 
 REPO = project_root()
 
@@ -322,8 +325,65 @@ def finish(before: str) -> None:
     if git("status", "--porcelain=v1", "--untracked-files=all").stdout:
         raise MergeError("提交后工作树不干净")
     seal_stale_derived()
-    print("合并完成；未生成、未跑测试、未推送。派生物可能陈旧，需后台验证补齐。", flush=True)
+    generated = regenerate(before)
+    print(f"合并完成；{'派生物已随合并生成（' + generated[:12] + '）' if generated else '派生物无需随合并生成'}；"
+          "未跑测试、未推送。", flush=True)
     close_merged_sessions(target)
+
+
+def regenerate(before: str) -> str | None:
+    """合并改了生成输入时，在隔离工作树里生成派生物，提交后快进并入当前分支，返回生成提交。
+
+    **为什么在合并这一步生成**：源码合入与派生物生成之间若有空窗，共用的主副本里页面读到
+    新源码、旧派生物，报出与真错误无法区分的不一致（如「只读代码字段声明不符」）。推送前补齐，
+    主副本就没有这种状态；生成失败则合并提交只留在本地，不推送。
+    生成在隔离工作树里跑，主副本在生成期间不出现写到一半的派生物。
+    生成计划未声明 `path_layers` 时分不清哪些改动是生成输入，合并时不生成，仍由后台验证补齐。
+    """
+    from shiftboss.verify import generation_needed
+    plan = regen.load_plan()
+    if not plan.get("path_layers"):
+        print("生成计划未声明生成输入（path_layers），合并时不生成；派生物由后台验证补齐。", flush=True)
+        return None
+    paths = [p for p in git("diff", "--name-only", "-z", before, "HEAD").stdout.split("\0") if p]
+    if not generation_needed(plan, paths):
+        print("本次合并未改生成输入，不需重新生成。", flush=True)
+        return None
+    merged = git("rev-parse", "HEAD").stdout.strip()
+    work = Path(tempfile.gettempdir()) / f"shiftboss-merge-regen-{merged[:12]}"
+    if work.exists():
+        git("worktree", "remove", "--force", str(work), check=False)
+        shutil.rmtree(work, ignore_errors=True)
+    git("worktree", "prune")
+    git("worktree", "add", "--detach", str(work), merged)
+    retry = (f"合并提交 {merged[:12]} 留在本地、未推送。修好后运行 `shiftboss merge --regen {before}` 重试；"
+             f"放弃本次合并用 `git reset --hard {before}`。")
+    try:
+        name = config.local_config_file(REPO)
+        local = REPO / name if name else None
+        if local and local.is_file():
+            shutil.copyfile(local, work / local.name)
+        catalog = json.loads((work / CATALOG).read_text(encoding="utf-8"))
+        old_files = set(catalog_files(catalog, [p["command"] for p in catalog.get("producers") or []]))
+        print(f"本次合并改了生成输入，在隔离工作树 {work} 重新生成派生物：", flush=True)
+        result = subprocess.run([sys.executable, "-B", "-m", "shiftboss.regen", "--steps"], cwd=work)
+        if result.returncode:
+            raise MergeError(f"合并后生成失败（退出码 {result.returncode}）。{retry}")
+        try:
+            generated = commit_generated(work, merged, old_files, plan["steps"])
+        except (ValueError, subprocess.CalledProcessError) as exc:
+            raise MergeError(f"合并后生成的派生物不能提交：{exc}。{retry}") from exc
+        if generated is None:
+            print("生成结果与合并提交一致，无需提交派生物。", flush=True)
+            return None
+        if git("rev-parse", "HEAD").stdout.strip() != merged:
+            raise MergeError(f"生成期间当前分支已离开 {merged[:12]}，不并入生成提交 {generated[:12]}。{retry}")
+        show(git("merge", "--ff-only", generated))
+        return generated
+    finally:
+        git("worktree", "remove", "--force", str(work), check=False)
+        shutil.rmtree(work, ignore_errors=True)
+        git("worktree", "prune", check=False)
 
 
 def archive_after_merge(name: str, book) -> Path:
@@ -588,9 +648,9 @@ def main(argv: list[str] | None = None) -> int:
 
     不 fetch、不 push
 
-    合并路径只留快速结构检查。
+    合并路径只留快速结构检查；改了生成输入时随合并生成派生物（见 `regenerate`）。
 
-    默认不生成、不跑测试、不 push；
+    不跑测试、不 push；
 
     快速检查保留：Git 操作状态与干净工作树、非空生成/验证命令配置、产物报告格式与
     生成步骤一致、报告内路径安全且普通文件存在，以及改动 JSON/Python 的解析/语法。
@@ -604,6 +664,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("ref", nargs="?", help="合入当前分支的单个 ref（先自行 fetch）")
     ap.add_argument("--finish", metavar="BEFORE", help="用新进程检查并提交已经解决冲突的合并")
+    ap.add_argument("--regen", metavar="BEFORE",
+                    help="合并时生成失败、修好后重试：按 BEFORE..HEAD 的改动重新生成并快进并入派生物")
     ap.add_argument("--done", metavar="TASKBOOK",
                     help="核对认定该任务书结束（做完或已拆分）：关会话并归档；不合并")
     ap.add_argument("--superseded-by", metavar="TASKBOOK",
@@ -621,6 +683,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{args.done}：余下的活由 {args.superseded_by} 接手。", flush=True)
             finish_line(args.done, superseded_by=args.superseded_by)
             return 0
+        if args.regen:
+            preflight()
+            acquire_lock("regen")
+            holding = True
+            generated = regenerate(args.regen)
+            print(f"{'派生物已生成并入（' + generated[:12] + '）' if generated else '无需提交派生物'}；未推送。",
+                  flush=True)
+            return 0
         if args.finish:
             # The parent owns the lock; a manual recovery owns its own lock.
             if not os.environ.get("MM_WORKFLOW_MERGE"):
@@ -629,7 +699,7 @@ def main(argv: list[str] | None = None) -> int:
             finish(args.finish)
             return 0
         if not args.ref:
-            ap.error("需要 ref 或 --finish BEFORE")
+            ap.error("需要 ref、--finish BEFORE 或 --regen BEFORE")
         preflight()
         acquire_lock(args.ref)
         holding = True

@@ -1,0 +1,4 @@
+# 测试用的中性项目配置：各项与缺省值一致，测试进程与被测子进程按同一份配置认路径。
+[regen]
+plan = "regen.json"
+catalog = "derived-artifacts.json"

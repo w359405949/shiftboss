@@ -57,7 +57,7 @@ import sys
 import time
 
 from shiftboss import config
-from shiftboss.outputs import CATALOG, catalog_files
+from shiftboss.outputs import CATALOG, catalog_files, commit_generated
 from shiftboss.state import read_state, write_state
 
 ROOT = project_root()
@@ -560,15 +560,7 @@ class Verifier:
                 generation_ok=result['returncode']==0
                 if not generation_ok: failures.append({'id':'stage:generate','detail':result['log']})
             if generation_ok and not skip:
-                catalog=json.loads((self.workspace/CATALOG).read_text(encoding='utf-8'))
-                allowed=old_files | set(catalog_files(catalog,plan['steps']))
-                changed=set(git(self.workspace,'diff','--name-only','-z',sha).stdout.split('\0'))-{''}
-                changed.update(git(self.workspace,'ls-files','--others','--exclude-standard','-z').stdout.split('\0'))
-                changed.discard('')
-                if changed-allowed: raise ValueError('生成改了非产物文件：'+', '.join(sorted(changed-allowed)))
-                if changed:
-                    git(self.workspace,'add','--all')
-                    git(self.workspace,'commit','-qm',f'Generate artifacts for {sha}\n\nWorkflow-Generated-From: {sha}')
+                commit_generated(self.workspace,sha,old_files,plan['steps'])
                 report['generated_commit']=git(self.workspace,'rev-parse','HEAD').stdout.strip()
             if directories:
                 # Every selected file is loaded, including import failures.

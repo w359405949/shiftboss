@@ -88,7 +88,7 @@ class FastMergeAcceptance(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.repo = Path(self.temp.name) / 'repo'
         self.repo.mkdir()
-        shutil.copy2(Path(__file__).resolve().parents[2]/'shiftboss.toml', self.repo/'shiftboss.toml')
+        shutil.copy2(Path(__file__).resolve().parent/'fixtures'/'shiftboss.toml', self.repo/'shiftboss.toml')
         self.git('init','-q','-b','main')
         self.git('config','user.name','Workflow acceptance')
         self.git('config','user.email','workflow@localhost')

@@ -182,3 +182,30 @@ def catalog_files(catalog: dict, commands: list[list[str]]) -> list[str]:
     for producer in producers:
         files.update(exact_paths(producer["files"]))
     return sorted(files)
+
+
+def commit_generated(workspace: Path, source: str, old_files: set[str],
+                     steps: list[list[str]]) -> str | None:
+    """把生成后的派生物改动提交在 `source` 之上，返回生成提交；与源一致时返回 None。
+
+    改动只许落在生成前后两份产物清单之内，否则拒绝。常驻验证与合并时生成共用这一处，
+    「哪些文件算派生物」只有一种认法。`old_files` 须在生成覆盖清单之前读取。
+    """
+    import subprocess
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=workspace, capture_output=True, text=True,
+                              encoding="utf-8", check=True)
+
+    catalog = json.loads((workspace / CATALOG).read_text(encoding="utf-8"))
+    allowed = set(old_files) | set(catalog_files(catalog, steps))
+    changed = set(run("diff", "--name-only", "-z", source).stdout.split("\0"))
+    changed.update(run("ls-files", "--others", "--exclude-standard", "-z").stdout.split("\0"))
+    changed.discard("")
+    if changed - allowed:
+        raise ValueError("生成改了非产物文件：" + ", ".join(sorted(changed - allowed)))
+    if not changed:
+        return None
+    run("add", "--all")
+    run("commit", "-qm", f"Generate artifacts for {source}\n\nWorkflow-Generated-From: {source}")
+    return run("rev-parse", "HEAD").stdout.strip()

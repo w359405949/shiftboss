@@ -20,7 +20,7 @@ class VerificationAcceptance(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         base=Path(self.temp.name);self.repo=base/'source';self.repo.mkdir();self.remote=base/'origin.git';self.workspace=base/'worker'
-        shutil.copy2(ROOT/'shiftboss.toml', self.repo/'shiftboss.toml')
+        shutil.copy2(Path(__file__).resolve().parent/'fixtures'/'shiftboss.toml', self.repo/'shiftboss.toml')
         self.git('init','-q','-b','main');self.git('config','user.name','Acceptance');self.git('config','user.email','acceptance@localhost')
         (self.repo/'.gitignore').write_text('out/\n__pycache__/\n')
         (self.repo/'value.txt').write_text('good')
@@ -308,7 +308,7 @@ class VerificationAcceptance(unittest.TestCase):
         worker.watch(once=True)
         self.assertEqual(worker.index['last_consistent'],worker.index['last'])
         self.git('fetch','-q','origin','main');self.git('merge','--ff-only','origin/main')
-        (self.repo/'docs/note.md').write_text('docs only')
+        (self.repo/'docs').mkdir(exist_ok=True);(self.repo/'docs/note.md').write_text('docs only')
         docs=self.commit('docs only');self.git('push','-q','origin','main')
         worker.watch(once=True)
         self.assertIn('skipped',read_state(worker.directory/'runs'/f'{docs}.json')['stages']['generate'])
