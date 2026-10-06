@@ -126,7 +126,47 @@ def check_js_module(path: Path, name: str) -> None:
         raise MergeError(f"JS 模块语法错误：{name}\n{result.stderr.strip()[:600]}")
 
 
-_NAMED_IMPORT = re.compile(r'import\s*\{([^}]*)\}\s*from\s*["\'](\.{1,2}/[^"\']+)["\']')
+_NAMED_IMPORT = re.compile(r'(?:^|(?<=[;{}]))[ \t]*import\s*\{([^}]*)\}\s*from\s*["\'](\.{1,2}/[^"\']+)["\']',
+                           re.MULTILINE)
+
+
+def _code_only(text: str) -> str:
+    """注释与模板字符串的内容换成空格，换行与引号字符串保留：模块路径就在引号字符串里。
+
+    测试常把一段模块源码放进模板或引号字符串当夹具，那里的 `import` 不是本模块的导入。
+    """
+    out = list(text)
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "/" and i + 1 < n and text[i + 1] in "/*":
+            end = text.find("\n", i) if text[i + 1] == "/" else text.find("*/", i + 2)
+            end = n if end < 0 else (end if text[i + 1] == "/" else end + 2)
+            for j in range(i, end):
+                if out[j] != "\n":
+                    out[j] = " "
+            i = end
+        elif ch in "'\"":
+            j = i + 1
+            while j < n and text[j] != ch and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            i = j + 1
+        elif ch == "`":
+            j = i + 1
+            while j < n and text[j] != "`":
+                j += 2 if text[j] == "\\" else 1
+            for k in range(i + 1, min(j, n)):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j + 1
+        else:
+            i += 1
+    return "".join(out)
+
+
+def named_imports(text: str) -> list[tuple[str, str]]:
+    """本模块语句层面的相对路径具名导入（导入名, 模块路径）；字符串与注释里的不算。"""
+    return _NAMED_IMPORT.findall(_code_only(text))
 _EXPORT_NAME = re.compile(r'export\s+(?:async\s+)?(?:function\*?|const|let|var|class)\s+([A-Za-z_$][\w$]*)')
 _EXPORT_LIST = re.compile(r'export\s*\{([^}]*)\}')
 
@@ -188,7 +228,7 @@ def check_js_imports(names: list[str]) -> None:
         path = REPO / name
         if not path.is_file() or path.suffix not in (".js", ".mjs"):
             continue
-        for group, target in _NAMED_IMPORT.findall(path.read_text(encoding="utf-8")):
+        for group, target in named_imports(path.read_text(encoding="utf-8")):
             module = (path.parent / target).resolve()
             if not module.is_file():
                 missing.append(f"{name} → {target}（模块不存在）")

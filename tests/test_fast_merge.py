@@ -526,3 +526,15 @@ class ForeignSessionAcceptance(unittest.TestCase):
             self.assertEqual(dispatch.sandbox_warnings(ledger), [])
 
 if __name__=='__main__': unittest.main()
+
+
+class JsImportScan(unittest.TestCase):
+    def test_imports_in_strings_and_comments_are_not_module_imports(self):
+        """测试夹具里放在字符串、模板与注释中的 `import` 不是本模块的导入；改回直接对全文匹配时失败。"""
+        from shiftboss.merge import named_imports
+        source = ('import {a, b as c} from "./x.js";\n'
+                  "const t = `import {z} from '../y.js';\n  import {y} from '../y2.js';`;\n"
+                  "// import {q} from './q.js'\n"
+                  "const s = \"import {w} from './w.js'\";\n"
+                  "export {a}; import {m} from '../m.js'\n")
+        self.assertEqual(named_imports(source), [('a, b as c', './x.js'), ('m', '../m.js')])
