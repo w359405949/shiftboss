@@ -378,13 +378,18 @@ def regenerate(before: str) -> tuple[str | None, str]:
     主副本就没有这种状态；生成失败则合并提交只留在本地，不推送。
     生成在隔离工作树里跑，主副本在生成期间不出现写到一半的派生物。
     生成计划未声明 `path_layers` 时分不清哪些改动是生成输入，合并时不生成，仍由后台验证补齐。
+    `merge_regen_skip` 列出的前缀（如只被生成器顺带引用的编辑器代码）合并时不触发生成，由后台验证补齐。
     """
     from shiftboss.verify import generation_needed
     plan = regen.load_plan()
     if not plan.get("path_layers"):
         return None, "生成计划未声明生成输入（path_layers），合并时不生成，派生物由后台验证补齐"
     paths = [p for p in git("diff", "--name-only", "-z", before, "HEAD").stdout.split("\0") if p]
-    if not generation_needed(plan, paths):
+    skip = tuple(plan.get("merge_regen_skip") or ())
+    kept = [p for p in paths if not p.startswith(skip)] if skip else paths
+    if not generation_needed(plan, kept):
+        if len(kept) < len(paths) and generation_needed(plan, paths):
+            return None, f"本次合并的生成输入只在 {', '.join(skip)} 下，合并时不生成，派生物由后台验证补齐"
         return None, "本次合并未改生成输入，不需重新生成"
     merged = git("rev-parse", "HEAD").stdout.strip()
     work = Path(tempfile.gettempdir()) / f"shiftboss-merge-regen-{merged[:12]}"
