@@ -181,6 +181,14 @@ def origin_bare() -> Path:
     return origin_git_dir(REPO)
 
 
+def rejected_tip(name: str, branch: str) -> str | None:
+    """分支顶端已经 `inbox ack --rejected` 记为退回时返回该提交，否则 None。"""
+    from shiftboss.inbox import load_rejected
+    tip = subprocess.run(["git", f"--git-dir={origin_bare()}", "rev-parse", "--verify", "-q",
+                          f"refs/heads/{branch}"], capture_output=True, text=True).stdout.strip()
+    return tip if tip and tip in load_rejected(origin_bare()).get(name, []) else None
+
+
 def sessions_path() -> Path:
     """会话台账放控制目录，**不放 out/**——那个目录随时可整根删除。
     和 inbox 的 ack 游标同一个地方，同一个道理：这是跨会话要活下来的状态。
@@ -790,7 +798,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="从文件读这一轮的交代。**内容里有反引号、反斜杠或 $ 就必须用它**")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--rework", action="store_true",
-                    help="这一轮是打回返工。**只有它会加返工计数**；满 3 次自动换新会话。")
+                    help="这一轮是打回返工，加返工计数；分支顶端已经 `inbox ack --rejected` 的自动算返工。满 3 次自动换新会话。")
     ap.add_argument("--fresh", action="store_true",
                     help="强制开新会话（丢掉历史），并把返工计数清零。")
     ap.add_argument("--recover", action="store_true",
@@ -1063,9 +1071,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{copy.name} 工作树非空，是 {args.taskbook} 自己会话留下的；"
               f"还在做本轮就拒派，已停下就带着新一轮提示词恢复它，不碰工作树。")
 
-    # 返工计数只由 --rework 推进；过一轮就清零。满 MAX_ATTEMPTS 强制换新会话：
-    # 在一个错里打转时，会话里那段历史正是让它转不出来的东西。
-    attempts = int(entry.get("attempts", 0)) + (1 if args.rework else 0)
+    # 返工计数由 --rework 或「分支顶端已记退回」推进，同一个退回顶端只计一次；过一轮就清零。
+    # 满 MAX_ATTEMPTS 强制换新会话：在一个错里打转时，会话里那段历史正是让它转不出来的东西。
+    rejected = rejected_tip(args.taskbook, branch)
+    rework = args.rework or (rejected is not None and entry.get("rework_tip") != rejected)
+    attempts = int(entry.get("attempts", 0)) + (1 if rework else 0)
     old_id = entry.get("session_id")
     burned = attempts >= MAX_ATTEMPTS
     fresh, why_fresh = start_fresh(entry, forced=args.fresh, burned=burned, own_wip=own_wip)
@@ -1116,7 +1126,7 @@ def main(argv: list[str] | None = None) -> int:
     if not fresh and tui_alive(copy_win):
         close_session(copy_win)
         print(f"会话 {old_id} 停在等输入，已关掉，改为带着新一轮提示词恢复"
-              + (f"（第 {attempts} 次返工）" if args.rework else ""))
+              + (f"（第 {attempts} 次返工）" if rework else ""))
 
     launched = False
     if fresh or not delivered:
@@ -1157,6 +1167,8 @@ def main(argv: list[str] | None = None) -> int:
                  "attempts": attempts, "model": entry.get("model"),
                  "updated": today(), "dispatched_at": now_iso()}
     entry["executor"] = executor
+    if rejected:
+        entry["rework_tip"] = rejected
     # 新会话此刻多半还没出第一轮，读不到就留空，收件箱现读补上。
     entry["model"] = session_model(entry) or entry.get("model")
     # 每次派出记一条：哪一轮、谁跑、实际模型。上一条的模型在这时补读，那时会话早已跑过。
