@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""合并一个 ref，自动解明确列出的派生物冲突，完成快速结构检查后提交；改了生成输入时随合并生成派生物；不运行测试。
+"""合并一个 ref，自动解明确列出的派生物冲突，完成快速结构检查后提交；不在合并时生成派生物、不运行测试，两者交后台验证。
 
     shiftboss merge origin/codex/example
     shiftboss merge --regen <合并前HEAD>     # 合并时生成失败，修好后重试生成
@@ -371,17 +371,16 @@ def finish(before: str) -> None:
 
 
 def regenerate(before: str) -> tuple[str | None, str]:
-    """合并改了生成输入时，在隔离工作树里生成派生物，提交后快进并入当前分支；返回（生成提交, 结果摘要）。
+    """生成计划设 `merge_regen: true` 时，在隔离工作树里生成派生物，提交后快进并入当前分支；返回（生成提交, 结果摘要）。
 
-    **为什么在合并这一步生成**：源码合入与派生物生成之间若有空窗，共用的主副本里页面读到
-    新源码、旧派生物，报出与真错误无法区分的不一致（如「只读代码字段声明不符」）。推送前补齐，
-    主副本就没有这种状态；生成失败则合并提交只留在本地，不推送。
+    **缺省不在合并时生成**：合并即推送，派生物与检查一律交后台批量验证；合并路径上任何耗时步骤都会成为卡住全线的单点。
     生成在隔离工作树里跑，主副本在生成期间不出现写到一半的派生物。
-    生成计划未声明 `path_layers` 时分不清哪些改动是生成输入，合并时不生成，仍由后台验证补齐。
-    `merge_regen_skip` 列出的前缀（如只被生成器顺带引用的编辑器代码）合并时不触发生成，由后台验证补齐。
+    `merge_regen_skip` 列出的前缀不触发生成。
     """
     from shiftboss.verify import generation_needed
     plan = regen.load_plan()
+    if not plan.get("merge_regen"):
+        return None, "合并时不生成，派生物由后台验证补齐"
     if not plan.get("path_layers"):
         return None, "生成计划未声明生成输入（path_layers），合并时不生成，派生物由后台验证补齐"
     paths = [p for p in git("diff", "--name-only", "-z", before, "HEAD").stdout.split("\0") if p]
@@ -689,7 +688,7 @@ def main(argv: list[str] | None = None) -> int:
 
     不 fetch、不 push
 
-    合并路径只留快速结构检查；改了生成输入时随合并生成派生物（见 `regenerate`）。
+    合并路径只留快速结构检查；派生物由后台验证补齐（见 `regenerate`）。
 
     不跑测试、不 push；
 
