@@ -211,6 +211,61 @@ def duplicate_definitions(source: str) -> list[str]:
     return found
 
 
+_DUPLICATE_KEYS_SCRIPT = r"""
+import {readFileSync} from 'node:fs';
+const [parserUrl, ...files] = process.argv.slice(2);
+const {parse} = await import(parserUrl);
+const found = [];
+const visit = (node, file) => {
+  if (!node || typeof node.type !== 'string') return;
+  if (node.type === 'ObjectExpression') {
+    const seen = new Map();
+    for (const prop of node.properties) {
+      if (prop.type !== 'Property' || prop.computed) continue;
+      const key = prop.key.type === 'Identifier' ? prop.key.name : String(prop.key.value);
+      const kinds = seen.get(key) || [];
+      if (kinds.includes(prop.kind) || (prop.kind === 'init' && kinds.length) || (prop.kind !== 'init' && kinds.includes('init')))
+        found.push(`${file}:${prop.loc.start.line} 键 ${key}`);
+      seen.set(key, [...kinds, prop.kind]);
+    }
+  }
+  for (const value of Object.values(node))
+    if (Array.isArray(value)) value.forEach(child => visit(child, file));
+    else if (value && typeof value.type === 'string') visit(value, file);
+};
+for (const file of files)
+  visit(parse(readFileSync(file, 'utf8'), {ecmaVersion: 'latest', sourceType: 'module', locations: true,
+    allowHashBang: true}), file);
+process.stdout.write(found.join('\n'));
+"""
+
+
+# 对象字面量重复键不是语法错误，后者静默覆盖前者；手工解合并冲突时两侧各留一份同名键即如此。
+def check_js_duplicate_keys(names: list[str]) -> str:
+    parser = config.js_parser()
+    if not parser:
+        return "未配置 merge.js_parser，跳过"
+    files = [name for name in names if name and Path(name).suffix in (".js", ".mjs")
+             and (REPO / name).is_file()
+             and any(name.startswith(prefix) for prefix in config.js_module_prefixes())]
+    if not files:
+        return "0 文件"
+    node = shutil.which("node")
+    if not node:
+        raise MergeError("找不到 node，无法检查 JS 对象重复键")
+    with tempfile.TemporaryDirectory() as temp:
+        script = Path(temp) / "duplicate-keys.mjs"
+        script.write_text(_DUPLICATE_KEYS_SCRIPT, encoding="utf-8")
+        result = subprocess.run([node, str(script), (REPO / parser).as_uri(), *files], cwd=REPO,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode:
+        raise MergeError(f"JS 对象重复键检查失败：\n{result.stderr.strip()[:600]}")
+    if result.stdout.strip():
+        raise MergeError("JS 对象字面量重复键（后者静默覆盖前者，多为解冲突时两侧各留一份）：\n  "
+                         + result.stdout.strip().replace("\n", "\n  "))
+    return f"{len(files)} 文件"
+
+
 def check_js_imports(names: list[str]) -> None:
     """改动的 JS 模块与引用它们的模块：相对路径的具名导入须在目标模块中导出。
 
@@ -297,6 +352,9 @@ def fast_checks(before: str) -> None:
     started = time.monotonic()
     check_js_imports(names)
     print(f"快速检查 JS 具名导入: {time.monotonic()-started:.3f}s", flush=True)
+    started = time.monotonic()
+    duplicate_keys = check_js_duplicate_keys(names)
+    print(f"快速检查 JS 对象重复键: {duplicate_keys} {time.monotonic()-started:.3f}s", flush=True)
     assertion_delta(before)
 
 

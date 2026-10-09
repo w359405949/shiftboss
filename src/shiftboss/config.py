@@ -53,6 +53,11 @@ def js_module_prefixes(root: Path | None = None) -> list[str]:
     return list(_get("merge", "js_module_prefixes", [], root))
 
 
+def js_parser(root: Path | None = None) -> str | None:
+    """合并时检查对象重复键所用的 acorn ES 模块路径（相对项目根）；不配则跳过该项。"""
+    return _get("merge", "js_parser", None, root)
+
+
 def assertion_dirs(root: Path | None = None) -> list[str]:
     """合并时列出断言增删的测试目录。"""
     return list(_get("merge", "assertion_dirs", [], root))
