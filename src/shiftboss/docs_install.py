@@ -37,6 +37,44 @@ def extra(repo: Path) -> list[str]:
                   if p.is_file() and p not in known and plans not in p.parents) if target.is_dir() else []
 
 
+ENTRY_FILES = ("AGENTS.md", "CLAUDE.md")
+ENTRY_LINK = f"{PROJECT_DIR}/README.md"
+ENTRY_LINE = f"工作流：派活方与执行方的流程规则见 [{ENTRY_LINK}]({ENTRY_LINK})。"
+
+
+def _points(repo: Path, name: str) -> bool:
+    """入口文档已指向流程文档：字面含链接，或 CLAUDE.md 导入了已指向的 AGENTS.md。"""
+    text = (repo / name).read_text(encoding="utf-8")
+    return ENTRY_LINK in text or (name == "CLAUDE.md" and "@AGENTS.md" in text
+                                  and (repo / "AGENTS.md").is_file() and _points(repo, "AGENTS.md"))
+
+
+def entry_missing(repo: Path) -> list[str]:
+    """未指向流程文档的入口文档；两个都不存在时两个都算缺。"""
+    present = [name for name in ENTRY_FILES if (repo / name).is_file()]
+    return [name for name in present if not _points(repo, name)] if present else list(ENTRY_FILES)
+
+
+# AI 每次开会话只读入口文档；入口不指向流程文档，派活方与执行方就不知道这套流程。
+# 已有的入口追加一行，都没有时新建两个（CLAUDE.md 导入 AGENTS.md，免得两处各写一份）。
+def install_entry(repo: Path, check: bool) -> bool:
+    missing = entry_missing(repo)
+    if not missing:
+        return True
+    if check:
+        print("AI 入口文档未指向流程文档：" + "、".join(missing))
+        return False
+    for name in missing:
+        path = repo / name
+        if path.is_file():
+            text = path.read_text(encoding="utf-8")
+            path.write_text(text + ("" if text.endswith("\n") else "\n") + f"\n{ENTRY_LINE}\n", encoding="utf-8")
+        else:
+            path.write_text("@AGENTS.md\n" if name == "CLAUDE.md" else f"{ENTRY_LINE}\n", encoding="utf-8")
+    print("AI 入口文档已指向流程文档：" + "、".join(missing))
+    return True
+
+
 def install(repo: Path, check: bool) -> bool:
     stale = drift(repo)
     for name in extra(repo):

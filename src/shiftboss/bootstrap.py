@@ -294,8 +294,9 @@ def main(argv: list[str] | None = None) -> int:
         if not hook_ready:
             print("门铃 hook 没装")
         guarded = ensure_commit_guard(REPO, [], args.check)
-        from shiftboss.docs_install import install as install_docs
+        from shiftboss.docs_install import install as install_docs, install_entry
         documented = install_docs(REPO, args.check)
+        documented = install_entry(REPO, args.check) and documented
         from shiftboss import config
         if path := config.missing(REPO):
             print(f"缺项目配置 {path}：派活方按 shiftboss/README.md 3.0 生成，生成前 dispatch 拒派。")

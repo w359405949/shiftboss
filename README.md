@@ -36,9 +36,10 @@ shiftboss init
 
 - 把通用流程规则装进项目的 `shiftboss/` 目录（只读副本）；
 - 在项目旁边建家目录 `<项目>.shiftboss/`，里面有本地中转仓库 `hub.git`、只给派活方看的 `control/`、执行方的工作副本，以及验证工作区；
-- 读取项目根目录的 `shiftboss.toml`。各项配置的含义见 DESIGN.md 第 6 节。
+- 读取项目根目录的 `shiftboss.toml`，各项配置的含义见 DESIGN.md 第 6 节；
+- 让项目给 AI 的入口文档（Claude 读 `CLAUDE.md`，Codex 读 `AGENTS.md`）指向 `shiftboss/README.md`：已有的入口追加一行，都没有时新建。
 
-然后在项目给 AI 的入口文档（Claude 读 `CLAUDE.md`，Codex 读 `AGENTS.md`）里加一行，指向项目里的 `shiftboss/README.md`。这样 AI 每次开会话都会读到流程文档；之后怎么用 shiftboss、某条命令做什么、流程卡在哪，直接问 AI 就能得到解答。
+之后 AI 每次开会话都会读到流程文档；怎么用 shiftboss、某条命令做什么、流程卡在哪，直接问 AI 就能得到解答。
 
 `shiftboss` 的命令都要在项目工作树里运行，项目根目录按当前目录所在的工作树来认。
 
