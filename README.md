@@ -62,6 +62,8 @@ shiftboss merge --done <名字>                             # 收线归档
 
 ## 目录
 
+采用 Python 打包指南推荐的 src 布局：包源码放在 `src/` 下，未安装时不会误导入仓库里的源码。
+
 ```text
 src/shiftboss/      包源码：命令、执行方插件、平台脚本、钩子
 src/shiftboss/docs/ 通用流程规则与任务书模板（装进项目的源）
