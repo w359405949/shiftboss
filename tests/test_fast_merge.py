@@ -57,7 +57,7 @@ class TaskbookKinds(unittest.TestCase):
 
     def test_each_kind_builds_a_consistent_header(self):
         from shiftboss.taskbook import KINDS, Taskbook, new
-        self.assertTrue({'task', 'repair', 'conflict'} <= set(KINDS))
+        self.assertTrue({'task', 'repair'} <= set(KINDS))
         with tempfile.TemporaryDirectory() as root:
             repo = Path(root)
             for kind in KINDS:

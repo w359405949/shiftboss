@@ -262,7 +262,7 @@ def copy_path(repo: Path, name: str) -> str:
 def new(repo: Path, name: str, *, copy: str = "", kind: str, branch: str = "") -> str:
     """按子类型搭一份新任务书的目录骨架。**新建走这里，不要手抄模板。**
 
-    **子类型必须选**（`task`／`repair`／`conflict`）：它只决定合同骨架，
+    **子类型必须选**（`task`／`repair`）：它只决定合同骨架，
     生命周期对所有任务书相同（README 2.4）。
 
     手抄的问题不是麻烦，是四个文件里只要有一个忘了建，报错要等到第一次派活；

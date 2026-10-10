@@ -322,14 +322,10 @@ def flaky_history(directory: Path, failure_id: str, limit=8) -> str:
             if flips>1 else f'稳定（最近 {len(seen)} 份：{shape}）')
 
 
-CONFLICT_TOKENS = ('CONFLICT-KEPT', '<<<<<<< ', '>>>>>>> ')
-"""合并时留下的东西，**不该活到常驻验证这一步**。
+CONFLICT_TOKENS = ('<<<<<<< ', '>>>>>>> ')
+"""合并时留下的冲突标记，**不该活到常驻验证这一步**：进了提交，说明有人把半解的合并交了出去。
 
-`CONFLICT-KEPT` 是合并方拿不准时留下的落选分支（规矩见 `shiftboss/README.md` 第 2 节）：
-留着是对的——比记在脑子里强——但它的归宿是被那份核验任务清掉。
-`<<<<<<<` / `>>>>>>>` 更简单：真冲突标记进了提交，说明有人把半解的合并交了出去。
-
-**这一层是兜底，不是主路**：主路是合并方当场决断、核验任务交付时清干净。
+**这一层是兜底，不是主路**：主路是执行方交回前解干净（`shiftboss/README.md` 2.3）。
 兜底只负责让它无处可藏——报红、点名文件，由派活方处理。
 """
 
@@ -540,7 +536,7 @@ class Verifier:
             leftovers=conflict_leftovers(self.workspace)
             if leftovers:
                 failures.append({'id':'stage:conflict-leftovers',
-                                 'detail':'合并残留没清干净（规矩见 shiftboss/README.md 第 2 节）：\n'
+                                 'detail':'合并残留没清干净（规矩见 shiftboss/README.md 2.3）：\n'
                                           +'\n'.join(f'  {x}' for x in leftovers)})
             old_catalog=json.loads((self.workspace/CATALOG).read_text(encoding='utf-8'))
             # 旧清单只用来认定可改写的旧产物，按它自己记录的步骤读；本次改了生成步骤时也成立。

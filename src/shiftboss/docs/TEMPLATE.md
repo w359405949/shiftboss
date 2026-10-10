@@ -6,7 +6,6 @@
 | --- | --- |
 | `task` 任务 | 有可达完成状态的一件事 |
 | `repair` 修复 | 修好一个具体的坏现象 |
-| `conflict` 冲突修复 | 解决合并冲突，判定 `CONFLICT-KEPT` |
 
 1. 用 `shiftboss taskbook new --kind <子类型>` 建立，骨架取自 [`templates/<kind>/`](templates/)。
 2. 表头与合同骨架已按子类型填写，不得改成其他组合。
