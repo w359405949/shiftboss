@@ -90,7 +90,7 @@ def tui_command(copy_win: str, prompt: str, *, resume_id: str | None = None) -> 
     # 路径是 TOML 表的带引号键，整个表是一个配置值，避免路径里的点被当成层级。
     project = json.dumps(str(Path(copy_win).resolve()), ensure_ascii=False)
     trust = "projects={" + project + '={trust_level="trusted"}}'
-    return ([str(resolve_codex()), "-C", copy_win, "-c", trust,
+    return ([str(resolve_codex()), "-C", copy_win, "-c", trust, "--search",
              "-s", "danger-full-access", "-a", "never"]
             + (["resume", resume_id] if resume_id else []) + [prompt])
 
