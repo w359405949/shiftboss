@@ -640,10 +640,8 @@ def report_failure_state() -> None:
             conflicts = git("diff", "--name-only", "--diff-filter=U", "-z").stdout
             count = len([name for name in conflicts.split("\0") if name])
             print(f"当前状态：存在 MERGE_HEAD，合并尚未提交；未解决冲突 {count} 个。", file=sys.stderr)
-            print("下一步：当场取简单方案（shiftboss/README.md 2.3）——选定一边、落选一边以 "
-                  "CONFLICT-KEPT 注释保留并写明取舍，git add 后用新进程运行 "
-                  "shiftboss merge --finish HEAD 提交推送；再另开 conflict 任务书复核，"
-                  "第 1 节贴上方冲突原文与 git diff --name-only --diff-filter=U。该线照常，不打回。",
+            print("下一步：未解决冲突时 git merge --abort 撤回并打回该线重新合并（shiftboss/README.md 2.3）；"
+                  "快速检查失败时修正后用新进程运行 shiftboss merge --finish HEAD。",
                   file=sys.stderr)
         else:
             dirty = bool(git("status", "--porcelain=v1", "--untracked-files=all").stdout)
@@ -715,7 +713,7 @@ def resolve_derived(files: list[str], before: str) -> set[str]:
     if refused:
         raise MergeError("冲突拒绝：含名单外文件或非普通内容冲突；没有自动解任何文件：\n"
                          + "\n".join(f"  {name}" for name in refused)
-                         + "\n保留合并现场；逐块人工解决，或 git merge --abort。")
+                         )
     if not entries:
         return set()
     # 一组文件都取合并前同一个提交，包括这一轮没有冲突的成员。
@@ -819,7 +817,21 @@ def main(argv: list[str] | None = None) -> int:
         show(merged)
         if merged.returncode and not git("ls-files", "--unmerged").stdout:
             raise MergeError(f"git merge 失败（退出码 {merged.returncode}）")
-        resolve_derived(files, before)
+        try:
+            resolve_derived(files, before)
+        except MergeError:
+            # 派生物之外的冲突一律撤回，打回执行方合入 main 后重交（README 2.3）；派活方不解决冲突。
+            unmerged = sorted({line.split("\t", 1)[1] for line in
+                               git("ls-files", "--unmerged").stdout.splitlines() if "\t" in line})
+            if not unmerged:
+                raise
+            git("merge", "--abort")
+            name = args.ref.rsplit("/", 1)[-1] if not re.fullmatch(r"[0-9a-f]{7,40}", args.ref) else "<名字>"
+            raise MergeError(
+                f"合并冲突 {len(unmerged)} 个，已撤回（git merge --abort）：\n  " + "\n  ".join(unmerged) +
+                f"\n下一步：打回该线重新合并——在 shiftboss/plans/{name}/rounds.md 追加本轮交代"
+                "（合入 origin/main、解决上列冲突、受影响的判据在合入后重跑），"
+                f"提交推送后 `shiftboss dispatch {name} -m ...`；冲突不算返工，不用 --rejected 与 --rework。") from None
         if git("rev-parse", "--verify", "--quiet", "MERGE_HEAD", check=False).returncode:
             print("目标已合入；未生成、未跑测试。", flush=True)
             close_merged_sessions(target)

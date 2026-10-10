@@ -103,8 +103,13 @@ def require_dispatcher() -> None:
     from shiftboss.inbox import origin_git_dir
     from shiftboss.paths import project_root
     me = os.environ.get("CLAUDE_CODE_SESSION_ID")
-    owner = read_state(control_dir(origin_git_dir(project_root())) / DISPATCHER_NAME).get("session")
-    if me and owner and me != owner:
+    if not me:
+        return
+    try:
+        owner = read_state(control_dir(origin_git_dir(project_root())) / DISPATCHER_NAME).get("session")
+    except SystemExit:  # 没有 origin 就没有家目录，也就没有登记的派活方
+        return
+    if owner and me != owner:
         raise SystemExit(
             f"拒绝：本会话不是派活方——用户最后对话的是会话 {owner}。\n"
             "退出派活流程：不重挂门铃、不派活、不合并、不接回。用户在本会话发话后自动接手；"

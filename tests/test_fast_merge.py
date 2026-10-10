@@ -165,6 +165,17 @@ class FastMergeAcceptance(unittest.TestCase):
         before=self.git('rev-parse','HEAD'); p=self.merge()
         self.assertNotEqual(p.returncode,0); self.assertEqual(self.git('rev-parse','HEAD'),before)
         self.assertTrue((self.repo/'.git/MERGE_HEAD').exists())
+    def test_source_conflict_aborts_and_bounces(self):
+        """派生物之外的冲突撤回合并并给出打回写法，main 与工作树不变。"""
+        (self.repo/'note.md').write_text('incoming')
+        self.commit('incoming'); self.git('switch','-q','main')
+        (self.repo/'note.md').write_text('current')
+        self.commit('current'); before=self.git('rev-parse','HEAD'); p=self.merge()
+        self.assertNotEqual(p.returncode,0)
+        self.assertIn('note.md',p.stderr); self.assertIn('打回该线重新合并',p.stderr)
+        self.assertEqual(self.git('rev-parse','HEAD'),before)
+        self.assertFalse((self.repo/'.git/MERGE_HEAD').exists())
+        self.assertEqual(self.git('status','--porcelain'),'')
     def test_derived_conflict_takes_whole_current_group(self):
         (self.repo/'one.json').write_text('{"incoming":1}')
         (self.repo/'two.json').write_text('{"incoming":2}')
