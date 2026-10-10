@@ -146,6 +146,11 @@ def survey(repo: Path, git_dir: Path) -> list[dict]:
             state = "可核对" if signal in ("完成", "停下") else "进行中"
         else:
             state = "可核对" if total and ticked + pending == total else "进行中"
+        # `dispatch` 在 main 上递增轮次，执行方开工合入 origin/main 后分支才跟上：
+        # main 的轮次更大，分支上的交回就是派出新一轮前那份，已经核过，不再挂「可核对」。
+        main_meta = taskbook_of(git_dir, "main", name)[0]
+        if state == "可核对" and main_meta and int(main_meta.get("轮次") or 0) > int(meta.get("轮次") or 0):
+            state = "进行中"
         rows.append(dict(
             name=name, tip=tip, pushed=pushed,
             total=total, ticked=ticked, pending=pending,
@@ -158,7 +163,7 @@ def survey(repo: Path, git_dir: Path) -> list[dict]:
             # **交付模式必须从 `main` 读，不能读分支上那份。** 表头是派活方写的，
             # 而分支要等执行方下一次合 `origin/main` 才看得到——2026-09-01 加上这一行
             # 的当天就撞了：分析线明明在连做，列表却报「闲置」，正是读了分支上的旧表头。
-            mode=(taskbook_of(git_dir, "main", name)[0] or meta).get("交付模式")
+            mode=(main_meta or meta).get("交付模式")
                  or "单轮",
         ))
     rows.sort(key=lambda r: (r["state"] != "可核对", r["pushed"]))
