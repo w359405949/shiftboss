@@ -228,6 +228,20 @@ def write_hook(files: dict[Path, str]) -> None:
         path.chmod(path.stat().st_mode | 0o111)
 
 
+def ensure_push_guard(bare: Path, check: bool) -> bool:
+    """bare 仓库装 pre-receive：拒收与 main 冲突的执行方分支（hooks/pre_receive.py）。"""
+    src = Path(__file__).resolve().with_name("hooks") / "pre_receive.py"
+    want = python_hook(bare / "hooks" / "pre-receive", src.read_text(encoding="utf-8"))
+    if all(f.is_file() and f.read_bytes() == text.encode("utf-8") for f, text in want.items()):
+        return True
+    if check:
+        print("缺推送守卫 hook")
+        return False
+    write_hook(want)
+    print("推送守卫装好")
+    return True
+
+
 def ensure_commit_guard(repo: Path, copies: list[Path], check: bool, *,
                         include_repo: bool = True) -> bool:
     """每个工作副本都要装 pre-commit：合并在飞时拦住别的提交。
@@ -293,7 +307,8 @@ def main(argv: list[str] | None = None) -> int:
         hook_ready = (bare / "hooks" / "post-receive").exists()
         if not hook_ready:
             print("门铃 hook 没装")
-        guarded = ensure_commit_guard(REPO, [], args.check)
+        guarded = ensure_push_guard(bare, args.check)
+        guarded = ensure_commit_guard(REPO, [], args.check) and guarded
         from shiftboss.docs_install import install as install_docs, install_entry
         documented = install_docs(REPO, args.check)
         documented = install_entry(REPO, args.check) and documented
