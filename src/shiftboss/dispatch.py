@@ -449,7 +449,7 @@ def now_iso() -> str:
 def round_number(book) -> int:
     """下一轮的编号。**取已出现的最大轮次号 +1，不数还剩几条记录。**
 
-    轮次记录会被压缩（README 3.7），**按条数算的编号在压缩之后会倒退**：
+    轮次记录会被压缩，**按条数算的编号在压缩之后会倒退**：
     第 53 轮压成 3 条，下一轮就变成「第 4 轮」，而分支上的提交、交回里的引用、
     验证报告里说的还是旧编号，从此两套编号并存且没人说得清哪套算数。
     **编号是这条线的坐标，不是这一节还剩多少字。**
@@ -468,7 +468,7 @@ def round_number(book) -> int:
 ROUNDS_START = "<!-- workflow:rounds:start -->"
 ROUNDS_END = "<!-- workflow:rounds:end -->"
 
-# 一份任务书最多派多少轮，到了就拆。**规则在 README 3.4。**
+# 一份任务书最多派多少轮，到了就拆。**规则在 README 2.4。**
 ROUND_LIMIT = 20
 
 
@@ -528,7 +528,7 @@ def rounds_region(text: str) -> tuple[int, int, int]:
 
 
 def round_cap_due(book) -> str | None:
-    """**轮次到 `ROUND_LIMIT` 就拒派，要求拆分。规则在 README 3.4。**
+    """**轮次到 `ROUND_LIMIT` 就拒派，要求拆分。规则在 README 2.4。**
 
     轮次一多，既说不清还有没有有效产出，上下文也拖慢执行方；压缩记录只是缓解。
     到了上限说明目标定得太宽或已经分裂：拆成能各自做完的新任务书（表头 `来源` 指回这份），
@@ -1111,7 +1111,7 @@ def main(argv: list[str] | None = None) -> int:
             print(str(exc))
             return 2
 
-    # 走到这里一定是新一轮的开头（在做本轮的已在上面拒掉），同步一次（README 4.1 第 5 步）。
+    # 走到这里一定是新一轮的开头（在做本轮的已在上面拒掉），同步一次（README 4.1 第 3 步）。
     print(merge_main_into(copy, branch))
 
     # 返工计数只由 --rework 推进；过一轮就清零。满 MAX_ATTEMPTS 强制换新会话：
