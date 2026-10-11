@@ -224,7 +224,7 @@ def show_report(remote: Path) -> str:
         if not listening():
             from shiftboss.doorbell import REARM_COMMAND
             lines.append(f'  门铃当前没人听；重挂：{REARM_COMMAND}')
-    except Exception:
+    except (Exception, SystemExit):   # 认不出盯哪个 origin 时退出码是 SystemExit；这条只是提醒
         pass
     stale=stale_worker_code(remote,index)
     if stale: lines.append(stale)
@@ -456,9 +456,14 @@ class Verifier:
         一条红只在它头一次出现的那一轮属于「新红」；那一轮没归完，之后每一轮它都从
         上一轮抄一个空的 `introduced_by`，再没有人碰它——票上会一直挂着
         「下一轮接着归因」，而那个下一轮永远不来。
+
+        已认领的红不二分：负责的线已定，归因只会再花一次全量探针。预算红是累计趋势，
+        不是某个提交引入的，二分它找不到答案。
         """
+        claims=read_state(self.directory/'claims.json')
         work=[]
         for item in unique.values():
+            if item['id']=='stage:budget' or item['ticket'] in claims: continue
             window=item.get('attribution_window')
             if window: work.append((item,window['low'],window['high']))
             elif item['id'] not in previous: work.append((item,baseline,sha))
