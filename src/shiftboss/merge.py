@@ -25,7 +25,7 @@ from pathlib import Path
 
 from shiftboss import regen
 from shiftboss import config
-from shiftboss.outputs import CATALOG, catalog_files, commit_generated
+from shiftboss.outputs import CATALOG, catalog_files, commit_generated, plan_commands
 
 REPO = project_root()
 
@@ -465,11 +465,12 @@ def regenerate(before: str) -> tuple[str | None, str]:
         catalog = json.loads((work / CATALOG).read_text(encoding="utf-8"))
         old_files = set(catalog_files(catalog, [p["command"] for p in catalog.get("producers") or []]))
         print(f"本次合并改了生成输入，在隔离工作树 {work} 重新生成派生物：", flush=True)
-        result = subprocess.run([sys.executable, "-B", "-m", "shiftboss.regen", "--steps"], cwd=work)
+        base = ["--base", before] if plan.get("stages") is not None else []
+        result = subprocess.run([sys.executable, "-B", "-m", "shiftboss.regen", "--steps", *base], cwd=work)
         if result.returncode:
             raise MergeError(f"合并后生成失败（退出码 {result.returncode}）。{retry}")
         try:
-            generated = commit_generated(work, merged, old_files, plan["steps"])
+            generated = commit_generated(work, merged, old_files, plan_commands(plan))
         except (ValueError, subprocess.CalledProcessError) as exc:
             raise MergeError(f"合并后生成的派生物不能提交：{exc}。{retry}") from exc
         if generated is None:

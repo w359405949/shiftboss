@@ -12,8 +12,12 @@
 **这份是工作流的通用外壳，具体跑什么由项目给。** 项目在仓库根放一个
 `regen.json`：
 
-    {"steps": [["python", "-B", "-m", "..."], …],
+    {"stages": [{"name": "…", "command": ["python", "-B", "-m", "…"],
+                 "inputs": ["路径前缀/"], "after": ["上游阶段"]}, …],
      "gates": [["python", "-B", "-m", "..."], …]}
+
+只跑输入被改动的阶段及其下游；`--full` 按顺序跑全部阶段，即完整生成。
+旧格式 `steps`（每次全跑）仍可用，迁完即撤。
 
 没有这个文件就什么都不做并说明——**不要在这里写死任何项目专有的模块名**。
 """
@@ -32,7 +36,7 @@ import tempfile
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from shiftboss.outputs import CATALOG, REPORT_ENV, SCHEMA, catalog_document, exact_paths
+from shiftboss.outputs import CATALOG, REPORT_ENV, SCHEMA, catalog_document, exact_paths, merge_catalog
 
 REPO = project_root()
 
@@ -102,6 +106,75 @@ def validate_layers(plan: dict) -> dict[str, str]:
     return owners
 
 
+STAGE_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+SHELL_CHARS = re.compile(r"[;&|<>`$\n]")
+
+
+def matches_prefix(path: str, prefix: str) -> bool:
+    return path == prefix or (prefix.endswith("/") and path.startswith(prefix))
+
+
+# 「完整生成」只是按顺序跑全部阶段，套壳本身没有代码；阶段细节只在各自的命令里。
+# 防跑偏靠这里与 `merge_catalog`：一条命令只调一个模块、不串第二条命令，一个产物只归一个阶段。
+def validate_stages(plan: dict) -> list[dict] | None:
+    """生成计划的 `stages`；仍用旧格式 `steps` 时为 None。"""
+    stages = plan.get("stages")
+    if stages is None:
+        return None
+    if plan.get("steps"):
+        raise ValueError("stages 与 steps 不能同时声明")
+    names: list[str] = []
+    commands: set[tuple[str, ...]] = set()
+    for stage in stages:
+        name, command = stage.get("name"), stage.get("command")
+        if not isinstance(name, str) or not STAGE_NAME.fullmatch(name) or name in names:
+            raise ValueError(f"阶段名须唯一且为小写短横线：{name!r}")
+        if (not isinstance(command, list) or len(command) < 4 or command[:3] != ["python", "-B", "-m"]
+                or not all(isinstance(arg, str) for arg in command)
+                or any(SHELL_CHARS.search(arg) for arg in command) or "-m" in command[4:]
+                or "-c" in command[3:]):
+            raise ValueError(f"{name}: 命令只能是 python -B -m <一个模块> [参数]，不串接其他命令")
+        if tuple(command) in commands:
+            raise ValueError(f"{name}: 与其他阶段命令重复")
+        inputs = stage.get("inputs")
+        if not isinstance(inputs, list) or not inputs or not all(isinstance(p, str) and p for p in inputs):
+            raise ValueError(f"{name}: 须声明输入路径前缀 inputs")
+        after = stage.get("after", [])
+        if not isinstance(after, list) or not set(after) <= set(names):
+            raise ValueError(f"{name}: after 只能引用排在它前面的阶段：{after}")
+        names.append(name)
+        commands.add(tuple(command))
+    return stages
+
+
+def select_stages(stages: list[dict], paths: list[str] | None, requested: list[str],
+                  catalog_stages: set[str]) -> list[dict]:
+    """输入改动的、点名的、从未生成过的阶段，连同全部下游；`paths` 为 None 即全量。"""
+    names = [stage["name"] for stage in stages]
+    unknown = set(requested) - set(names)
+    if unknown:
+        raise ValueError(f"未知阶段：{sorted(unknown)}")
+    selected = set(names) if paths is None else set(requested) | (set(names) - catalog_stages)
+    for stage in stages:
+        if paths and any(matches_prefix(path, prefix) for path in paths for prefix in stage["inputs"]):
+            selected.add(stage["name"])
+        if selected & set(stage.get("after", [])):
+            selected.add(stage["name"])
+    return [stage for stage in stages if stage["name"] in selected]
+
+
+def previous_catalog() -> dict | None:
+    path = REPO / CATALOG
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+def stage_selection(stages: list[dict], args) -> list[dict]:
+    old = previous_catalog() or {}
+    done = {p["stage"] for p in old.get("producers") or [] if p.get("stage")}
+    paths = None if args.full else ([] if args.stage else changed_paths(args.base))
+    return select_stages(stages, paths, args.stage, done)
+
+
 def changed_paths(base: str | None = None) -> list[str]:
     """Include commits, index, worktree, both sides of renames and new files."""
     def git(*args):
@@ -144,7 +217,8 @@ def select_layers(plan: dict, paths: list[str], requested: list[str] | None = No
 
 
 def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
-            outputs: list[dict] | None = None, parallel: bool = False) -> bool:
+            outputs: list[dict] | None = None, parallel: bool = False,
+            names: list[str] | None = None) -> bool:
     if parallel and (outputs is not None or stop_on_failure):
         raise ValueError("有产物依赖或失败即停的命令必须顺序执行")
     ok = True
@@ -176,7 +250,10 @@ def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
                 actual = set(exact_paths(report["written"])) | set(exact_paths(report["retained"]))
                 if set(files) != actual:
                     raise ValueError("生产端产物声明与实际不符；仅报告，不自动扩展")
-                outputs.append({"command": command, "files": files})
+                entry = {"command": command, "files": files}
+                if names:
+                    entry = {"stage": names[number - 1], **entry}
+                outputs.append(entry)
         except OSError as exc:
             proc = subprocess.CompletedProcess(cmd, 1, "", str(exc))
         except (ValueError, KeyError, TypeError) as exc:
@@ -235,7 +312,11 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--all", action="store_true", help="明确跑全部层")
     ap.add_argument("--base", help="与此 Git 提交比较；默认合并前 HEAD 或与 origin/main 的共同祖先")
     ap.add_argument("--list", action="store_true", help="只显示实际选层与生成计划")
+    ap.add_argument("--full", action="store_true", help="完整生成：按顺序跑全部阶段")
+    ap.add_argument("--stage", action="append", default=[], help="点名阶段，可重复；连同下游")
     args = ap.parse_args(argv)
+    if args.full and args.stage:
+        ap.error("--full 与 --stage 不能一起使用")
     if args.check and args.steps:
         ap.error("--check 与 --steps 不能一起使用")
     if args.steps and (args.layer or args.all):
@@ -264,6 +345,14 @@ def _run(args) -> int:
     `--check` 只跑闸不生成
     """
     plan = load_plan()
+    try:
+        stages = validate_stages(plan)
+    except ValueError as exc:
+        print(f"生成计划无效：{exc}")
+        return 1
+    if stages is None and (args.full or args.stage):
+        print("生成计划仍是 steps 格式，没有阶段可选")
+        return 1
     ok = True
     selected = None
     generate = True
@@ -275,7 +364,8 @@ def _run(args) -> int:
         except (ValueError, KeyError, subprocess.CalledProcessError) as exc:
             print(f"选层失败：{exc}")
             return 1
-        generate = args.steps or any(plan["gate_layers"][name].get("generate", False) for name in selected)
+        generate = (args.steps or args.full or bool(args.stage)
+                    or any(plan["gate_layers"][name].get("generate", False) for name in selected))
         print(f"改动路径 {len(paths)} 个；选层：{', '.join(selected)}", flush=True)
         print(f"本次生成：{'是' if generate and not args.check else '否'}", flush=True)
     elif args.layer:
@@ -285,7 +375,11 @@ def _run(args) -> int:
         # **`--list` 要真的把要跑的东西列出来。** 只报选层不报命令，
         # 等于让人拿它当「能看到这一步」的判据时无从核对——
         # 2026-09-09 一份任务书就因为这条判据不可能满足而挂了待议。
-        for label, commands in (("生成步骤", plan.get("steps") or []),
+        chosen = stage_selection(stages, args) if stages is not None else None
+        if chosen is not None:
+            print(f"生成阶段（{len(chosen)}/{len(stages)}）：{', '.join(s['name'] for s in chosen) or '无'}", flush=True)
+        for label, commands in (("生成步骤", (plan.get("steps") or []) if chosen is None
+                                 else [s["command"] for s in chosen]),
                                 ("闸", [plan["gates"][i] for name in selected
                                        for i in plan["gate_layers"][name].get("gates", [])]
                                  if plan.get("gate_layers") else plan.get("gates") or [])):
@@ -298,11 +392,22 @@ def _run(args) -> int:
         # **顺序要紧**，按 regen.json 里写的来，不要并发也不要跳步——
         # 后一步吃前一步的产物，跳了会得到「看起来绿、其实是旧输入」的结果。
         producers: list[dict] = []
-        ok = run_all("生成", plan.get("steps") or [], stop_on_failure=True, outputs=producers)
+        if stages is None:
+            ok = run_all("生成", plan.get("steps") or [], stop_on_failure=True, outputs=producers)
+        else:
+            chosen = stage_selection(stages, args)
+            print(f"生成阶段（{len(chosen)}/{len(stages)}）：{', '.join(s['name'] for s in chosen) or '无'}", flush=True)
+            ok = run_all("生成", [s["command"] for s in chosen], stop_on_failure=True,
+                         outputs=producers, names=[s["name"] for s in chosen])
         if not ok:
             print("\n生成这一步就红了，闸不跑了——先把上面那条修好。")
             return 1
-        catalog = catalog_document(producers)
+        try:
+            catalog = (catalog_document(producers) if stages is None
+                       else merge_catalog(previous_catalog(), stages, producers))
+        except ValueError as exc:
+            print(f"产物报告不成立：{exc}")
+            return 1
         (REPO / CATALOG).write_text(
             json.dumps(catalog, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8", newline="\n")

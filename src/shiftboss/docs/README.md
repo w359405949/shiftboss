@@ -22,7 +22,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 | `shiftboss recover` | 拉起该在执行而进程没了的线；派活方会话恢复时由钩子跑 |
 | `shiftboss bell` | 推送通知 |
 | `shiftboss bootstrap` | 准备 bare、工作副本、钩子与本目录文档 |
-| `shiftboss regen` | 分层生成；产物名单由生产端经 `shiftboss.outputs` 声明 |
+| `shiftboss regen` | 按阶段生成：只跑输入改动的阶段及其下游，`--full` 为完整生成；产物名单由生产端经 `shiftboss.outputs` 声明 |
 
 ## 1. 对应关系
 

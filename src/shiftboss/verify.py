@@ -57,7 +57,7 @@ import sys
 import time
 
 from shiftboss import config
-from shiftboss.outputs import CATALOG, catalog_files, commit_generated
+from shiftboss.outputs import CATALOG, catalog_files, commit_generated, plan_commands
 from shiftboss.state import read_state, write_state
 
 ROOT = project_root()
@@ -87,6 +87,10 @@ def generation_needed(plan: dict, paths: list[str]) -> bool:
 
     生成输入是 `path_layers` 中归到带 `generate` 层的路径；测试目录只是消费端，不算输入。
     """
+    if plan.get('stages') is not None:
+        # 分阶段计划：任一阶段的声明输入被改动才生成，选哪些阶段由 regen 按同一份声明定。
+        return any(path == prefix or (prefix.endswith('/') and path.startswith(prefix))
+                   for path in paths for stage in plan['stages'] for prefix in stage['inputs'])
     rules = plan.get('path_layers')
     if not rules:
         return True
@@ -551,12 +555,13 @@ class Verifier:
                 generation_ok=True
                 report['generated_commit']=sha
             else:
-                result=self.command(sha,'generate',['python','-B','-m','shiftboss.regen','--steps'])
+                result=self.command(sha,'generate',['python','-B','-m','shiftboss.regen','--steps',
+                                                    *(['--base',base] if base and plan.get('stages') is not None else [])])
                 report['stages']['generate']=result
                 generation_ok=result['returncode']==0
                 if not generation_ok: failures.append({'id':'stage:generate','detail':result['log']})
             if generation_ok and not skip:
-                commit_generated(self.workspace,sha,old_files,plan['steps'])
+                commit_generated(self.workspace,sha,old_files,plan_commands(plan))
                 report['generated_commit']=git(self.workspace,'rev-parse','HEAD').stdout.strip()
             if directories:
                 # Every selected file is loaded, including import failures.
