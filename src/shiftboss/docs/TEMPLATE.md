@@ -12,6 +12,8 @@
 3. 新增子类型即在 `templates/` 下新增目录（`meta.json` 与 `contract.md`）。
 4. 布局与写权见 [README](README.md) 1.1。
 
+开发线的判据只写要成立什么，以及 [DONE.md](DONE.md) 第 2 节开发线允许的检查；不写探针、新测试、Mesen 等验证动作。
+
 ## 2. `meta.json`
 
 只经 `dispatch`、`merge`、`taskbook` 修改。
