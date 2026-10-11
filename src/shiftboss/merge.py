@@ -378,6 +378,7 @@ def check_new_tests(before: str) -> None:
     dirs = config.assertion_dirs()
     if dirs:
         added = git("diff", "--name-only", "--no-renames", "--diff-filter=A", before, "--", *dirs).stdout.split()
+        added += git("ls-files", "--others", "--exclude-standard", "--", *dirs).stdout.split()
         found += [f"新测试文件 {p}" for p in added if p not in approved]
         diff = git("diff", "--no-renames", "-U0", "--diff-filter=M", before, "--", *dirs).stdout
         names: dict[str, dict[str, set[str]]] = {}
@@ -388,7 +389,9 @@ def check_new_tests(before: str) -> None:
             elif not line.startswith("---") and (hit := _TEST_NAME.match(line)):
                 names.setdefault(path, {"+": set(), "-": set()})[line[0]].add(hit.group(2) or hit.group(3))
         for path, sides in names.items():
-            found += [f"新测试用例 {path}::{name}" for name in sorted(sides["+"] - sides["-"])
+            # 改名与重写不算新增：只有净增的用例数才要同意。
+            extra = sorted(sides["+"] - sides["-"])[:max(0, len(sides["+"]) - len(sides["-"]))]
+            found += [f"新测试用例 {path}::{name}" for name in extra
                       if path not in approved and f"{path}::{name}" not in approved]
     shown = git("show", f"{before}:{config.plan_file()}", check=False)
     if shown.returncode == 0:
