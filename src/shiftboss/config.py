@@ -63,6 +63,11 @@ def assertion_dirs(root: Path | None = None) -> list[str]:
     return list(_get("merge", "assertion_dirs", [], root))
 
 
+def verify_budget_minutes(root: Path | None = None) -> float | None:
+    """常驻验证一轮（生成＋全部闸）的时间预算；超出即报红。不配则不查。"""
+    return _get("verify", "budget_minutes", None, root)
+
+
 def default_worker(root: Path | None = None) -> str:
     """任务书没写执行方时派给谁。"""
     return _get("workers", "default", "codex", root)

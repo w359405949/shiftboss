@@ -614,6 +614,13 @@ class Verifier:
                     else: report['publication']='已快进补齐 main'
         except Exception as exc:
             failures.append({'id':'stage:infrastructure','detail':str(exc)})
+        # 产出 1 MB 的项目，一轮生成＋闸超过预算就是生成或测试膨胀了：报红，先查膨胀。
+        budget=config.verify_budget_minutes(self.workspace)
+        spent=sum(stage.get('seconds') or 0 for stage in report['stages'].values())
+        if budget and not probe and spent>budget*60:
+            slow=sorted(((stage.get('seconds') or 0,name) for name,stage in report['stages'].items()),reverse=True)[:5]
+            failures.append({'id':'stage:budget','detail':f'生成与闸合计 {spent/60:.1f} 分钟，超过预算 {budget} 分钟；先查生成与测试是否膨胀。最慢：'
+                             +'；'.join(f'{name} {seconds/60:.1f} 分钟' for seconds,name in slow)})
         observed=time.time()
         unique={f['id']:f for f in failures}
         if probe:
