@@ -548,21 +548,8 @@ def unattended_warning(repo: Path, git_dir: Path, ledger: dict) -> list[str]:
     return lines + [""]
 
 
-def write_status(repo: Path, git_dir: Path) -> str:
-    """现算「现在什么在跑」，返回那段 markdown。
-
-    **每一格都是派生的**（任务书表头 ＋ origin 的分支 ＋ 副本当前 HEAD），
-    所以**这份东西不进 git**：文件永远是写入时刻的，进了 git 就是一份带时间戳的
-    过期断言——2026-09-01 它还写着某个副本拿着三天前就归档了的任务书，
-    照它派活会派到正在干活的副本上。
-
-    权威是 stdout（要看就现跑）；另外落一份 `out/STATUS.md` 只为在编辑器里
-    点开方便，`out/` 被 gitignore、且是「唯一可整根删除的目录」，
-    没人会把它当权威。
-
-    **`inbox status` 现算并打印「现在什么在跑」。** 它不写进版本库：
-    每一格都是派生的，存成文件就是一份带时间戳的过期断言。
-    """
+def status_rows(repo: Path, git_dir: Path):
+    """在办任务书的现算行：（名、调度状态、副本、会话、提交（执行状态）、执行方 / 模型），连同台账、在跑线与分支概况。"""
     from shiftboss.taskbook import Taskbook
     books = list(Taskbook.iter_active(repo))
     rows = []
@@ -611,6 +598,25 @@ def write_status(repo: Path, git_dir: Path) -> str:
             "—" if not entry else
             f"{executor_of(entry.get('executor'))} / {session_model(entry) or entry.get('model') or '未读到'}",
         ))
+    return rows, ledger, active, live
+
+
+def write_status(repo: Path, git_dir: Path) -> str:
+    """现算「现在什么在跑」，返回那段 markdown。
+
+    **每一格都是派生的**（任务书表头 ＋ origin 的分支 ＋ 副本当前 HEAD），
+    所以**这份东西不进 git**：文件永远是写入时刻的，进了 git 就是一份带时间戳的
+    过期断言——2026-09-01 它还写着某个副本拿着三天前就归档了的任务书，
+    照它派活会派到正在干活的副本上。
+
+    权威是 stdout（要看就现跑）；另外落一份 `out/STATUS.md` 只为在编辑器里
+    点开方便，`out/` 被 gitignore、且是「唯一可整根删除的目录」，
+    没人会把它当权威。
+
+    **`inbox status` 现算并打印「现在什么在跑」。** 它不写进版本库：
+    每一格都是派生的，存成文件就是一份带时间戳的过期断言。
+    """
+    rows, ledger, active, live = status_rows(repo, git_dir)
     import datetime
     head = _git(git_dir, "rev-parse", "--short", "main").strip() or "?"
     lines_out = [
