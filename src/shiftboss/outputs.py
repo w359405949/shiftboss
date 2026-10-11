@@ -19,7 +19,7 @@ from typing import Iterable
 REPO = project_root()
 from shiftboss import config
 
-CATALOG = config.catalog_file()
+CATALOG = config.catalog_file()  # 只给短命进程用；常驻验证等长进程每次现读，配置改了不留旧值
 SCHEMA = "workflow.producer-outputs.v1"
 REPORT_ENV = "WORKFLOW_OUTPUT_REPORT"
 _active = None
@@ -169,7 +169,7 @@ def catalog_document(producers: list[dict]) -> dict:
     # This catalog is itself produced here, not an extra manual allowlist.
     """`derived-artifacts.json` 是生成报告，不可手填
     """
-    return {"schema": SCHEMA, "publisher": [CATALOG], "producers": producers}
+    return {"schema": SCHEMA, "publisher": [config.catalog_file()], "producers": producers}
 
 
 def plan_commands(plan: dict) -> list[list[str]]:
@@ -199,7 +199,7 @@ def merge_catalog(old: dict | None, stages: list[dict], producers: list[dict]) -
 
 
 def catalog_files(catalog: dict, commands: list[list[str]]) -> list[str]:
-    if catalog.get("schema") != SCHEMA or catalog.get("publisher") != [CATALOG]:
+    if catalog.get("schema") != SCHEMA or catalog.get("publisher") != [config.catalog_file()]:
         raise ValueError("缺少生产端产物报告；先运行 shiftboss regen --steps")
     producers = catalog.get("producers")
     if not isinstance(producers, list) or [p["command"] for p in producers] != commands:
@@ -223,7 +223,7 @@ def commit_generated(workspace: Path, source: str, old_files: set[str],
         return subprocess.run(["git", *args], cwd=workspace, capture_output=True, text=True,
                               encoding="utf-8", check=True)
 
-    catalog = json.loads((workspace / CATALOG).read_text(encoding="utf-8"))
+    catalog = json.loads((workspace / config.catalog_file(workspace)).read_text(encoding="utf-8"))
     allowed = set(old_files) | set(catalog_files(catalog, steps))
     changed = set(run("diff", "--name-only", "-z", source).stdout.split("\0"))
     changed.update(run("ls-files", "--others", "--exclude-standard", "-z").stdout.split("\0"))

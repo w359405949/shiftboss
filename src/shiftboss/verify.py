@@ -57,7 +57,7 @@ import sys
 import time
 
 from shiftboss import config
-from shiftboss.outputs import CATALOG, catalog_files, commit_generated, plan_commands
+from shiftboss.outputs import catalog_files, commit_generated, plan_commands
 from shiftboss.state import read_state, write_state
 
 ROOT = project_root()
@@ -558,7 +558,7 @@ class Verifier:
                 failures.append({'id':'stage:conflict-leftovers',
                                  'detail':'合并残留没清干净（规矩见 shiftboss/README.md 2.3）：\n'
                                           +'\n'.join(f'  {x}' for x in leftovers)})
-            old_catalog=json.loads((self.workspace/CATALOG).read_text(encoding='utf-8'))
+            old_catalog=json.loads((self.workspace/config.catalog_file(self.workspace)).read_text(encoding='utf-8'))
             # 旧清单只用来认定可改写的旧产物，按它自己记录的步骤读；本次改了生成步骤时也成立。
             old_files=set(catalog_files(old_catalog,[p['command'] for p in old_catalog.get('producers') or []]))
             base=self.index.get('last_consistent')
