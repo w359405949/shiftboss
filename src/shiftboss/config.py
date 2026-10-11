@@ -63,6 +63,11 @@ def assertion_dirs(root: Path | None = None) -> list[str]:
     return list(_get("merge", "assertion_dirs", [], root))
 
 
+def approved_tests(root: Path | None = None) -> list[str]:
+    """经用户同意新增的测试项：测试文件路径、`路径::用例名`，或闸命令里新出现的参数。"""
+    return list(_get("verify", "approved_tests", [], root))
+
+
 def verify_budget_minutes(root: Path | None = None) -> float | None:
     """常驻验证一轮（生成＋全部闸）的时间预算；超出即报红。不配则不查。"""
     return _get("verify", "budget_minutes", None, root)

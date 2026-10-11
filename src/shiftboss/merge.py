@@ -360,7 +360,44 @@ def fast_checks(before: str) -> None:
     started = time.monotonic()
     duplicate_keys = check_js_duplicate_keys(names)
     print(f"快速检查 JS 对象重复键: {duplicate_keys} {time.monotonic()-started:.3f}s", flush=True)
+    check_new_tests(before)
     assertion_delta(before)
+
+
+_TEST_NAME = re.compile(r'^[+-]\s*(?:(?:test|it|describe)\s*\(\s*([\'"`])(.*?)\1|(?:async\s+)?def\s+(test_\w+)\s*\()')
+
+
+def check_new_tests(before: str) -> None:
+    """新增测试项须经用户同意，由派活方登记在 `[verify] approved_tests`（DONE.md 第 2 节第 7 条）。
+
+    查三处：测试目录下新文件、已有测试文件里净增的用例名、生成计划的闸里新出现的参数（新测试文件或新命令）。
+    改写、删减、同名重写都不算新增。
+    """
+    approved = set(config.approved_tests())
+    found = []
+    dirs = config.assertion_dirs()
+    if dirs:
+        added = git("diff", "--name-only", "--no-renames", "--diff-filter=A", before, "--", *dirs).stdout.split()
+        found += [f"新测试文件 {p}" for p in added if p not in approved]
+        diff = git("diff", "--no-renames", "-U0", "--diff-filter=M", before, "--", *dirs).stdout
+        names: dict[str, dict[str, set[str]]] = {}
+        path = ""
+        for line in diff.splitlines():
+            if line.startswith("+++ "):
+                path = line[6:] if line.startswith("+++ b/") else line[4:]
+            elif not line.startswith("---") and (hit := _TEST_NAME.match(line)):
+                names.setdefault(path, {"+": set(), "-": set()})[line[0]].add(hit.group(2) or hit.group(3))
+        for path, sides in names.items():
+            found += [f"新测试用例 {path}::{name}" for name in sorted(sides["+"] - sides["-"])
+                      if path not in approved and f"{path}::{name}" not in approved]
+    shown = git("show", f"{before}:{config.plan_file()}", check=False)
+    if shown.returncode == 0:
+        old = {token for gate in json.loads(shown.stdout).get("gates", []) for token in gate}
+        new = {token for gate in regen.load_plan().get("gates", []) for token in gate}
+        found += [f"闸里新出现 {token}" for token in sorted(new - old) if token not in approved]
+    if found:
+        raise MergeError("新增测试项未经用户同意（演示项目以外不加测试；要加先与用户讨论，同意后登记到 "
+                         "shiftboss.toml [verify] approved_tests）：\n  " + "\n  ".join(found))
 
 
 _TOKEN = re.compile(r'"[^"]*"|\'[^\']*\'|\w+|[^\s\w]')
