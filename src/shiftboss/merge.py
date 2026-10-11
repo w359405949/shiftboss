@@ -94,9 +94,13 @@ def generation_plan() -> None:
     # 合并前检查一次，合并后再检查新清单，避免空清单被当成“全绿”。
     plan = regen.load_plan()
     if not isinstance(plan, dict):
-        raise MergeError("regen.json 必须是包含 steps 与 gates 的对象")
-    for key in ("steps", "gates"):
-        commands = plan.get(key)
+        raise MergeError("regen.json 必须是包含生成计划（stages 或 steps）与 gates 的对象")
+    try:
+        regen.validate_stages(plan)
+    except ValueError as exc:
+        raise MergeError(f"regen.json 的 stages 无效：{exc}") from exc
+    for key, commands in (("stages" if plan.get("stages") is not None else "steps", plan_commands(plan)),
+                          ("gates", plan.get("gates"))):
         if (not isinstance(commands, list) or not commands
                 or any(not isinstance(cmd, list) or not cmd
                        or any(not isinstance(arg, str) or not arg for arg in cmd)
