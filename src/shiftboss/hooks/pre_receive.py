@@ -55,7 +55,8 @@ def red_notice(name: str, settings: dict) -> None:
         return
     reds = [item for item in failures if claims.get(item["ticket"], {}).get("taskbook") == name]
     if reds:
-        print(f"提醒 codex/{name}：常驻验证有认领给本线的红，下一段先修（README 4.1 第 10 条）：", file=sys.stderr)
+        print(f"提醒 codex/{name}：常驻验证在 main@{last[:12]} 上仍有认领给本线的红，下一段先修（README 4.1 第 10 条）；"
+              f"该提交已含的改动不算待确认：", file=sys.stderr)
     for item in reds:
         print(f"  [{item['ticket']}] {item['id'][:160]}\n    筛查：{state / 'findings' / (item['ticket'] + '.md')}", file=sys.stderr)
 
