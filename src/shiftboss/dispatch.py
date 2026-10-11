@@ -421,9 +421,8 @@ def close_line(name: str, copy_win: str, ledger: dict) -> None:
     entry = ledger.get(name) or {}
     holder = next((n for n, e in ledger.items() if n != name and not e.get("closed")
                    and same_dir(e.get("copy"), copy_win)), None)
-    if holder:
-        raise RuntimeError(f"不能关闭 {name}：副本已由 {holder} 占用")
-    ok = close_session(copy_win)
+    # 副本已转给别的线：会话属于对方，只把本线标为已关。
+    ok = False if holder else close_session(copy_win)
     if entry:
         entry["closed"] = True
     save_sessions(ledger)
@@ -928,13 +927,18 @@ def main(argv: list[str] | None = None) -> int:
     # 执行方按轮定：恢复沿用台账里那一轮的，其余取本次参数；副本不在该执行方的池里就换一个空闲的。
     executor = executor_of(entry.get("executor")) if args.recover else args.executor
     new_copy = assigned_copy
-    if not args.recover and copy_pool(copy_win) != executor:
+    # 副本已被别的线占用（本线关过、副本转给了别人）也换空闲副本；旧副本归对方，不查它。
+    holder = next((n for n, e in ledger.items() if n != args.taskbook and not e.get("closed")
+                   and same_dir(e.get("copy"), copy_win)), None)
+    if not args.recover and (copy_pool(copy_win) != executor or holder):
         try:
-            new_copy = switch_copy(executor, entry, copy_win, branch, ledger)
+            new_copy = (free_copy(executor, ledger) if holder
+                        else switch_copy(executor, entry, copy_win, branch, ledger))
         except (ValueError, RuntimeError) as exc:
             print(exc)
             return 2
-        print(f"本轮执行方 {executor}：副本由 {copy.name} 换为 {Path(new_copy).name}")
+        why = f"原副本已由 {holder} 占用" if holder else f"本轮执行方 {executor}"
+        print(f"{why}：副本由 {copy.name} 换为 {Path(new_copy).name}")
         copy_win, copy = new_copy, Path(new_copy)
 
     if args.recover:
