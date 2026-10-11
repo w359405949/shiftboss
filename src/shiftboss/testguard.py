@@ -17,8 +17,9 @@ SOURCE = (".js", ".mjs", ".cjs", ".py")
 
 
 def find(git: Callable[..., str], before: str, after: str | None, dirs: list[str],
-         plans: tuple[str | None, str | None], approved: set[str], untracked: list[str] | None = None) -> list[str]:
-    """`git(*args)` 返回标准输出；`after` 为 None 时比对工作树，`untracked` 为工作树里未跟踪的文件。
+         plans: tuple[str | None, str | None], approved: set[str], untracked: list[str] | None = None,
+         read: Callable[[str], str] | None = None) -> list[str]:
+    """`git(*args)` 返回标准输出；`after` 为 None 时比对工作树，`untracked` 为工作树里未跟踪的文件，`read` 读其内容。
 
     `plans` 是改动前后的生成计划文本（读不到为 None）。
     """
@@ -47,6 +48,11 @@ def find(git: Callable[..., str], before: str, after: str | None, dirs: list[str
         elif path.endswith(SOURCE) and path not in approved and FRAMEWORK.match(line):
             found.append(f"测试目录外的测试框架导入 {path}")
             path = ""   # 每个文件报一次
+    for path in untracked or []:
+        if in_dirs(path) or not path.endswith(SOURCE) or path in approved or read is None:
+            continue
+        if any(FRAMEWORK.match("+" + line) for line in read(path).splitlines()):
+            found.append(f"测试目录外的测试框架导入 {path}")
     old, new = plans
     if old is not None and new is not None:
         before_tokens = {token for gate in json.loads(old).get("gates", []) for token in gate}

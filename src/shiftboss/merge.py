@@ -373,7 +373,8 @@ def check_new_tests(before: str) -> None:
         lambda *args: git(*args).stdout, before, None, config.assertion_dirs(),
         (old.stdout if old.returncode == 0 else None, plan.read_text(encoding="utf-8") if plan.is_file() else None),
         set(config.approved_tests()),
-        untracked=git("ls-files", "--others", "--exclude-standard").stdout.split())
+        untracked=git("ls-files", "--others", "--exclude-standard").stdout.split(),
+        read=lambda path: (REPO / path).read_text(encoding="utf-8", errors="replace"))
     if found:
         raise MergeError(testguard.MESSAGE + "\n  " + "\n  ".join(found))
 
