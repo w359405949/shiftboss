@@ -8,7 +8,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 本目录由 `shiftboss` 包安装进项目顶层 `shiftboss/`，不在此处修改（同目录的 `plans/` 是任务书，不属于装入的文件）；改动在包内 `docs/` 做，`shiftboss bootstrap` 同步，`--check` 报出不一致。
 项目专有的约定（架构依据、文档写法、测试目录、证据目录、完成标准的不放松清单）见 `AGENTS.md` 指向的项目文档。
 家目录：项目旁的 `<项目名>.shiftboss/`（`shiftboss.toml` 的 `copies_dir` 可改），放 bare 仓库 `hub.git`、全部执行方副本（`<执行方><序号>`）与验证工作区 `verify/`。
-控制目录：家目录下的 `control/`（`shiftboss.toml` 的 `control_dir` 可改），放仅派活方读写的私有文档（执行方评估 `EXECUTORS.md`、错题本 `mistakes.md`）、台账、配额、门铃与验证报告；工作副本内不存放、不链接。
+控制目录：家目录下的 `control/`（`shiftboss.toml` 的 `control_dir` 可改），放仅派活方读写的私有文档（执行方评估 `EXECUTORS.md`、错题本 `mistakes.md`）、台账、配额、门铃与验证报告；工作副本内不存放、不链接。**例外**：执行方可只读其中 `verification/` 的日志与筛查，用于修认领给本线的红。
 
 | 入口 | 用途 |
 | --- | --- |
