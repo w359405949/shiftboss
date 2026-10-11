@@ -3,14 +3,18 @@
 受保护路径与可改它们的线由 main 上的 `shiftboss.toml` `[guard]` 给出（`protected` 路径前缀、`owners` 任务书名）。
 
 交回顶部执行状态为「停下」的照收：卡点报告须能立即推送（4.2），解不了的冲突按 2.3 第 4 条标待议交回。
+推送照收时回显认领给该线、仍红的常驻验证票据（README 4.1 第 10 条），在跑的线由此得知。
 守卫自身出错时放行。
 """
 
 import subprocess
 import sys
 import tomllib
+from pathlib import Path
 
+from shiftboss import config
 from shiftboss.paths import PLANS_DIR
+from shiftboss.state import read_state
 from shiftboss.taskbook import execution_status
 
 
@@ -26,13 +30,34 @@ def conflicts(new: str) -> list[str]:
     return [line for line in done.stdout.splitlines()[1:] if line]
 
 
-def guard_rules() -> tuple[list[str], set[str]]:
-    """main 上的受保护路径前缀与可改它们的任务书名；读不到时不设防。"""
+def main_config() -> dict:
+    """main 上的 `shiftboss.toml`；读不到时为空。"""
     shown = git("show", "refs/heads/main:shiftboss.toml")
-    if shown.returncode:
-        return [], set()
-    guard = tomllib.loads(shown.stdout).get("guard", {})
+    return {} if shown.returncode else tomllib.loads(shown.stdout)
+
+
+def guard_rules(settings: dict) -> tuple[list[str], set[str]]:
+    """受保护路径前缀与可改它们的任务书名；没配时不设防。"""
+    guard = settings.get("guard", {})
     return list(guard.get("protected", [])), set(guard.get("owners", []))
+
+
+def red_notice(name: str, settings: dict) -> None:
+    """回显认领给该线、仍红的票据；控制目录配在项目根下时 bare 里解析不了，不回显。"""
+    if {"copies_dir", "control_dir"} & settings.get("project", {}).keys():
+        return
+    state = config.default_control_dir(Path.cwd()) / config.VERIFICATION_NAME
+    try:
+        last = read_state(state / "index.json").get("last")
+        failures = read_state(state / "runs" / f"{last}.json").get("failures", []) if last else []
+        claims = read_state(state / "claims.json")
+    except BaseException:
+        return
+    reds = [item for item in failures if claims.get(item["ticket"], {}).get("taskbook") == name]
+    if reds:
+        print(f"提醒 codex/{name}：常驻验证有认领给本线的红，下一段先修（README 4.1 第 10 条）：", file=sys.stderr)
+    for item in reds:
+        print(f"  [{item['ticket']}] {item['id'][:160]}\n    筛查：{state / 'findings' / (item['ticket'] + '.md')}", file=sys.stderr)
 
 
 def trespass(new: str, protected: list[str]) -> list[str]:
@@ -45,7 +70,8 @@ def trespass(new: str, protected: list[str]) -> list[str]:
 
 
 def main() -> int:
-    protected, owners = guard_rules()
+    settings = main_config()
+    protected, owners = guard_rules(settings)
     rejected = []
     trespassed = False
     for row in sys.stdin.read().splitlines():
@@ -61,12 +87,11 @@ def main() -> int:
             trespassed = True
             continue
         paths = conflicts(new)
-        if not paths:
+        delivery = git("show", f"{new}:{PLANS_DIR}/{name}/delivery.md").stdout if paths else ""
+        if paths and execution_status(delivery) != "停下":
+            rejected.append((ref, paths))
             continue
-        delivery = git("show", f"{new}:{PLANS_DIR}/{name}/delivery.md").stdout
-        if execution_status(delivery) == "停下":
-            continue
-        rejected.append((ref, paths))
+        red_notice(name, settings)
     for ref, paths in rejected:
         print(f"拒收 {ref}：与 main 冲突，先 git fetch origin 并合入 origin/main 再推（README 2.3、4.1）。", file=sys.stderr)
         for path in paths:

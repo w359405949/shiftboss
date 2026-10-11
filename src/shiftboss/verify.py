@@ -61,7 +61,7 @@ from shiftboss.outputs import CATALOG, catalog_files, commit_generated, plan_com
 from shiftboss.state import read_state, write_state
 
 ROOT = project_root()
-NAME = 'verification'
+NAME = config.VERIFICATION_NAME
 SCHEMA = 'workflow.verification.v1'
 
 # 一轮里准许花在归因上的时间下限。**tip 验证优先于归因，这条不能反过来。**

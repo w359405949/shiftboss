@@ -74,6 +74,7 @@ def default_worker(root: Path | None = None) -> str:
 
 
 HUB_NAME = "hub.git"
+VERIFICATION_NAME = "verification"  # 控制目录下常驻验证的状态目录
 
 
 def copies_dir(bare: Path, root: Path | None = None) -> Path:
@@ -84,15 +85,24 @@ def copies_dir(bare: Path, root: Path | None = None) -> Path:
     value = _get("project", "copies_dir", None, root)
     if value:
         return ((root or project_root()) / value).resolve()
+    return default_control_dir(bare).parent
+
+
+def default_control_dir(bare: Path) -> Path:
+    """未配置 `copies_dir`、`control_dir` 时的控制目录；只凭 bare 的位置认，hub 钩子里没有项目根也能用。"""
     bare = Path(bare)
-    if bare.name == HUB_NAME:
-        return bare.parent
-    return bare.parent / (bare.name.removesuffix(".git") + ".shiftboss")
+    home = bare.parent if bare.name == HUB_NAME else bare.parent / (bare.name.removesuffix(".git") + ".shiftboss")
+    return home / "control"
 
 
 def control_dir(bare: Path, root: Path | None = None) -> Path:
     """仅派活方读写的控制目录（私有文档、台账、门铃、验证报告）；缺省为副本目录下的 `control/`。"""
     value = _get("project", "control_dir", None, root)
-    path = (root or project_root()) / value if value else copies_dir(bare, root) / "control"
+    if value:
+        path = (root or project_root()) / value
+    elif _get("project", "copies_dir", None, root):
+        path = copies_dir(bare, root) / "control"
+    else:
+        path = default_control_dir(bare)
     path.mkdir(parents=True, exist_ok=True)
     return path
