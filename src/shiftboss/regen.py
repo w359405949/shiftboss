@@ -168,7 +168,26 @@ def previous_catalog() -> dict | None:
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
 
 
+def with_closure(stages: list[dict], root: Path | None = None) -> list[dict]:
+    """声明的输入加上项目命令算出的代码读取闭包：生成计划只声明数据输入，代码依赖不手抄进计划。"""
+    from shiftboss import config
+    command = config.closure_command(root)
+    if not command:
+        return stages
+    if command[0] == "python":
+        command = [sys.executable, *command[1:]]
+    done = subprocess.run(command, cwd=root or REPO, capture_output=True, text=True, encoding="utf-8", timeout=600)
+    if done.returncode:
+        raise ValueError(f"闭包命令失败（{' '.join(command)}）：{done.stderr.strip()[-500:]}")
+    closure = json.loads(done.stdout)
+    unknown = set(closure) - {stage["name"] for stage in stages}
+    if unknown:
+        raise ValueError(f"闭包命令给出未知阶段：{sorted(unknown)}")
+    return [{**stage, "inputs": [*stage["inputs"], *closure.get(stage["name"], [])]} for stage in stages]
+
+
 def stage_selection(stages: list[dict], args) -> list[dict]:
+    stages = with_closure(stages)
     old = previous_catalog() or {}
     done = {p["stage"] for p in old.get("producers") or [] if p.get("stage")}
     paths = None if args.full else ([] if args.stage else changed_paths(args.base))

@@ -82,15 +82,17 @@ SCHEMA = 'workflow.verification.v1'
 PROBE_BUDGET_FLOOR = 60
 
 
-def generation_needed(plan: dict, paths: list[str]) -> bool:
+def generation_needed(plan: dict, paths: list[str], root: Path | None = None) -> bool:
     """改动里有生成输入才重新生成；没有路径规则时一律生成。
 
     生成输入是 `path_layers` 中归到带 `generate` 层的路径；测试目录只是消费端，不算输入。
     """
     if plan.get('stages') is not None:
         # 分阶段计划：任一阶段的声明输入被改动才生成，选哪些阶段由 regen 按同一份声明定。
+        from shiftboss.regen import with_closure
+        stages=with_closure(plan['stages'],root)
         return any(path == prefix or (prefix.endswith('/') and path.startswith(prefix))
-                   for path in paths for stage in plan['stages'] for prefix in stage['inputs'])
+                   for path in paths for stage in stages for prefix in stage['inputs'])
     rules = plan.get('path_layers')
     if not rules:
         return True
@@ -553,7 +555,7 @@ class Verifier:
             base=self.index.get('last_consistent')
             inputs=git(self.workspace,'diff','--name-only','-z',base,sha,check=False) if base else None
             skip=(inputs is not None and inputs.returncode==0
-                  and not generation_needed(plan,[p for p in inputs.stdout.split('\0') if p]))
+                  and not generation_needed(plan,[p for p in inputs.stdout.split('\0') if p],self.workspace))
             if skip:
                 # 生成输入自派生物一致的那个提交以来没动：派生物现成，不重算。
                 report['stages']['generate']={'skipped':f'自 {base[:12]} 起无生成输入改动','returncode':0,'seconds':0,'log':''}

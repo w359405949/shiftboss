@@ -38,6 +38,11 @@ def plan_file(root: Path | None = None) -> str:
     return _get("regen", "plan", "regen.json", root)
 
 
+def closure_command(root: Path | None = None) -> list[str]:
+    """项目算各阶段代码读取闭包的命令；标准输出为 `{阶段名: [路径, …]}` 的 JSON。不配则只用声明的输入。"""
+    return list(_get("regen", "closure_command", [], root))
+
+
 def catalog_file(root: Path | None = None) -> str:
     """生产端产物清单，相对项目根。"""
     return _get("regen", "catalog", "derived-artifacts.json", root)
