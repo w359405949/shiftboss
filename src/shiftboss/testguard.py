@@ -1,6 +1,6 @@
 """新增测试项的识别（DONE.md 第 2 节第 7 条）：只放行经用户同意、登记在 `[verify] approved_tests` 的。
 
-`shiftboss check`、合并与 hub 推送守卫共用这一份，三处口径一致。查四处：
+`shiftboss check`、合并与 hub 推送守卫共用这一份，三处口径一致。按改名追踪：只搬动位置的文件不算新增。查四处：
 测试目录下的新文件、已有测试文件里净增的用例名（改名与重写不算）、测试目录外新出现的测试框架导入、
 生成计划的闸里新出现的参数。
 """
@@ -27,12 +27,12 @@ def find(git: Callable[..., str], before: str, after: str | None, dirs: list[str
     found: list[str] = []
     in_dirs = lambda path: any(path == d or path.startswith(d.rstrip("/") + "/") for d in dirs)
     if dirs:
-        added = git("diff", "--name-only", "--no-renames", "--diff-filter=A", *span, "--", *dirs).split()
+        added = git("diff", "--name-only", "-M", "-l100000", "--diff-filter=A", *span, "--", *dirs).split()
         added += [p for p in untracked or [] if in_dirs(p)]
         found += [f"新测试文件 {p}" for p in added if p not in approved]
         names: dict[str, dict[str, set[str]]] = {}
         path = ""
-        for line in git("diff", "--no-renames", "-U0", "--diff-filter=M", *span, "--", *dirs).splitlines():
+        for line in git("diff", "-M", "-l100000", "-U0", "--diff-filter=MR", *span, "--", *dirs).splitlines():
             if line.startswith("+++ "):
                 path = line[6:] if line.startswith("+++ b/") else line[4:]
             elif not line.startswith("---") and (hit := TEST_NAME.match(line)):
@@ -42,7 +42,7 @@ def find(git: Callable[..., str], before: str, after: str | None, dirs: list[str
             found += [f"新测试用例 {path}::{name}" for name in extra
                       if path not in approved and f"{path}::{name}" not in approved]
     path = ""
-    for line in git("diff", "--no-renames", "-U0", *span, "--", ".", *[f":!{d}" for d in dirs]).splitlines():
+    for line in git("diff", "-M", "-l100000", "-U0", *span, "--", ".", *[f":!{d}" for d in dirs]).splitlines():
         if line.startswith("+++ "):
             path = line[6:] if line.startswith("+++ b/") else line[4:]
         elif path.endswith(SOURCE) and path not in approved and FRAMEWORK.match(line):
@@ -74,7 +74,7 @@ def forbidden(git: Callable[..., str], before: str, after: str | None, rules: li
         allow = set(rule.get("allow", []))
         counts: dict[str, int] = {}
         path = ""
-        for line in git("diff", "--no-renames", "-U0", *span, "--", *rule.get("paths", ["."])).splitlines():
+        for line in git("diff", "-M", "-l100000", "-U0", *span, "--", *rule.get("paths", ["."])).splitlines():
             if line.startswith("+++ "):
                 path = line[6:] if line.startswith("+++ b/") else line[4:]
             elif line[:1] in "+-" and not line.startswith(("+++", "---")) and pattern.search(line[1:]):
