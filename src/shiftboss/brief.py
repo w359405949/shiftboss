@@ -1,6 +1,6 @@
 """派活方每次汇报末尾原样附上的状态摘要：在办任务、门铃与后备闹钟、常驻验证。
 
-Stop 钩子（`shiftboss.hooks.require_brief`）见不到 `MARKER` 就不让这一轮结束。
+Stop 钩子（`shiftboss.hooks.show_brief`）在每次回复结束时现算并显示给用户。
 """
 from __future__ import annotations
 

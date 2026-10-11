@@ -106,7 +106,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 2. 被任何事件唤醒后先重挂门铃，再干别的：`shiftboss bell --once --ignore-green --heartbeat-minutes 50`、`shiftboss bell --alarm-minutes 100`、`shiftboss bell --alarm-minutes 150` 各自单独作一条后台命令，后台时限 6 小时；新闹钟替换旧闹钟、重新计时。
 3. 重挂后读门铃全部输出（含「⚠」行），再跑 `inbox list`，处理全部「可核对」。
 4. 门铃挂不上时告知用户，照常用 `inbox status` 核对。
-5. 每次汇报末尾原样附上 `shiftboss brief` 的输出，供用户对照后台实际（Stop 钩子缺则不让结束）。
+5. 每次回复结束时 Stop 钩子显示 `shiftboss brief`（在办任务、门铃、验证），供用户对照后台实际；派活方不必转述。
 6. 常驻验证由派活方启停与重启，不等用户授权；没在跑时当场拉起。
 7. 项目根缺 `shiftboss.toml` 时由派活方生成：配置项见 `shiftboss.config`，取值从项目 README 提取，提取不到的问用户。
 
