@@ -705,6 +705,10 @@ class Verifier:
         if report['publication'] in ('已快进补齐 main','该源提交的派生物已一致'):
             # main 上这个提交的派生物与源一致，之后的生成判断以它为基准。
             self.index['last_consistent']=self.index['last']
+        elif report['publication'].startswith('main 已前进，生成提交已三方合并后推送') and report.get('generated_commit'):
+            # main 在验证期间前进是常态：生成提交本身与源一致，以它为基准，之后从它起算改动；
+            # 不推进就会一直从很久以前起算，每轮都全量生成。
+            self.index['last_consistent']=report['generated_commit']
         if not unique: self.index['last_green']=self.index['last']
         self.index.pop('active',None);self.index.pop('error',None);self.save()
         ring(self.remote,f"{sha} red={len(unique)} delta={report['delta']}; run shiftboss.inbox list")
