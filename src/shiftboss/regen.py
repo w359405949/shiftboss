@@ -26,6 +26,7 @@ from __future__ import annotations
 from shiftboss.paths import project_root
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -129,11 +130,14 @@ def validate_stages(plan: dict) -> list[dict] | None:
         name, command = stage.get("name"), stage.get("command")
         if not isinstance(name, str) or not STAGE_NAME.fullmatch(name) or name in names:
             raise ValueError(f"阶段名须唯一且为小写短横线：{name!r}")
-        if (not isinstance(command, list) or len(command) < 4 or command[:3] != ["python", "-B", "-m"]
-                or not all(isinstance(arg, str) for arg in command)
-                or any(SHELL_CHARS.search(arg) for arg in command) or "-m" in command[4:]
-                or "-c" in command[3:]):
-            raise ValueError(f"{name}: 命令只能是 python -B -m <一个模块> [参数]，不串接其他命令")
+        python = (isinstance(command, list) and len(command) >= 4 and command[:3] == ["python", "-B", "-m"]
+                  and "-m" not in command[4:] and "-c" not in command[3:])
+        node = (isinstance(command, list) and len(command) >= 2 and command[0] == "node"
+                and command[1].endswith((".mjs", ".js")) and not command[1].startswith(("-", "/"))
+                and not any(arg.startswith("-e") or arg in ("-p", "--eval", "--print") for arg in command[1:]))
+        if (not (python or node) or not all(isinstance(arg, str) for arg in command)
+                or any(SHELL_CHARS.search(arg) for arg in command)):
+            raise ValueError(f"{name}: 命令只能是 python -B -m <一个模块> [参数] 或 node <仓库内脚本> [参数]，不串接其他命令")
         if tuple(command) in commands:
             raise ValueError(f"{name}: 与其他阶段命令重复")
         inputs = stage.get("inputs")
@@ -235,6 +239,25 @@ def select_layers(plan: dict, paths: list[str], requested: list[str] | None = No
     return [name for name in layers if name in selected]
 
 
+def changed_files() -> dict[str, str]:
+    """工作树里相对 HEAD 有改动或未跟踪的文件及其内容摘要；不存在的记为空串。"""
+    listed = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"],
+                            cwd=REPO, check=True, capture_output=True).stdout.decode("utf-8").split("\0")
+    out = {}
+    for row in listed:
+        if len(row) < 4:
+            continue
+        name = row[3:]
+        path = REPO / name
+        out[name] = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+    return out
+
+
+def observed_writes(before: dict[str, str], after: dict[str, str]) -> set[str]:
+    """两次快照之间内容变了的文件（新建、改写、删除、恢复原样都算）。"""
+    return {name for name in before.keys() | after.keys() if before.get(name) != after.get(name)}
+
+
 def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
             outputs: list[dict] | None = None, parallel: bool = False,
             names: list[str] | None = None) -> bool:
@@ -259,12 +282,20 @@ def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
         if report_path:
             env[REPORT_ENV] = str(report_path)
         try:
+            # Node 生产端没有 Python 的审计钩子：它只声明产物，写了什么由这里前后对照工作树独立观察。
+            before = changed_files() if report_path and command[0] == "node" else None
             proc = subprocess.run(cmd, cwd=str(REPO), capture_output=True,
                                   text=True, encoding="utf-8", errors="replace", env=env)
             if proc.returncode == 0 and report_path:
                 report = json.loads(report_path.read_text(encoding="utf-8"))
                 if report.get("schema") != SCHEMA:
                     raise ValueError("生产端没有给出受支持的产物报告")
+                if before is not None:
+                    declared = set(exact_paths(report["files"]))
+                    written = observed_writes(before, changed_files()) - {report_path.relative_to(REPO).as_posix()}
+                    if not written <= declared:
+                        raise ValueError(f"Node 生产端写了未声明的文件：{sorted(written - declared)[:10]}")
+                    report = {**report, "written": sorted(written), "retained": sorted(declared - written)}
                 files = exact_paths(report["files"])
                 actual = set(exact_paths(report["written"])) | set(exact_paths(report["retained"]))
                 if set(files) != actual:
