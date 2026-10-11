@@ -14,6 +14,7 @@ COMMANDS = {
     "taskbook": "taskbook",
     "dispatch": "dispatch",
     "merge": "merge",
+    "check": "check",       # 执行方推送前：与合并同一套快速检查
     "bell": "doorbell",
     "recover": "recover",
     "regen": "regen",

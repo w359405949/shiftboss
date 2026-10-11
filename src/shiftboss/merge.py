@@ -276,10 +276,11 @@ def check_js_imports(names: list[str]) -> None:
     合并取一边时，另一边留下的导入或被删的导出只有运行时才报错，语法检查看不出来。
     """
     prefixes = config.js_module_prefixes()
-    changed = [n for n in names if n.endswith((".js", ".mjs")) and any(n.startswith(p) for p in prefixes)
-               and (REPO / n).is_file()]
+    touched = [n for n in names if n.endswith((".js", ".mjs")) and any(n.startswith(p) for p in prefixes)]
+    changed = [n for n in touched if (REPO / n).is_file()]
     importers = set(changed)
-    for name in changed:
+    # 被删的模块也要找引用方：删了生成器而测试还在导入它，只有这样才查得到。
+    for name in touched:
         found = git("grep", "-l", "-F", Path(name).name, "--", *prefixes, check=False).stdout.split()
         importers.update(found)
     missing = []

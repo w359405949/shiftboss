@@ -186,7 +186,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 7. 测试与构建线新增常驻测试在同一段内登记到 `shiftboss.toml` `[regen] plan` 的对应 gate。
 8. 交回前再 `git fetch origin` 并合入 `origin/main`，解决冲突；合入触及本线判据的，在合入后的代码上重跑。
 9. 交回引用的每份回显须出自最终代码，并覆盖交回所述的全部项。
-10. 写 `delivery.md`（顶部写执行状态），提交并推送。与 main 冲突的推送会被 hub 拒收，「停下」除外。
+10. 写 `delivery.md`（顶部写执行状态），过 `shiftboss check`（与合并时同一套快速检查），提交并推送。与 main 冲突的推送会被 hub 拒收，「停下」除外。
    推送回显列出认领给本线的红时，下一段先修它们。
 11. 引用的任务书用 `shiftboss taskbook show <名字>` 读，在办与已归档都可找到。
 
