@@ -3,6 +3,7 @@
 受保护路径与可改它们的线由 main 上的 `shiftboss.toml` `[guard]` 给出（`protected` 路径前缀、`owners` 任务书名）。
 
 交回顶部执行状态为「停下」的照收：卡点报告须能立即推送（4.2），解不了的冲突按 2.3 第 4 条标待议交回。
+未经用户同意的新增测试项（DONE.md 第 2 节第 7 条，口径见 `shiftboss.testguard`）拒收。
 推送照收时回显认领给该线、仍红的常驻验证票据（README 4.1 第 10 条），在跑的线由此得知。
 守卫自身出错时放行。
 """
@@ -70,6 +71,19 @@ def trespass(new: str, protected: list[str]) -> list[str]:
             if any(path == prefix or (prefix.endswith("/") and path.startswith(prefix)) for prefix in protected)]
 
 
+def new_tests(new: str, settings: dict) -> list[str]:
+    """分支自与 main 分叉以来未登记的新增测试项。"""
+    from shiftboss import testguard
+    base = git("merge-base", "refs/heads/main", new).stdout.strip()
+    if not base:
+        return []
+    plan = settings.get("regen", {}).get("plan", "regen.json")
+    shown = lambda ref: (lambda done: None if done.returncode else done.stdout)(git("show", f"{ref}:{plan}"))
+    return testguard.find(lambda *args: git(*args).stdout, base, new,
+                          list(settings.get("merge", {}).get("assertion_dirs", [])),
+                          (shown(base), shown(new)), set(settings.get("verify", {}).get("approved_tests", [])))
+
+
 def main() -> int:
     settings = main_config()
     protected, owners = guard_rules(settings)
@@ -85,6 +99,13 @@ def main() -> int:
             print(f"拒收 {ref}：改动了受保护路径，只有 {'、'.join(sorted(owners)) or '（未指定）'} 能改；缺测试或构建改动写进交回，由派活方转交。", file=sys.stderr)
             for path in paths:
                 print(f"  {path}", file=sys.stderr)
+            trespassed = True
+            continue
+        if added := new_tests(new, settings):
+            from shiftboss.testguard import MESSAGE
+            print(f"拒收 {ref}：" + MESSAGE, file=sys.stderr)
+            for item in added:
+                print(f"  {item}", file=sys.stderr)
             trespassed = True
             continue
         paths = conflicts(new)
