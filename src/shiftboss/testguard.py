@@ -61,5 +61,32 @@ def find(git: Callable[..., str], before: str, after: str | None, dirs: list[str
     return found
 
 
+def forbidden(git: Callable[..., str], before: str, after: str | None, rules: list[dict],
+              untracked: list[str] | None = None, read: Callable[[str], str] | None = None) -> list[str]:
+    """项目在 `[[guard.forbid]]` 禁止的写法：每个文件净增的命中数大于 0 即报（改写、删减不算）。
+
+    规则字段：`name`、`pattern`（正则，逐行匹配）、`paths`（路径前缀）、`allow`（放行的文件）、`reason`。
+    """
+    span = [before] if after is None else [before, after]
+    found = []
+    for rule in rules:
+        pattern = re.compile(rule["pattern"])
+        allow = set(rule.get("allow", []))
+        counts: dict[str, int] = {}
+        path = ""
+        for line in git("diff", "--no-renames", "-U0", *span, "--", *rule.get("paths", ["."])).splitlines():
+            if line.startswith("+++ "):
+                path = line[6:] if line.startswith("+++ b/") else line[4:]
+            elif line[:1] in "+-" and not line.startswith(("+++", "---")) and pattern.search(line[1:]):
+                counts[path] = counts.get(path, 0) + (1 if line[0] == "+" else -1)
+        prefixes = [prefix for prefix in rule.get("paths", []) if prefix != "."] or [""]
+        for path in untracked or []:
+            if read and any(path.startswith(prefix) for prefix in prefixes):
+                counts[path] = counts.get(path, 0) + sum(1 for line in read(path).splitlines() if pattern.search(line))
+        found += [f"新增{rule['name']} {path}（净增 {count} 处）：{rule.get('reason', '')}"
+                  for path, count in sorted(counts.items()) if count > 0 and path not in allow]
+    return found
+
+
 MESSAGE = ("新增测试项未经用户同意（演示项目以外不加测试；要加先与用户讨论，同意后由派活方登记到 "
            "shiftboss.toml [verify] approved_tests；DONE.md 第 2 节第 7 条）。撤回这些改动后再推送：")

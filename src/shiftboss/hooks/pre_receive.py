@@ -84,6 +84,16 @@ def new_tests(new: str, settings: dict) -> list[str]:
                           (shown(base), shown(new)), set(settings.get("verify", {}).get("approved_tests", [])))
 
 
+def forbidden(new: str, settings: dict) -> list[str]:
+    """分支自与 main 分叉以来净增的项目禁止写法。"""
+    from shiftboss import testguard
+    rules = settings.get("guard", {}).get("forbid", [])
+    base = git("merge-base", "refs/heads/main", new).stdout.strip()
+    if not rules or not base:
+        return []
+    return testguard.forbidden(lambda *args: git(*args).stdout, base, new, rules)
+
+
 def main() -> int:
     settings = main_config()
     protected, owners = guard_rules(settings)
@@ -99,6 +109,12 @@ def main() -> int:
             print(f"拒收 {ref}：改动了受保护路径，只有 {'、'.join(sorted(owners)) or '（未指定）'} 能改；缺测试或构建改动写进交回，由派活方转交。", file=sys.stderr)
             for path in paths:
                 print(f"  {path}", file=sys.stderr)
+            trespassed = True
+            continue
+        if banned := forbidden(new, settings):
+            print(f"拒收 {ref}：出现项目禁止的写法（shiftboss.toml [[guard.forbid]]），撤回后再推：", file=sys.stderr)
+            for item in banned:
+                print(f"  {item}", file=sys.stderr)
             trespassed = True
             continue
         if added := new_tests(new, settings):

@@ -377,6 +377,12 @@ def check_new_tests(before: str) -> None:
         read=lambda path: (REPO / path).read_text(encoding="utf-8", errors="replace"))
     if found:
         raise MergeError(testguard.MESSAGE + "\n  " + "\n  ".join(found))
+    banned = testguard.forbidden(
+        lambda *args: git(*args).stdout, before, None, config.load().get("guard", {}).get("forbid", []),
+        untracked=git("ls-files", "--others", "--exclude-standard").stdout.split(),
+        read=lambda path: (REPO / path).read_text(encoding="utf-8", errors="replace"))
+    if banned:
+        raise MergeError("出现项目禁止的写法（shiftboss.toml [[guard.forbid]]），撤回后再推：\n  " + "\n  ".join(banned))
 
 
 _TOKEN = re.compile(r'"[^"]*"|\'[^\']*\'|\w+|[^\s\w]')
