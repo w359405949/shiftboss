@@ -35,6 +35,12 @@ def main() -> int:
     root = git_dir()
     if not root:
         return 0
+    failed = os.path.join(root, "shiftboss-merge-failed")
+    if os.path.isfile(failed) and os.path.isfile(os.path.join(root, "MERGE_HEAD")):
+        print("[拒绝提交] 这里是 shiftboss merge 失败后留下的合并现场；普通提交会把整份合并交掉、绕过快速检查。",
+              file=sys.stderr)
+        print("修好后用 shiftboss merge --finish <合并前HEAD> 提交，或 git merge --abort 撤回。", file=sys.stderr)
+        return 1
     lock = os.path.join(root, "shiftboss-merge-in-flight")
     if not os.path.isfile(lock):
         return 0

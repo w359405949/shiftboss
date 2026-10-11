@@ -36,7 +36,7 @@ class MergeError(RuntimeError):
 
 # 合并在飞时下锁，拦住同一个副本里任何别的 `git commit`——理由与实现见
 # `shiftboss.state` 里的「合并在飞的锁」。手工恢复那条路由 `shiftboss.regen` 下同一把锁。
-from shiftboss.state import acquire_merge_lock, release_merge_lock  # noqa: E402
+from shiftboss.state import acquire_merge_lock, clear_merge_failed, mark_merge_failed, release_merge_lock  # noqa: E402
 
 
 def acquire_lock(ref: str) -> None:
@@ -645,6 +645,7 @@ def report_failure_state() -> None:
             conflicts = git("diff", "--name-only", "--diff-filter=U", "-z").stdout
             count = len([name for name in conflicts.split("\0") if name])
             print(f"当前状态：存在 MERGE_HEAD，合并尚未提交；未解决冲突 {count} 个。", file=sys.stderr)
+            mark_merge_failed(REPO, "shiftboss merge 失败后留下的合并现场；用 shiftboss merge --finish 或 git merge --abort 收尾")
             print("下一步：未解决冲突时 git merge --abort 撤回并打回该线重新合并（shiftboss/README.md 2.3）；"
                   "快速检查失败时修正后用新进程运行 shiftboss merge --finish HEAD。",
                   file=sys.stderr)
@@ -797,10 +798,12 @@ def main(argv: list[str] | None = None) -> int:
                 acquire_lock("finish")
                 holding = True
             finish(args.finish)
+            clear_merge_failed(REPO)
             return 0
         if not args.ref:
             ap.error("需要 ref、--finish BEFORE 或 --regen BEFORE")
         preflight()
+        clear_merge_failed(REPO)
         acquire_lock(args.ref)
         holding = True
         files = derived_files()

@@ -165,6 +165,17 @@ def write_quota(git_dir: Path, value: int, executor: str = "codex") -> None:
 
 LOCK_NAME = "shiftboss-merge-in-flight"
 ENV_BYPASS = "MM_WORKFLOW_MERGE"
+# 合并失败留下的现场（MERGE_HEAD）只许 `--finish` 或 `git merge --abort` 收尾；
+# 普通 `git commit` 会把整份合并当一次提交交掉、绕过快速检查，由 pre-commit 认此标记拦下。
+FAILED_NAME = "shiftboss-merge-failed"
+
+
+def mark_merge_failed(repo: Path, detail: str) -> None:
+    (repo / ".git" / FAILED_NAME).write_text(detail + "\n", encoding="utf-8")
+
+
+def clear_merge_failed(repo: Path) -> None:
+    (repo / ".git" / FAILED_NAME).unlink(missing_ok=True)
 
 
 def lock_path(repo: Path) -> Path:
