@@ -46,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     repo = project_root()
     git_dir = inbox.origin_git_dir(repo)
     rows, _ledger, _active, _live = inbox.status_rows(repo, git_dir)
+    print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")
     print(MARKER)
     for name, scheduled, copy, running, pushed, _model in sorted(rows):
         print(f"- {name}｜{running}｜{pushed}｜{scheduled}")
