@@ -48,8 +48,12 @@ def main(argv: list[str] | None = None) -> int:
     rows, _ledger, _active, _live = inbox.status_rows(repo, git_dir)
     print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")
     print(MARKER)
+    from shiftboss.taskbook import DEPENDENCY_KEYS, Taskbook, unmet_dependencies
     for name, scheduled, copy, running, pushed, _model in sorted(rows):
-        print(f"- {name}｜{running}｜{pushed}｜{scheduled}")
+        book = Taskbook.find(repo, name)
+        waits = [f"{key}：{'、'.join(pending)}" for key in DEPENDENCY_KEYS
+                 if book and (pending := unmet_dependencies(repo, book, key))]
+        print(f"- {name}｜{running}｜{pushed}｜{scheduled}" + (f"｜等 {'；'.join(waits)}" if waits else ""))
     if not rows:
         print("- （无）")
     for line in bell_lines():

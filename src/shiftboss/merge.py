@@ -641,6 +641,27 @@ def prune_line_evidence(name: str, copy: str | None) -> None:
             print(f"  已删证据 {target}（{size / 2**30:.2f} GiB）", flush=True)
 
 
+def merge_dependency_reason(target: str) -> str | None:
+    """要合的提交属于某条在办线，而该线的合入前置还没归档时，拒绝合并。
+
+    「属于」只看还没进当前分支的提交：线分支合过 main，main 里已有的别线提交也在它的历史上。
+    """
+    from shiftboss.taskbook import Taskbook, unmet_dependencies
+    if git("merge-base", "--is-ancestor", target, "HEAD", check=False).returncode == 0:
+        return None
+    for book in Taskbook.iter_active(REPO):
+        pending = unmet_dependencies(REPO, book, "合入前置")
+        if not pending:
+            continue
+        branch = book.meta().get("分支", f"codex/{book.name}")
+        for ref in (f"origin/{branch}", branch):
+            if git("rev-parse", "--verify", "--quiet", ref, check=False).returncode == 0:
+                if git("merge-base", "--is-ancestor", target, ref, check=False).returncode == 0:
+                    return f"{book.name} 的合入前置未归档：{'、'.join(pending)}；等它们收摊再合"
+                break
+    return None
+
+
 def moving_branch_reason(ref: str, target: str) -> str | None:
     """仍在推进的线只许按提交号合，不许按分支名合。
 
@@ -842,6 +863,8 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(f"{args.ref} 指向核对时已退回的 {target[:12]}；先 fetch 取到新 tip 再合")
         if moving := moving_branch_reason(args.ref, target):
             raise MergeError(moving)
+        if waiting := merge_dependency_reason(target):
+            raise MergeError(waiting)
         print(f"合并 {args.ref} ({target[:12]})：", flush=True)
         merged = git("-c", "rerere.enabled=false", "-c", "merge.autoStash=false",
                      "merge", "--no-ff", "--no-commit", "--no-edit", target, check=False)

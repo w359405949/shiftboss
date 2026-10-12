@@ -58,6 +58,31 @@ DISPATCH_STATUS = "调度状态"
 LEGACY_DISPATCH_STATUS = "状态"
 
 
+DEPENDENCY_KEYS = ("派发前置", "合入前置")
+
+
+def dependency_list(value) -> list[str]:
+    """表头依赖格：列表，或用逗号、顿号、空白分隔的名字。"""
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    return [item for item in re.split(r"[,，、\s]+", str(value or "")) if item and item != "—"]
+
+
+def unmet_dependencies(repo: Path, book: "Taskbook", key: str) -> list[str]:
+    """依赖未满足的任务书：前置任务书归档才算满足；名字找不到的也算未满足并注明。
+
+    任务之间的先后不靠派活方记忆：写进表头，由派活与合并入口在这里核对后拒绝。
+    """
+    pending = []
+    for name in dependency_list(book.meta().get(key)):
+        other = Taskbook.find(repo, name)
+        if other is None:
+            pending.append(f"{name}（不存在）")
+        elif not other.archived:
+            pending.append(name)
+    return pending
+
+
 def normalize_meta(meta: dict) -> dict:
     """存量键「状态」读成「调度状态」；调用方只认新键。"""
     if meta is not None and LEGACY_DISPATCH_STATUS in meta:
@@ -441,6 +466,13 @@ def main(argv=None) -> int:
             return 2
         if pairs.get("你的工作副本"):
             pairs["你的工作副本"] = copy_path(repo, pairs["你的工作副本"])
+        for key in DEPENDENCY_KEYS:
+            if key in pairs:
+                pairs[key] = dependency_list(pairs[key])
+                missing = [name for name in pairs[key] if Taskbook.find(repo, name) is None]
+                if missing:
+                    print(f"{key}里的任务书不存在：{'、'.join(missing)}")
+                    return 2
         book.set_meta(**pairs)
         print(f"{args.name}：" + "；".join(f"{k} → {v}" for k, v in pairs.items()))
         return 0

@@ -896,6 +896,11 @@ def main(argv: list[str] | None = None) -> int:
     if status in ("已归档", "已作废") and not args.close:
         print(f"这份任务书状态是 `{status}`，不该再派")
         return 2
+    if not args.close:
+        from shiftboss.taskbook import unmet_dependencies
+        if pending := unmet_dependencies(REPO, book, "派发前置"):
+            print(f"派活拒绝：{book.name} 的派发前置未归档：{'、'.join(pending)}")
+            return 2
     # **状态格说它不该派，就不派。** 表头是执行方判断处境的依据，也是我打开文件
     # 第一眼看到的东西；它和实际在跑对不上，下一次就会有人以为这条线没派出去。
     # 2026-09-05 实测：`monster-attack-effects` 已经派出去 21 分钟，表头还写着「待议」，
