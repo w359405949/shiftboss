@@ -241,7 +241,7 @@ def show_report(remote: Path) -> str:
     lines.append(f"  生成提交：{report.get('generated_commit') or '未完成'}；补齐：{report.get('publication','未补齐')}")
     for item in failures:
         claim=claims.get(item['ticket'])
-        owner=(f"{claim['taskbook']} / 会话 {claim['session_id']}" if claim else '派活方（待开修复任务书并派出）')
+        owner=(f"{claim['taskbook']} / " + (f"会话 {claim['session_id']}" if claim.get('session_id') else '挂起') if claim else '派活方（待开修复任务书并派出）')
         onset=item.get('introduced_by') or item.get('attribution_error') or '基线已红，起点未知'
         age=max(0,int(time.time()-item['first_seen']))
         lines.append(f"  [{item['ticket']}] {item['id']}；从 {onset}；已观察红 {age}s；负责：{owner}")
@@ -268,18 +268,20 @@ def claim(remote: Path, ticket: str, taskbook: str):
     meta,_body=from_ref(_read,taskbook)
     ledger=read_state(config.control_dir(remote)/'sessions.json')
     entry=ledger.get(taskbook,{})
-    if meta is None or not entry.get('session_id') or entry.get('closed'):
-        raise ValueError('认领拒绝：需要 main 上的修复任务书，以及未关闭、有会话号的派活记录')
+    if meta is None:
+        raise ValueError('认领拒绝：需要 main 上的修复任务书')
+    # 会话关着也可认领（挂起）：测试与构建线只在闲时派活，有在办线时它的票先认领挂起（README 3.3b 第 5 条）。
+    session=entry.get('session_id') if entry.get('session_id') and not entry.get('closed') else None
     claims=read_state(state_dir(remote)/'claims.json')
-    claims[ticket]={'taskbook':taskbook,'session_id':entry['session_id'],'claimed':time.time()}
+    claims[ticket]={'taskbook':taskbook,'session_id':session,'claimed':time.time()}
     write_state(state_dir(remote)/'claims.json',claims)
     # 二分归因期间报告已发布、筛查还没写；那时认领只记 claims.json，筛查写出时照它填。
     path=state_dir(remote)/'findings'/f'{ticket}.md'
     if path.is_file():
-        text=path.read_text(encoding='utf-8').replace('| 状态 | 待派 |','| 状态 | 已认领 |').replace('| 负责 | 派活方 |',f"| 负责 | {taskbook} / {entry['session_id']} |")
+        text=path.read_text(encoding='utf-8').replace('| 状态 | 待派 |','| 状态 | 已认领 |').replace('| 负责 | 派活方 |',f"| 负责 | {taskbook} / {session or '挂起'} |")
         path.write_text(text,encoding='utf-8')
     ring(remote,f'claimed {ticket} {taskbook}')
-    print(f"已认领 {ticket} → {taskbook} / 会话 {entry['session_id']}")
+    print(f"已认领 {ticket} → {taskbook} / " + (f"会话 {session}" if session else "挂起（会话未开，待派后处理）"))
 
 
 def taskbooks_touching(remote: Path, paths: list[str]) -> list[str]:
@@ -744,7 +746,7 @@ class Verifier:
               if q.stem!=item['ticket'] and item['id'] in q.read_text(encoding='utf-8')]
         claim=read_state(self.directory/'claims.json').get(item['ticket'])
         rows=[f"| 状态 | {'已认领' if claim else '待派'} |",
-              f"| 负责 | {claim['taskbook']+' / '+claim['session_id'] if claim else '派活方'} |",
+              f"| 负责 | {claim['taskbook']+' / '+(claim.get('session_id') or '挂起') if claim else '派活方'} |",
               f"| 首次观察提交 | {sha} |",
               f"| 引入提交 | {introduced or '基线已红，起点未知'} |",
               f"| 稳定性 | {flaky_history(self.directory,item['id'])} |",
