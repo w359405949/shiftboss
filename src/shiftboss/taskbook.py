@@ -68,6 +68,26 @@ def dependency_list(value) -> list[str]:
     return [item for item in re.split(r"[,，、\s]+", str(value or "")) if item and item != "—"]
 
 
+SCOPE_KEY = "写入范围"
+
+
+def out_of_scope(name: str, meta: dict, paths: list[str]) -> list[str]:
+    """表头声明了写入范围时，改动里落在范围外的路径；未声明则不限。
+
+    范围是目录前缀（以 / 结尾）或 glob；本线自己的任务书目录总在范围内。
+    分领域放代码后，越界写入多半是把别处的功能带回了旧版本，合并与推送都据此拒收。
+    """
+    import fnmatch
+    patterns = dependency_list(meta.get(SCOPE_KEY))
+    if not patterns:
+        return []
+    own = f"{PLANS_DIR}/{name}/"
+    def inside(path: str) -> bool:
+        return path.startswith(own) or any(
+            path.startswith(item) if item.endswith("/") else fnmatch.fnmatchcase(path, item) for item in patterns)
+    return [path for path in paths if not inside(path)]
+
+
 def unmet_dependencies(repo: Path, book: "Taskbook", key: str) -> list[str]:
     """依赖未满足的任务书：前置任务书归档才算满足；名字找不到的也算未满足并注明。
 
@@ -466,6 +486,8 @@ def main(argv=None) -> int:
             return 2
         if pairs.get("你的工作副本"):
             pairs["你的工作副本"] = copy_path(repo, pairs["你的工作副本"])
+        if SCOPE_KEY in pairs:
+            pairs[SCOPE_KEY] = dependency_list(pairs[SCOPE_KEY])
         for key in DEPENDENCY_KEYS:
             if key in pairs:
                 pairs[key] = dependency_list(pairs[key])

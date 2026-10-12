@@ -641,6 +641,25 @@ def prune_line_evidence(name: str, copy: str | None) -> None:
             print(f"  已删证据 {target}（{size / 2**30:.2f} GiB）", flush=True)
 
 
+def merge_scope_reason(target: str) -> str | None:
+    """要合的提交属于声明了写入范围的在办线时，列出它自分叉以来写到范围外的路径并拒绝。"""
+    from shiftboss.taskbook import Taskbook, out_of_scope
+    if git("merge-base", "--is-ancestor", target, "HEAD", check=False).returncode == 0:
+        return None
+    for book in Taskbook.iter_active(REPO):
+        branch = book.meta().get("分支", f"codex/{book.name}")
+        for ref in (f"origin/{branch}", branch):
+            if git("rev-parse", "--verify", "--quiet", ref, check=False).returncode == 0:
+                if git("merge-base", "--is-ancestor", target, ref, check=False).returncode == 0:
+                    changed = git("diff", "--name-only", "--no-renames", f"HEAD...{target}").stdout.splitlines()
+                    if outside := out_of_scope(book.name, book.meta(), changed):
+                        return (f"{book.name} 写到了写入范围外的 {len(outside)} 个路径（表头「写入范围」）："
+                                + "、".join(outside[:20]) + ("……" if len(outside) > 20 else ""))
+                    return None
+                break
+    return None
+
+
 def merge_dependency_reason(target: str) -> str | None:
     """要合的提交属于某条在办线，而该线的合入前置还没归档时，拒绝合并。
 
@@ -865,6 +884,8 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(moving)
         if waiting := merge_dependency_reason(target):
             raise MergeError(waiting)
+        if outside := merge_scope_reason(target):
+            raise MergeError(outside)
         print(f"合并 {args.ref} ({target[:12]})：", flush=True)
         merged = git("-c", "rerere.enabled=false", "-c", "merge.autoStash=false",
                      "merge", "--no-ff", "--no-commit", "--no-edit", target, check=False)

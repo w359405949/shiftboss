@@ -71,6 +71,19 @@ def trespass(new: str, protected: list[str]) -> list[str]:
             if any(path == prefix or (prefix.endswith("/") and path.startswith(prefix)) for prefix in protected)]
 
 
+def scope_trespass(name: str, new: str) -> list[str]:
+    """分支自与 main 分叉以来写到 main 上任务书表头「写入范围」之外的路径。"""
+    import json
+    from shiftboss.taskbook import out_of_scope
+    shown = git("show", f"refs/heads/main:{PLANS_DIR}/{name}/meta.json")
+    if shown.returncode:
+        return []
+    done = git("diff", "--name-only", "--no-renames", "refs/heads/main..." + new)
+    if done.returncode:
+        return []
+    return out_of_scope(name, json.loads(shown.stdout), done.stdout.splitlines())
+
+
 def new_tests(new: str, settings: dict) -> list[str]:
     """分支自与 main 分叉以来未登记的新增测试项。"""
     from shiftboss import testguard
@@ -108,6 +121,12 @@ def main() -> int:
         if protected and name not in owners and (paths := trespass(new, protected)):
             print(f"拒收 {ref}：改动了受保护路径，只有 {'、'.join(sorted(owners)) or '（未指定）'} 能改；缺测试或构建改动写进交回，由派活方转交。", file=sys.stderr)
             for path in paths:
+                print(f"  {path}", file=sys.stderr)
+            trespassed = True
+            continue
+        if outside := scope_trespass(name, new):
+            print(f"拒收 {ref}：写到了任务书表头「写入范围」之外，撤回这些改动或请派活方调整范围：", file=sys.stderr)
+            for path in outside[:40]:
                 print(f"  {path}", file=sys.stderr)
             trespassed = True
             continue
