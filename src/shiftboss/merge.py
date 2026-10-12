@@ -666,7 +666,11 @@ def merge_scope_reason(target: str) -> str | None:
         for ref in (f"origin/{branch}", branch):
             if git("rev-parse", "--verify", "--quiet", ref, check=False).returncode == 0:
                 if git("merge-base", "--is-ancestor", target, ref, check=False).returncode == 0:
-                    changed = git("diff", "--name-only", "--no-renames", f"HEAD...{target}").stdout.splitlines()
+                    # 只算这条线自己的提交：经合并带进来的 main（含本地尚未拉取的派生物提交）不算。
+                    exclude = [ref for ref in ("HEAD", "origin/main")
+                               if git("rev-parse", "--verify", "--quiet", ref, check=False).returncode == 0]
+                    changed = sorted({line for line in git("log", "--name-only", "--format=", "--no-renames",
+                                                           target, "--not", *exclude).stdout.splitlines() if line})
                     if outside := out_of_scope(book.name, book.meta(), changed):
                         return (f"{book.name} 写到了写入范围外的 {len(outside)} 个路径（表头「写入范围」）："
                                 + "、".join(outside[:20]) + ("……" if len(outside) > 20 else ""))
