@@ -821,9 +821,32 @@ def start(repo: Path, workspace: Path, publish: bool) -> int:
     print(f'常驻验证已起：PID {native.spawn(argv,str(repo))}');return 0
 
 
+def rerun_tip(remote: Path) -> int:
+    """让常驻验证重验当前已验过的提交：把「已验到」退回到第一父链上更早、且有报告的那份。
+
+    修了验证器自身（路径、配置读取等）而主线没有新提交时用；不改主线，也不删任何报告。
+    要求常驻验证已停（`stop --now`），之后照常 `start --publish`。
+    """
+    index=index_of(remote)
+    last=index.get('last')
+    if not last: raise ValueError('还没有任何报告，无需重验')
+    import psutil
+    lock=state_dir(remote)/'worker.lock'
+    holder=lock.read_text(encoding='utf-8').strip() if lock.exists() else ''
+    if holder.isdigit() and psutil.pid_exists(int(holder)): raise ValueError('常驻验证还在跑；先 shiftboss verify stop --now')
+    runs=state_dir(remote)/'runs'
+    chain=git(remote,'rev-list','--first-parent',f'{last}^',check=False).stdout.split()
+    earlier=next((sha for sha in chain if (runs/f'{sha}.json').is_file()),None)
+    if not earlier: raise ValueError('第一父链上找不到更早的报告，无法退回')
+    index['last']=earlier; index.pop('active',None)
+    write_state(state_dir(remote)/'index.json',index)
+    print(f'已验到 {last[:12]} → 退回到 {earlier[:12]}；start 后从这里重验到最新提交')
+    return 0
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command',choices=['watch','start','status','claim','stop'])
+    parser.add_argument('command',choices=['watch','start','status','claim','stop','rerun'])
     parser.add_argument('ticket',nargs='?');parser.add_argument('taskbook',nargs='?')
     parser.add_argument('--repo',type=Path,default=ROOT)
     parser.add_argument('--workspace',type=Path)
@@ -837,6 +860,7 @@ def main(argv=None):
     if args.command=='claim':
         if not args.ticket or not args.taskbook: parser.error('claim 需要 ticket taskbook')
         claim(remote,args.ticket,args.taskbook);return 0
+    if args.command=='rerun': return rerun_tip(remote)
     if args.command=='stop' and args.now: return stop_now(remote,args.workspace or config.copies_dir(remote)/'verify')
     if args.command=='stop':
         state_dir(remote).mkdir(parents=True,exist_ok=True)

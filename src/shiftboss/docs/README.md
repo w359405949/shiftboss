@@ -151,6 +151,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 5. 超时预算的红归测试与构建线，先查生成与测试是否膨胀。
 6. 生成红挡住整轮验证时，派活方停下引入它的线的当前一段，令其先修再继续。
 7. 改了 `verify.py` 须重起常驻验证：`shiftboss verify stop` 后 `shiftboss verify start --publish`。
+8. 修了验证器自身而主线没有新提交时，用 `shiftboss verify rerun` 让它重验已验过的提交（先停、后起）。
 
 ### 3.4 拆分
 
