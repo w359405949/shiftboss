@@ -444,9 +444,9 @@ class Verifier:
         cmd=[sys.executable,*command[1:]] if command[0]=='python' else command
         log=self.directory/'logs'/f'{sha}-{label}.log'
         start=time.monotonic()
-        # 单条命令超过整轮预算必然超支：到点连同子进程结束，记为失败，不让一个卡住的测试把验证拖住几十分钟。
+        # 卡死才结束：上限取整轮预算的两倍。超出预算本身照报 stage:budget；并行负载下按预算就杀会让生成发布不了。
         budget=config.verify_budget_minutes(self.workspace)
-        limit=budget*60 if budget else None
+        limit=budget*60*2 if budget else None
         with log.open('w',encoding='utf-8') as output:
             env=os.environ.copy();env['PYTHONIOENCODING']='utf-8'
             try:
@@ -455,7 +455,7 @@ class Verifier:
                     code=process.wait(timeout=limit)
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid,9); process.wait()
-                    output.write(f'\n超过预算 {budget} 分钟仍未结束，已结束该命令及其子进程。\n')
+                    output.write(f'\n超过预算两倍（{budget*2} 分钟）仍未结束，已结束该命令及其子进程。\n')
                     code=124
             except OSError as exc:
                 output.write(str(exc)+'\n');code=127
