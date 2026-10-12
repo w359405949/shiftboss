@@ -618,7 +618,22 @@ def finish_line(name: str, superseded_by: str | None = None) -> None:
     if entry and not entry.get("closed"):
         dispatch.close_line(name, entry["copy"], ledger)
     archive_after_merge(name, book)
-    prune_line_evidence(name, (entry or {}).get("copy") or book.meta().get("你的工作副本"))
+    copy = (entry or {}).get("copy") or book.meta().get("你的工作副本")
+    prune_line_evidence(name, copy)
+    stash_copy_leftovers(name, copy)
+
+
+def stash_copy_leftovers(name: str, copy: str | None) -> None:
+    """归档即把该线副本里未提交的残留存进 stash：残留会让副本永远算不上空闲，派活时报「没有空闲副本」。
+
+    存 stash 而不丢弃，需要时可在该副本 `git stash list` 里找回。
+    """
+    if not copy or not Path(copy).is_dir():
+        return
+    dirty = subprocess.run(["git", "-C", copy, "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
+    if dirty:
+        subprocess.run(["git", "-C", copy, "stash", "push", "-u", "-q", "-m", f"残留：{name} 已归档"], check=True)
+        print(f"  副本残留已存入 stash：{copy}", flush=True)
 
 
 def prune_line_evidence(name: str, copy: str | None) -> None:
