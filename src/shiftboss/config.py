@@ -53,6 +53,15 @@ def local_config_file(root: Path | None = None) -> str | None:
     return _get("project", "local_config", None, root)
 
 
+def fast_commands(root: Path | None = None) -> list[dict]:
+    """推送前自查与合并时额外运行的项目秒级结构检查：`[{name, run, when}]`。
+
+    `run` 为命令参数列表，或字符串 `"regen.closure_command"` 引用生成计划的闭包命令；
+    `when` 为路径前缀列表，本次改动命中其一才运行，省略即每次运行。
+    """
+    return list(_get("merge", "fast_commands", [], root))
+
+
 def js_module_prefixes(root: Path | None = None) -> list[str]:
     """合并时按 ES 模块检查语法的路径前缀。"""
     return list(_get("merge", "js_module_prefixes", [], root))

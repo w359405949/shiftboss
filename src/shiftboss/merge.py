@@ -360,8 +360,24 @@ def fast_checks(before: str) -> None:
     started = time.monotonic()
     duplicate_keys = check_js_duplicate_keys(names)
     print(f"快速检查 JS 对象重复键: {duplicate_keys} {time.monotonic()-started:.3f}s", flush=True)
+    run_fast_commands(names)
     check_new_tests(before)
     assertion_delta(before)
+
+
+def run_fast_commands(names: list[str]) -> None:
+    """项目登记的秒级结构检查；只放静态分析，生成、构建与浏览器检查归常驻验证。"""
+    for item in config.fast_commands():
+        name, run, when = item["name"], item["run"], item.get("when")
+        if when and not any(path.startswith(prefix) for path in names if path for prefix in when):
+            continue
+        command = config.closure_command() if run == "regen.closure_command" else list(run)
+        started = time.monotonic()
+        result = subprocess.run(command, cwd=REPO, capture_output=True, text=True, timeout=300)
+        if result.returncode:
+            tail = "\n".join((result.stderr or result.stdout).strip().splitlines()[-12:])
+            raise MergeError(f"快速检查 {name} 失败（退出码 {result.returncode}）：\n{tail}")
+        print(f"快速检查 {name}: {time.monotonic()-started:.3f}s", flush=True)
 
 
 def check_new_tests(before: str) -> None:
