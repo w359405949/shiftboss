@@ -716,7 +716,8 @@ def moving_branch_reason(ref: str, target: str) -> str | None:
         return None
     return (f"{ref} 的交回是「执行状态：进展」，这条线还在推进，分支名随时会前进。\n"
             f"按验证过的提交号合：先 `git rev-parse {ref}` 记下提交号、在该提交上验证，"
-            f"再 `shiftboss merge <提交号>`（此刻是 {target[:12]}）。")
+            f"再 `shiftboss merge <提交号>`（此刻是 {target[:12]}）。\n"
+            f"读的是本地的 {ref}；门铃刚报过该线推送的，先 `git fetch` 再判断。")
 
 
 def report_failure_state() -> None:
