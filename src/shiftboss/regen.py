@@ -254,8 +254,12 @@ def changed_files() -> dict[str, str]:
 
 
 def observed_writes(before: dict[str, str], after: dict[str, str]) -> set[str]:
-    """两次快照之间内容变了的文件（新建、改写、删除、恢复原样都算）。"""
-    return {name for name in before.keys() | after.keys() if before.get(name) != after.get(name)}
+    """两次快照之间内容变了且运行后仍存在的文件（新建、改写、恢复原样都算）。
+
+    删除不算写入：退役的旧产物与临时文件不是发布，口径同 `shiftboss.outputs` 对 Python 删除的处理。
+    """
+    return {name for name in before.keys() | after.keys()
+            if before.get(name) != after.get(name) and (REPO / name).is_file()}
 
 
 def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
