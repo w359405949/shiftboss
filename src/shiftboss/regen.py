@@ -260,8 +260,12 @@ def observed_writes(before: dict[str, str], after: dict[str, str]) -> set[str]:
 
 def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
             outputs: list[dict] | None = None, parallel: bool = False,
-            names: list[str] | None = None) -> bool:
-    if parallel and (outputs is not None or stop_on_failure):
+            names: list[str] | None = None, after: list[list[str]] | None = None) -> bool:
+    """`after` 给出各命令的上游阶段名：失败只跳过其下游，其余分支照跑，一轮报出全部独立失败。
+
+    没给 `after` 时按 `stop_on_failure` 失败即停；上游不在本次选中范围内的视为已满足。
+    """
+    if parallel and (outputs is not None or stop_on_failure or after is not None):
         raise ValueError("有产物依赖或失败即停的命令必须顺序执行")
     ok = True
     report_root = None
@@ -343,12 +347,23 @@ def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
                 print(output, flush=True)
                 ok = success and ok
     else:
+        blocked: set[str] = set()
         for number, command in enumerate(cmds, 1):
+            if after is not None:
+                upstream = [name for name in after[number - 1] if name in blocked]
+                if upstream:
+                    blocked.add(names[number - 1])
+                    print(f"  ⤼ {label} {number}/{len(cmds)} {names[number - 1]}  跳过：上游 {'、'.join(upstream)} 未成功", flush=True)
+                    ok = False
+                    continue
             success, output = run_one(number, command)
             print(output, flush=True)
             ok = success and ok
-            if not success and stop_on_failure:
-                return False
+            if not success:
+                if after is not None:
+                    blocked.add(names[number - 1])
+                elif stop_on_failure:
+                    return False
     return ok
 
 
@@ -447,10 +462,10 @@ def _run(args) -> int:
         else:
             chosen = stage_selection(stages, args)
             print(f"生成阶段（{len(chosen)}/{len(stages)}）：{', '.join(s['name'] for s in chosen) or '无'}", flush=True)
-            ok = run_all("生成", [s["command"] for s in chosen], stop_on_failure=True,
-                         outputs=producers, names=[s["name"] for s in chosen])
+            ok = run_all("生成", [s["command"] for s in chosen], outputs=producers,
+                         names=[s["name"] for s in chosen], after=[s.get("after", []) for s in chosen])
         if not ok:
-            print("\n生成这一步就红了，闸不跑了——先把上面那条修好。")
+            print("\n生成这一步就红了，闸不跑了——上面列出了全部失败阶段（✘）与因此跳过的下游（⤼），各自修。")
             return 1
         try:
             catalog = (catalog_document(producers) if stages is None
