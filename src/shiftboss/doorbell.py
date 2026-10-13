@@ -275,6 +275,7 @@ def say_stalled() -> None:
     say(f"⚠ 挂住超过 {STALE_HOURS:g} 小时的 {len(rows)} 条（门铃响一次报一次）：")
     for name, age, copy, signs in rows:
         say(f"    {name}（{copy}）：已 {humanize(age)}；{signs}")
+    say("    逐条试派一次（`shiftboss dispatch <名字>` 会判断会话停没停），不凭状态列认定还在干。")
 
 
 def _event_time(line: str) -> float | None:
