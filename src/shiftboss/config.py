@@ -58,6 +58,9 @@ def fast_commands(root: Path | None = None) -> list[dict]:
 
     `run` 为命令参数列表，或字符串 `"regen.closure_command"` 引用生成计划的闭包命令；
     `when` 为路径前缀列表，本次改动命中其一才运行，省略即每次运行。
+
+    登记规则：每项经用户审查同意后才加入，派活方不自动加；每项须能单独运行，
+    不依赖其他项的结果或执行顺序，以便并行。
     """
     return list(_get("merge", "fast_commands", [], root))
 
