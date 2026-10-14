@@ -64,12 +64,7 @@ class VerificationAcceptance(unittest.TestCase):
         self.fail(f'门铃没有在 {timeout}s 内响过 {token}：'
                   +(path.read_text(encoding='utf-8') if path.exists() else '(门铃文件不存在)'))
     def wait_report(self,source,process,timeout=45):
-        """等这一轮的报告**落定**，不是等它出现。
-
-        验证器是先把不带归因的 tip 结果落盘（好让当前信号立刻出门）、再跑二分、
-        最后用带归因的覆盖同一个文件。**中间那一份带 `attribution` 键**，
-        它的 `introduced_by` 一律是空的——文件一出现就读，读到的就是它。
-        """
+        """等这一轮的报告落盘且索引已前进。"""
         deadline=time.monotonic()+timeout
         path=state_dir(self.remote)/'runs'/f'{source}.json'
         while time.monotonic()<deadline:
@@ -93,7 +88,7 @@ class VerificationAcceptance(unittest.TestCase):
                 report=self.wait_report(bad,process);latency=time.monotonic()-start
                 self.assertEqual(len(report['failures']),1,report)
                 failure=report['failures'][0]
-                self.assertEqual(failure['introduced_by'],bad)
+                self.assertEqual(failure['batch_window']['high'],bad)
                 self.assertEqual(len(report['test_files']),2)
                 self.assertEqual(report['publication'],'已快进补齐 main')
                 self.assertEqual(self.remote_head(),report['generated_commit'])
@@ -127,10 +122,9 @@ class VerificationAcceptance(unittest.TestCase):
                 except subprocess.TimeoutExpired: process.terminate();process.wait();raise
         self.assertEqual(process.returncode,0,log.read_text(encoding='utf-8'))
     def test_claim_before_finding_is_written(self):
-        """二分归因期间报告已发布、筛查未写：认领照样成立，筛查写出时带上认领。"""
+        """报告已发布、筛查未写：认领照样成立，筛查写出时带上认领。"""
         (self.repo/'value.txt').write_text('bad');bad=self.commit('deliberately break payload');self.git('push','-q','origin','main')
         worker=Verifier(self.repo,self.workspace,publish=False)
-        worker.bisect=True  # 这些用例测的是二分；生产默认关
         failure=worker.run(bad,False)['failures'][0]
         finding=state_dir(self.remote)/'findings'/f"{failure['ticket']}.md"
         finding.unlink()
@@ -143,7 +137,6 @@ class VerificationAcceptance(unittest.TestCase):
         """main 前进时生成提交三方合并后发布：新源保留，派生物不再饿死。"""
         (self.repo/'asset.json').write_text('{}');old=self.commit('stale published artifact');self.git('push','-q','origin','main')
         worker=Verifier(self.repo,self.workspace,publish=True)
-        worker.bisect=True  # 这些用例测的是二分；生产默认关
         (self.repo/'value.txt').write_text('newer');new=self.commit('newer source');self.git('push','-q','origin','main')
         report=worker.run(old,False)
         head=self.remote_head()
@@ -176,7 +169,6 @@ class VerificationAcceptance(unittest.TestCase):
 
     def test_green_tip_covers_backlog(self):
         worker=Verifier(self.repo,self.workspace)
-        worker.bisect=True  # 这些用例测的是二分；生产默认关
         worker.watch(once=True)
         commits=self.batch(8)
         self.assertIn('还差 8 个第一父链提交',show_report(self.remote))
@@ -193,87 +185,10 @@ class VerificationAcceptance(unittest.TestCase):
         self.assertIn('还差 0 个第一父链提交',show_report(self.remote))
         print('TIP BACKLOG: N=8, suite executions=1, remaining=0')
 
-    def test_new_red_bisects_backlog(self):
-        worker=Verifier(self.repo,self.workspace,publish=True)
-        worker.bisect=True  # 这些用例测的是二分；生产默认关
-        worker.watch(once=True)
-        baseline=worker.index['last']
-        self.git('fetch','-q','origin','main');self.git('merge','--ff-only','origin/main')
-        commits=self.batch(16,6)
-        before=len(list((worker.directory/'logs').glob('*-tests.log')))
-        worker.watch(once=True)
-        runs=len(list((worker.directory/'logs').glob('*-tests.log')))-before
-        report=read_state(worker.directory/'runs'/f'{commits[-1]}.json')
-        self.assertEqual(len(report['failures']),1)
-        failure=report['failures'][0]
-        self.assertEqual(failure['introduced_by'],commits[5])
-        self.assertEqual(runs,5)
-        # 探针只跑红测试所在文件，不跑闸与打包：全量探针每个几小时，归因会把验证拖离 tip。
-        probes=[read_state(p) for p in (worker.directory/'runs').glob('*-probe.json')]
-        self.assertEqual(len(probes),4)
-        for probe in probes:
-            self.assertEqual(probe['test_files'],['checks/test_payload.py'])
-            self.assertFalse([name for name in probe['stages'] if name.startswith(('gate','build'))])
-        self.assertEqual(worker.index['last_green'],baseline)
-        self.assertEqual(self.remote_head(),report['generated_commit'])
-        self.assertEqual(len(list((worker.directory/'findings').glob('*.md'))),1)
-        ticket=worker.directory/'findings'/f"{failure['ticket']}.md"
-        finding=ticket.read_text(encoding='utf-8')
-        self.assertIn(commits[5],finding)
-        # 筛查要给派活方那几样，缺一样都算没做：改到的路径、稳不稳定、旧票据、候选负责线。
-        self.assertIn('后台验证筛查',finding)
-        self.assertIn('引入提交改到的路径',finding)
-        self.assertIn('| 稳定性 |',finding)
-        self.assertIn('| 同一失败的旧票据 |',finding)
-        self.assertIn('| 提到这些路径的在办任务书 |',finding)
-        self.assertNotIn('由派活方在 shiftboss/plans 开修复任务书并派出',finding)
-        print(f'BISECT: N=16 k=6 suites={runs} introduced_by={failure["introduced_by"]}')
-        self.git('fetch','-q','origin','main');self.git('merge','--ff-only','origin/main')
-        self.batch(5)
-        before=len(list((worker.directory/'logs').glob('*-tests.log')))
-        worker.watch(once=True)
-        self.assertEqual(len(list((worker.directory/'logs').glob('*-tests.log')))-before,1)
-        latest=read_state(worker.directory/'runs'/f"{worker.index['last']}.json")
-        self.assertEqual(latest['failures'][0]['ticket'],failure['ticket'])
-        self.assertEqual(latest['failures'][0]['introduced_by'],commits[5])
-
-    def test_truncated_bisect_resumes_next_round(self):
-        """预算截断只许把归因**推后**，不许把它**丢掉**。
-
-        反证：把预算摁成 0，这一轮一个探针都不做、`introduced_by` 空着；
-        随后放开预算，下一轮必须接着已经收窄的区间把它归到同一个提交上。
-        **少了「接着上次」那一半，第二段会永远是 None**——一条红只在头一次出现的
-        那一轮算「新红」，之后没有人再碰它。
-        """
-        worker=Verifier(self.repo,self.workspace)
-        worker.bisect=True  # 这些用例测的是二分；生产默认关
-        worker.watch(once=True)
-        commits=self.batch(16,6)
-        worker.probe_budget=0
-        before=len(list((worker.directory/'logs').glob('*-tests.log')))
-        worker.watch(once=True)
-        self.assertEqual(len(list((worker.directory/'logs').glob('*-tests.log')))-before,1)
-        report=read_state(worker.directory/'runs'/f'{commits[-1]}.json')
-        self.assertEqual(len(report['failures']),1)
-        failure=report['failures'][0]
-        self.assertIsNone(failure['introduced_by'])
-        self.assertIn('下一轮接着归因',failure['attribution_error'])
-        self.assertEqual(failure['attribution_window']['high'],commits[-1])
-        worker.probe_budget=None
-        self.batch(2)
-        worker.watch(once=True)
-        latest=read_state(worker.directory/'runs'/f"{worker.index['last']}.json")
-        resumed=latest['failures'][0]
-        self.assertEqual(resumed['ticket'],failure['ticket'])
-        self.assertEqual(resumed['introduced_by'],commits[5])
-        self.assertNotIn('attribution_window',resumed)
-        self.assertNotIn('attribution_error',resumed)
-
     def test_existing_baseline_red_stays_unknown(self):
         (self.repo/'value.txt').write_text('bad');self.commit('baseline red')
         self.git('push','-q','origin','main')
         worker=Verifier(self.repo,self.workspace)
-        worker.bisect=True  # 这些用例测的是二分；生产默认关
         worker.watch(once=True)
         first=read_state(worker.directory/'runs'/f"{worker.index['last']}.json")
         self.batch(5)
@@ -282,26 +197,6 @@ class VerificationAcceptance(unittest.TestCase):
         self.assertIsNone(last['failures'][0]['introduced_by'])
         self.assertEqual(first['failures'][0]['ticket'],last['failures'][0]['ticket'])
         self.assertEqual(len(list((worker.directory/'logs').glob('*-tests.log'))),2)
-
-    def test_incomplete_probe_does_not_invent_attribution(self):
-        worker=Verifier(self.repo,self.workspace)
-        worker.bisect=True  # 这些用例测的是二分；生产默认关
-        worker.watch(once=True)
-        producer=(self.repo/'producer.py').read_text()
-        self.batch(1)
-        (self.repo/'producer.py').write_text('raise RuntimeError("probe cannot generate")')
-        broken=self.commit('unverifiable midpoint')
-        (self.repo/'producer.py').write_text(producer)
-        (self.repo/'value.txt').write_text('bad');self.commit('new red')
-        (self.repo/'sequence.txt').write_text('tip')
-        tip=self.commit('tip after new red');self.git('push','-q','origin','main')
-        worker.watch(once=True)
-        report=read_state(worker.directory/'runs'/f'{tip}.json')
-        failure=report['failures'][0]
-        self.assertIsNone(failure['introduced_by'])
-        self.assertIn(broken,failure['attribution_error'])
-        self.assertIn('二分待议',show_report(self.remote))
-        self.assertEqual(worker.index['last'],tip)
 
     def test_generation_skips_without_generation_input_changes(self):
         """生成输入没动就不重算派生物；动了照常生成。改回无条件生成时 `skipped` 断言失败。"""
@@ -312,7 +207,6 @@ class VerificationAcceptance(unittest.TestCase):
         (self.repo/'regen.json').write_text(json.dumps(plan));self.commit('declare generation inputs')
         self.git('push','-q','origin','main')
         worker=Verifier(self.repo,self.workspace,publish=True)
-        worker.bisect=True  # 这些用例测的是二分；生产默认关
         worker.watch(once=True)
         self.assertEqual(worker.index['last_consistent'],worker.index['last'])
         self.git('fetch','-q','origin','main');self.git('merge','--ff-only','origin/main')

@@ -12,11 +12,9 @@
 不能指向执行副本——执行方随时在自己的副本里写字。
 按 origin 加独占锁；确认旧进程已结束才能清理遗留锁。
 
-**先验 tip，新红再沿第一父链二分归因。** 绿 tip 覆盖整段积压，不逐提交跑；
-新红以最近一次没有该失败的可比报告为下界；已有红沿用票据与未知基线。
-二分针对失败持续存在的区间，不证明跳过的历史从未短暂变红；非单调或不稳定
-测试的全历史首次失败不能靠 O(log N) 次运行保证。
-归因探针只跑红测试所在的测试文件，不跑闸与打包；定位不到文件的红照跑全量。
+**只验 tip，不二分。** 绿 tip 覆盖整段积压，不逐提交跑；
+新红的筛查报告列出本批（上一轮验过的那一点到 tip）中改过失败日志所提路径的提交，
+只用 git、不重算；已有红沿用票据。来源由派活方据此开线排查（README 3.3b）。
 历史被改写时重新建立基线，并把归因与趋势标为未知。
 `stop` 等当前提交验完再停，再次启动从最后报告继续。
 `--once` 验一次当前 tip（含新红归因）就退出；不带 `--publish` 只存报告与本地生成提交，不补 main。
@@ -65,22 +63,6 @@ ROOT = project_root()
 NAME = config.VERIFICATION_NAME
 SCHEMA = 'workflow.verification.v1'
 
-# 一轮里准许花在归因上的时间下限。**tip 验证优先于归因，这条不能反过来。**
-#
-# 每个探针是一次 generate ＋ 红测试所在文件（`run(..., probe=True, only=...)`；
-# 有定位不到文件的红时退回全量测试 ＋ 闸 ＋ 打包）。全量探针几小时一个；而 `bisect_failures` 原来对**每一条红**都做一次二分，没有上限。
-# 红有几十条、范围有上百个提交时它跑不完，于是 **tip 那份报告永远写不出去、
-# `index.last` 永远不前进**——外面看到的是「已验到 <两天前那个提交>，离 tip 还差 N 个」，
-# 而「红不阻断合并、验证线兜底」这张网其实一直没盖到当前 main。
-# 2026-09-12 实测：最后一次真 tip 验证停在两天前，之后全是探针。
-#
-# **归因可以慢，当前信号不能停。** 预算用尽就把这一条收窄到的区间记在票上、
-# 让这一轮的 tip 报告落盘，下一轮从那个区间接着二分。
-#
-# 上限按时间取，取这一轮 tip 自己花掉的秒数（不低于本值）：探针跑的和 tip 是同一套
-# 东西，一个探针≈一次 tip，**于是归因最多把一轮拖成两轮**。跑得快的仓库撞不到这条线，
-# 慢的仓库自动降到一轮一个探针——同一条规矩不用按仓库大小重调。
-PROBE_BUDGET_FLOOR = 60
 
 
 def generation_needed(plan: dict, paths: list[str], root: Path | None = None) -> bool:
@@ -166,7 +148,6 @@ LOG_PATH = re.compile(r'[\w./-]+/[\w.-]+\.(?:js|mjs|cjs|py|json|html|css|toml)\b
 def batch_candidates(repo: Path, low: str | None, tip: str, detail: str) -> list[tuple[str, list[str]]]:
     """本批第一父链提交中改过失败日志所提路径的，按提交给出命中的路径。
 
-    **报红后不再盲目二分**：每个探针是一次完整生成，二分常跑不完；
     失败日志本身带着文件路径，对着本批提交改过的文件求交，只用 git、不重算。
     交出的是候选，不是结论；派活方据此开修复线，或开 `sweep` 线按信息排查。
     """
@@ -279,7 +260,7 @@ def show_report(remote: Path) -> str:
     for item in failures:
         claim=claims.get(item['ticket'])
         owner=(f"{claim['taskbook']} / " + (f"会话 {claim['session_id']}" if claim.get('session_id') else '挂起') if claim else '派活方（待开修复任务书并派出）')
-        onset=item.get('introduced_by') or item.get('attribution_error') or '基线已红，起点未知'
+        onset=item.get('introduced_by') or '基线已红，起点未知'
         age=max(0,int(time.time()-item['first_seen']))
         lines.append(f"  [{item['ticket']}] {item['id']}；从 {onset}；已观察红 {age}s；负责：{owner}")
         if item.get('incoming'): lines.append('    合入父提交：'+', '.join(item['incoming']))
@@ -312,7 +293,7 @@ def claim(remote: Path, ticket: str, taskbook: str):
     claims=read_state(state_dir(remote)/'claims.json')
     claims[ticket]={'taskbook':taskbook,'session_id':session,'claimed':time.time()}
     write_state(state_dir(remote)/'claims.json',claims)
-    # 二分归因期间报告已发布、筛查还没写；那时认领只记 claims.json，筛查写出时照它填。
+    # 报告已发布、筛查还没写时认领只记 claims.json，筛查写出时照它填。
     path=state_dir(remote)/'findings'/f'{ticket}.md'
     if path.is_file():
         text=path.read_text(encoding='utf-8').replace('| 状态 | 待派 |','| 状态 | 已认领 |').replace('| 负责 | 派活方 |',f"| 负责 | {taskbook} / {session or '挂起'} |")
@@ -402,10 +383,6 @@ class Verifier:
     def __init__(self, repo: Path, workspace: Path, publish=False):
         self.repo=repo.resolve(); self.remote=origin(self.repo)
         self.workspace=workspace.resolve(); self.publish=publish
-        self.probe_budget=None     # None＝按 tip 耗时自动定；测试用它把预算摁死
-        # 报红默认不二分，筛查报告给本批候选提交（`batch_candidates`）；
-        # `[verify] bisect = true` 才恢复自动二分。
-        self.bisect=bool(config._get('verify','bisect',False,self.repo))
         if self.workspace == self.repo or self.workspace == self.remote:
             raise ValueError('验证副本必须独立')
         self.directory=state_dir(self.remote)
@@ -501,80 +478,7 @@ class Verifier:
                 output.write(str(exc)+'\n');code=127
         return {'command':command,'returncode':code,'seconds':time.monotonic()-start,'log':str(log)}
 
-    def attribution_work(self, baseline, sha, unique, previous):
-        """每条红这一轮在哪一段里二分：新红从上一轮验过的那一点到 tip，
-        上一轮没归完的接着它已经收窄到的那一段。
-
-        **少了「接着上次」这一半，预算就不是延后而是丢弃。**
-        一条红只在它头一次出现的那一轮属于「新红」；那一轮没归完，之后每一轮它都从
-        上一轮抄一个空的 `introduced_by`，再没有人碰它——票上会一直挂着
-        「下一轮接着归因」，而那个下一轮永远不来。
-
-        已认领的红不二分：负责的线已定，归因只会再花一次全量探针。预算红是累计趋势，
-        不是某个提交引入的，二分它找不到答案。
-        """
-        claims=read_state(self.directory/'claims.json')
-        work=[]
-        for item in unique.values():
-            if item['id']=='stage:budget' or item['ticket'] in claims: continue
-            window=item.get('attribution_window')
-            if window: work.append((item,window['low'],window['high']))
-            elif item['id'] not in previous: work.append((item,baseline,sha))
-        return work
-
-    def budget(self, report):
-        if self.probe_budget is not None: return self.probe_budget
-        return max(report.get('seconds') or 0, PROBE_BUDGET_FLOOR)
-
-    def bisect_failures(self, work, budget):
-        # 探针按「提交 + 模块」缓存：只跑了某个文件的探针不能回答别的文件里的红。
-        # 定位得到文件的红先归因，少数定位不到的才用全量探针，不让它拖着全体跑全量。
-        work=sorted(work,key=lambda entry: failure_module(entry[0]['id']) is None)
-        cache={}
-        blocked={}
-        result={}
-        deadline=time.monotonic()+budget
-        for item, low_commit, high_commit in work:
-            commits=first_parent_range(self.workspace,low_commit,high_commit)
-            if commits is None: continue
-            module=failure_module(item['id'])
-            low=-1; high=len(commits)-1
-            while high-low > 1:
-                mid=(low+high)//2; candidate=commits[mid]
-                key=(candidate,None) if (candidate,None) in cache else (candidate,module)
-                if key not in cache:
-                    # **预算用尽就收手**，把收窄到的区间记下来，让 tip 报告落盘。
-                    # 理由写在 PROBE_BUDGET_FLOOR 上方：归因可以慢，当前信号不能停。
-                    if time.monotonic() >= deadline:
-                        pending={'low':low_commit if low<0 else commits[low],'high':commits[high]}
-                        item['attribution_window']=pending
-                        item['attribution_error']=(
-                            f'二分未完成：本轮探针预算已用尽，已收窄到 '
-                            f'{pending["low"][:12]}..{pending["high"][:12]}，下一轮接着归因')
-                        print(item['attribution_error'],flush=True)
-                        break
-                    probe=self.run(candidate,False,probe=True,only=None if module is None else [module])
-                    cache[key]={f['id'] for f in probe['failures']}
-                    blocked[key]=cache[key] & {'stage:infrastructure','stage:generate','stage:tests'}
-                red=item['id'] in cache[key]
-                if not red and blocked.get(key):
-                    # 探针本身没跑起来，不是「这一段里没有这条红」。**这一条要人看**，
-                    # 不留区间——留了就是每一轮都去撞同一个跑不起来的提交。
-                    item.pop('attribution_window',None)
-                    item['attribution_error']=f"二分待议：{candidate} 未能完整验证：{sorted(blocked[key])}"
-                    print(item['attribution_error'],flush=True)
-                    break
-                print(f"二分 {item['id']}：{candidate} {'红' if red else '无此失败'}",flush=True)
-                if red: high=mid
-                else: low=mid
-            else:
-                item.pop('attribution_window',None)
-                item.pop('attribution_error',None)
-                result[item['id']]=commits[high]
-                print(f"归因 {item['id']}：{commits[high]}",flush=True)
-        return result
-
-    def run(self, sha: str, contiguous: bool, probe=False, only=None):
+    def run(self, sha: str, contiguous: bool):
         self.prepare()
         started=time.time(); previous={}
         if self.index.get('last'):
@@ -627,7 +531,7 @@ class Verifier:
                 test_report.unlink(missing_ok=True)
                 result=self.command(sha,'tests',['python','-B',str(self.driver),
                                                '--report',str(test_report),
-                                               *(f'--only={name}' for name in only or ()),*directories])
+                                               *directories])
                 report['stages']['tests']=result
                 if test_report.is_file():
                     tests=json.loads(test_report.read_text(encoding='utf-8'))
@@ -641,13 +545,13 @@ class Verifier:
                 report.update(test_files=[],tests=0,skipped=[])
             # unittest gates are included in the discovered suite; other gates still run.
             modules={p[:-3].replace('/','.') for p in report.get('test_files',[])}
-            for number, cmd in enumerate([] if only is not None else plan['gates']):
+            for number, cmd in enumerate(plan['gates']):
                 if 'unittest' in cmd and set(cmd[cmd.index('unittest')+1:]) and set(cmd[cmd.index('unittest')+1:]) <= modules:
                     continue
                 label=f'gate-{number}'
                 result=self.command(sha,label,cmd);report['stages'][label]=result
                 if result['returncode']: failures.append({'id':'stage:'+label.split('-')[0]+':'+subprocess.list2cmdline(cmd),'detail':result['log']})
-            for number, cmd in enumerate([] if only is not None else build):
+            for number, cmd in enumerate(build):
                 label=f'build-{number}'
                 result=self.command(sha,label,cmd);report['stages'][label]=result
                 if result['returncode']: failures.append({'id':'stage:'+label.split('-')[0]+':'+subprocess.list2cmdline(cmd),'detail':result['log']})
@@ -661,7 +565,7 @@ class Verifier:
             if generation_ok:
                 generated=report['generated_commit']
                 if generated == sha: report['publication']='该源提交的派生物已一致'
-                elif probe or not self.publish: report['publication']='仅报告模式；生成提交保存在验证副本'
+                elif not self.publish: report['publication']='仅报告模式；生成提交保存在验证副本'
                 elif (tip:=self.current()) != sha:
                     report['publication']=self.publish_onto(tip, generated)
                 else:
@@ -675,28 +579,12 @@ class Verifier:
         # 产出 1 MB 的项目，一轮生成＋闸超过预算就是生成或测试膨胀了：报红，先查膨胀。
         budget=config.verify_budget_minutes(self.workspace)
         spent=sum(stage.get('seconds') or 0 for stage in report['stages'].values())
-        if budget and not probe and spent>budget*60:
+        if budget and spent>budget*60:
             slow=sorted(((stage.get('seconds') or 0,name) for name,stage in report['stages'].items()),reverse=True)[:5]
             failures.append({'id':'stage:budget','detail':f'生成与闸合计 {spent/60:.1f} 分钟，超过预算 {budget} 分钟；先查生成与测试是否膨胀。最慢：'
                              +'；'.join(f'{name} {seconds/60:.1f} 分钟' for seconds,name in slow)})
         observed=time.time()
         unique={f['id']:f for f in failures}
-        if probe:
-            report['failures']=list(unique.values())
-            write_state(self.directory/'runs'/f'{sha}-probe.json',report)
-            print(f'二分套件 {sha}：红 {len(unique)}',flush=True)
-            return report
-        # **先把 tip 这一份发出去，再去归因。**
-        #
-        # tip 的红名单到这一行就已经算完了，而归因要跑二分探针——每个探针是一次
-        # 完整的生成＋全量测试＋打包，几十分钟一个（2026-09-12 实测 80 分钟）。
-        # 把发布压在归因后面，等于让「当前 main 是什么样」这个信号迟到几个小时，
-        # 而外面看到的是 `已验到 <很久以前那个提交>`：**红不阻断合并的前提是有网兜着，
-        # 网的信号迟到几小时，那条规矩就名存实亡。**
-        #
-        # **归因是给红加来源，不是给红本身把关**——所以它可以慢，可以跨轮补，
-        # 但不该拦着当前信号出门。落盘一份不带归因的，随后再用带归因的覆盖。
-        # 中途崩了也没关系：那时 `last` 已经指向真验过的 tip，报告是真的，只是缺来源。
         baseline=self.index.get('last')
         # **票据、首次观察时刻、趋势都不依赖归因**，先算齐——
         # 预发布那一份必须和最终那一份**形状一样**，否则消费端会在缺键上炸：
@@ -708,32 +596,19 @@ class Verifier:
             item['first_seen']=prior['first_seen'] if prior else observed
             item['introduced_by']=prior.get('introduced_by') if prior else None
             item['incoming']=prior.get('incoming',[]) if prior else []
-            if prior and prior.get('attribution_error'): item['attribution_error']=prior['attribution_error']
-            if prior and prior.get('attribution_window'): item['attribution_window']=prior['attribution_window']
+            if prior and prior.get('batch_window'): item['batch_window']=prior['batch_window']
             item['ticket']=prior['ticket'] if prior else hashlib.sha256((sha+'\n'+item['id']).encode()).hexdigest()[:16]
         report['failures']=list(unique.values())
         report['delta']=len(unique)-len(previous) if contiguous else None
         report['covered_from']=old['commit'] if contiguous else None
         report['covered_count']=len(first_parent_range(self.workspace,report['covered_from'],sha) or [])
         report['finished']=time.time();report['seconds']=report['finished']-started
-        report['attribution']='二分进行中：这一份是刚验完的 tip 结果，归因随后覆盖'
         write_state(self.directory/'runs'/f'{sha}.json',report)
         self.index['last']=sha
         self.save()
-        work=self.attribution_work(baseline,sha,unique,previous) if contiguous and self.bisect else []
         for item in unique.values():
             if item['id'] not in previous and not item.get('batch_window'):
-                item['batch_window']={'low':baseline,'high':sha}
-        try:
-            introductions=self.bisect_failures(work,self.budget(report)) if work else {}
-        finally:
-            if work:
-                git(self.workspace,'checkout','--detach','--force',report['generated_commit'] or sha)
-        report.pop('attribution',None)   # 归因跑完了，这一份不再是「进行中」
-        for item in unique.values():
-            if item.get('introduced_by') is None:
-                item['introduced_by']=introductions.get(item['id'])
-            if item.get('attribution_error'): item['detail']+='\n'+item['attribution_error']
+                item['batch_window']={'low':baseline if contiguous else None,'high':sha}
             introduced=item['introduced_by']
             if introduced and not item['incoming']:
                 item['incoming']=git(self.workspace,'show','-s','--format=%P',introduced).stdout.split()[1:]
