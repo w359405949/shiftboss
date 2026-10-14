@@ -1,6 +1,6 @@
 """推送守卫：拒收与 main 冲突的执行方分支（README 2.3 第 1 条），以及越权改动受保护路径的分支。
 
-受保护路径与可改它们的线由 main 上的 `shiftboss.toml` `[guard]` 给出（`protected` 路径前缀、`owners` 任务书名）。
+受保护路径由 main 上的 `shiftboss.toml` `[guard] protected` 给出；可改它们的线是 main 上任务书表头「写入范围」明确写出该受保护目录的（`[guard] owners` 存量名单照认）。
 
 交回顶部执行状态为「停下」的照收：卡点报告须能立即推送（4.2），解不了的冲突按 2.3 第 4 条标待议交回。
 未经用户同意的新增测试项（DONE.md 第 2 节第 7 条，口径见 `shiftboss.testguard`）拒收。
@@ -62,13 +62,29 @@ def red_notice(name: str, settings: dict) -> None:
         print(f"  [{item['ticket']}] {item['id'][:160]}\n    筛查：{state / 'findings' / (item['ticket'] + '.md')}", file=sys.stderr)
 
 
-def trespass(new: str, protected: list[str]) -> list[str]:
-    """分支自与 main 分叉以来改动的受保护路径。"""
+def granted_prefixes(name: str, protected: list[str]) -> list[str]:
+    """main 上任务书表头「写入范围」里明确写出的受保护目录（或其子目录）：即授予该线写权。
+
+    写权跟着任务书走，不改 `shiftboss.toml`：该文件是生成输入，每改一次都触发大批生成阶段重跑。
+    范围须以受保护前缀开头才算授权；写更宽的目录（如 `engine/`）不授予其下受保护路径。
+    """
+    import json
+    from shiftboss.taskbook import SCOPE_KEY, dependency_list
+    shown = git("show", f"refs/heads/main:{PLANS_DIR}/{name}/meta.json")
+    if shown.returncode:
+        return []
+    scope = dependency_list(json.loads(shown.stdout).get(SCOPE_KEY))
+    return [item for item in scope if item.endswith("/") and any(item.startswith(prefix) for prefix in protected)]
+
+
+def trespass(new: str, protected: list[str], granted: list[str] = ()) -> list[str]:
+    """分支自与 main 分叉以来改动的、未经表头授权的受保护路径。"""
     done = git("diff", "--name-only", "--no-renames", "refs/heads/main..." + new)
     if done.returncode:
         return []
     return [path for path in done.stdout.splitlines()
-            if any(path == prefix or (prefix.endswith("/") and path.startswith(prefix)) for prefix in protected)]
+            if any(path == prefix or (prefix.endswith("/") and path.startswith(prefix)) for prefix in protected)
+            and not any(path.startswith(item) for item in granted)]
 
 
 def scope_trespass(name: str, new: str) -> list[str]:
@@ -119,8 +135,8 @@ def main() -> int:
             continue
         _old, new, ref = parts
         name = ref[len("refs/heads/codex/"):]
-        if protected and name not in owners and (paths := trespass(new, protected)):
-            print(f"拒收 {ref}：改动了受保护路径，只有 {'、'.join(sorted(owners)) or '（未指定）'} 能改；缺测试或构建改动写进交回，由派活方转交。", file=sys.stderr)
+        if protected and name not in owners and (paths := trespass(new, protected, granted_prefixes(name, protected))):
+            print(f"拒收 {ref}：改动了受保护路径，表头「写入范围」未授予；缺测试或构建改动写进交回，由派活方转交。", file=sys.stderr)
             for path in paths:
                 print(f"  {path}", file=sys.stderr)
             trespassed = True

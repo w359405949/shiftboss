@@ -195,6 +195,8 @@ def stage_selection(stages: list[dict], args) -> list[dict]:
     old = previous_catalog() or {}
     done = {p["stage"] for p in old.get("producers") or [] if p.get("stage")}
     paths = None if args.full else ([] if args.stage else changed_paths(args.base))
+    if paths:
+        print(f"生成输入改动 {len(paths)} 个路径（基准 {args.base or 'merge-base'}）", flush=True)
     return select_stages(stages, paths, args.stage, done)
 
 
@@ -435,7 +437,7 @@ def _run(args) -> int:
             return 1
         generate = (args.steps or args.full or bool(args.stage)
                     or any(plan["gate_layers"][name].get("generate", False) for name in selected))
-        print(f"改动路径 {len(paths)} 个；选层：{', '.join(selected)}", flush=True)
+        print("只生成（--steps），不选闸" if args.steps else f"改动路径 {len(paths)} 个；选层：{', '.join(selected)}", flush=True)
         print(f"本次生成：{'是' if generate and not args.check else '否'}", flush=True)
     elif args.layer:
         print("regen.json 没有声明分层，不能指定 --layer")
