@@ -973,6 +973,12 @@ def main(argv: list[str] | None = None) -> int:
                 raise
             git("merge", "--abort")
             name = args.ref.rsplit("/", 1)[-1] if not re.fullmatch(r"[0-9a-f]{7,40}", args.ref) else "<名字>"
+            # 本命令不 fetch：远端跟踪 ref 落后时，冲突可能只是旧 tip 上的，先说破再谈打回。
+            if args.ref.startswith("origin/"):
+                remote = git("ls-remote", "origin", f"refs/heads/{args.ref[len('origin/'):]}", check=False).stdout.split()
+                if remote and remote[0] != target:
+                    raise MergeError(f"合并冲突 {len(unmerged)} 个，已撤回；但本地 {args.ref}（{target[:12]}）落后远端"
+                                     f"（{remote[0][:12]}）：先 `git fetch` 再合一次，冲突可能已由执行方解决。") from None
             raise MergeError(
                 f"合并冲突 {len(unmerged)} 个，已撤回（git merge --abort）：\n  " + "\n  ".join(unmerged) +
                 f"\n下一步：打回该线重新合并——在 shiftboss/plans/{name}/rounds.md 追加本轮交代"
