@@ -51,6 +51,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -157,6 +158,42 @@ def first_parent_range(repo: Path, last: str | None, tip: str):
     commits=git(repo,'rev-list','--first-parent','--reverse',f'{last}..{tip}').stdout.split()
     parents=git(repo,'show','-s','--format=%P',commits[0]).stdout.split() if commits else []
     return commits if parents and parents[0] == last else None
+
+
+LOG_PATH = re.compile(r'[\w./-]+/[\w.-]+\.(?:js|mjs|cjs|py|json|html|css|toml)\b')
+
+
+def batch_candidates(repo: Path, low: str | None, tip: str, detail: str) -> list[tuple[str, list[str]]]:
+    """本批第一父链提交中改过失败日志所提路径的，按提交给出命中的路径。
+
+    **报红后不再盲目二分**：每个探针是一次完整生成，二分常跑不完；
+    失败日志本身带着文件路径，对着本批提交改过的文件求交，只用 git、不重算。
+    交出的是候选，不是结论；派活方据此开修复线，或开 `sweep` 线按信息排查。
+    """
+    commits = first_parent_range(repo, low, tip)
+    if not commits:
+        return []
+    # 失败详情常只是日志路径：顺着读进去，含生成日志里再引用的失败子日志（两层）。
+    texts, seen = [detail], set()
+    for _ in range(2):
+        for raw in re.findall(r'/[^\s`|]+\.log\b', '\n'.join(texts)):
+            if raw not in seen and Path(raw).is_file():
+                seen.add(raw)
+                texts.append(Path(raw).read_text(encoding='utf-8', errors='replace')[-200000:])
+    mentioned = set()
+    for raw in LOG_PATH.findall('\n'.join(texts)):
+        path = raw.split('/verify/', 1)[-1] if '/verify/' in raw else raw
+        root = str(repo.resolve()) + '/'
+        mentioned.add((path[len(root):] if path.startswith(root) else path).lstrip('/'))
+    found = []
+    for commit in commits:
+        parent = git(repo, 'show', '-s', '--format=%P', commit).stdout.split()[:1]
+        changed = git(repo, 'diff', '--name-only', '--no-renames', *(parent or ['--root']), commit,
+                      check=False).stdout.split('\n')
+        hits = sorted(p for p in changed if p and any(p == m or m.endswith('/' + p) for m in mentioned))
+        if hits:
+            found.append((commit, hits))
+    return found
 
 
 def stale_worker_code(remote: Path, index: dict) -> str:
@@ -366,6 +403,9 @@ class Verifier:
         self.repo=repo.resolve(); self.remote=origin(self.repo)
         self.workspace=workspace.resolve(); self.publish=publish
         self.probe_budget=None     # None＝按 tip 耗时自动定；测试用它把预算摁死
+        # 报红默认不二分，筛查报告给本批候选提交（`batch_candidates`）；
+        # `[verify] bisect = true` 才恢复自动二分。
+        self.bisect=bool(config._get('verify','bisect',False,self.repo))
         if self.workspace == self.repo or self.workspace == self.remote:
             raise ValueError('验证副本必须独立')
         self.directory=state_dir(self.remote)
@@ -680,7 +720,10 @@ class Verifier:
         write_state(self.directory/'runs'/f'{sha}.json',report)
         self.index['last']=sha
         self.save()
-        work=self.attribution_work(baseline,sha,unique,previous) if contiguous else []
+        work=self.attribution_work(baseline,sha,unique,previous) if contiguous and self.bisect else []
+        for item in unique.values():
+            if item['id'] not in previous and not item.get('batch_window'):
+                item['batch_window']={'low':baseline,'high':sha}
         try:
             introductions=self.bisect_failures(work,self.budget(report)) if work else {}
         finally:
@@ -753,6 +796,19 @@ class Verifier:
               f"| 同一失败的旧票据 | {'、'.join(same) if same else '无'} |",
               f"| 提到这些路径的在办任务书 | {'、'.join(owners) if owners else '没有匹配上，可能是没人认领的地方'} |"]
         body=[f"# 后台验证筛查：{item['id']}", "", "| 项 | 值 |", "| --- | --- |", *rows, ""]
+        window=item.get('batch_window')
+        if not introduced and window and item['id']!='stage:budget':
+            candidates=batch_candidates(self.workspace,window['low'],window['high'],item['detail'])
+            body += [f"本批候选提交（{(window['low'] or '?')[:12]}..{window['high'][:12]} 中改过日志所提路径的；只比对路径，不是结论）：", ""]
+            subject=lambda c: git(self.workspace,'show','-s','--format=%s',c).stdout.strip()[:80]
+            if candidates:
+                body += [f"- `{c[:12]}` {subject(c)}：{'、'.join(f'`{p}`' for p in hits[:6])}" for c, hits in candidates[:20]]
+            else:
+                # 路径没命中多是间接成因（别处改了数据或命名）：列出整批，交排查线按信息筛。
+                batch=first_parent_range(self.workspace,window['low'],window['high']) or []
+                body += ["- 无路径命中，多为间接成因；本批全部提交："]
+                body += [f"  - `{c[:12]}` {subject(c)}" for c in batch[:30]]
+            body.append("")
         if paths:
             body += ["引入提交改到的路径：", ""] + [f"- `{x}`" for x in paths[:40]]
             if len(paths)>40: body.append(f"- …共 {len(paths)} 条")

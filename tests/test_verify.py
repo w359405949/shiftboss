@@ -130,6 +130,7 @@ class VerificationAcceptance(unittest.TestCase):
         """二分归因期间报告已发布、筛查未写：认领照样成立，筛查写出时带上认领。"""
         (self.repo/'value.txt').write_text('bad');bad=self.commit('deliberately break payload');self.git('push','-q','origin','main')
         worker=Verifier(self.repo,self.workspace,publish=False)
+        worker.bisect=True  # 这些用例测的是二分；生产默认关
         failure=worker.run(bad,False)['failures'][0]
         finding=state_dir(self.remote)/'findings'/f"{failure['ticket']}.md"
         finding.unlink()
@@ -142,6 +143,7 @@ class VerificationAcceptance(unittest.TestCase):
         """main 前进时生成提交三方合并后发布：新源保留，派生物不再饿死。"""
         (self.repo/'asset.json').write_text('{}');old=self.commit('stale published artifact');self.git('push','-q','origin','main')
         worker=Verifier(self.repo,self.workspace,publish=True)
+        worker.bisect=True  # 这些用例测的是二分；生产默认关
         (self.repo/'value.txt').write_text('newer');new=self.commit('newer source');self.git('push','-q','origin','main')
         report=worker.run(old,False)
         head=self.remote_head()
@@ -174,6 +176,7 @@ class VerificationAcceptance(unittest.TestCase):
 
     def test_green_tip_covers_backlog(self):
         worker=Verifier(self.repo,self.workspace)
+        worker.bisect=True  # 这些用例测的是二分；生产默认关
         worker.watch(once=True)
         commits=self.batch(8)
         self.assertIn('还差 8 个第一父链提交',show_report(self.remote))
@@ -192,6 +195,7 @@ class VerificationAcceptance(unittest.TestCase):
 
     def test_new_red_bisects_backlog(self):
         worker=Verifier(self.repo,self.workspace,publish=True)
+        worker.bisect=True  # 这些用例测的是二分；生产默认关
         worker.watch(once=True)
         baseline=worker.index['last']
         self.git('fetch','-q','origin','main');self.git('merge','--ff-only','origin/main')
@@ -242,6 +246,7 @@ class VerificationAcceptance(unittest.TestCase):
         那一轮算「新红」，之后没有人再碰它。
         """
         worker=Verifier(self.repo,self.workspace)
+        worker.bisect=True  # 这些用例测的是二分；生产默认关
         worker.watch(once=True)
         commits=self.batch(16,6)
         worker.probe_budget=0
@@ -268,6 +273,7 @@ class VerificationAcceptance(unittest.TestCase):
         (self.repo/'value.txt').write_text('bad');self.commit('baseline red')
         self.git('push','-q','origin','main')
         worker=Verifier(self.repo,self.workspace)
+        worker.bisect=True  # 这些用例测的是二分；生产默认关
         worker.watch(once=True)
         first=read_state(worker.directory/'runs'/f"{worker.index['last']}.json")
         self.batch(5)
@@ -279,6 +285,7 @@ class VerificationAcceptance(unittest.TestCase):
 
     def test_incomplete_probe_does_not_invent_attribution(self):
         worker=Verifier(self.repo,self.workspace)
+        worker.bisect=True  # 这些用例测的是二分；生产默认关
         worker.watch(once=True)
         producer=(self.repo/'producer.py').read_text()
         self.batch(1)
@@ -305,6 +312,7 @@ class VerificationAcceptance(unittest.TestCase):
         (self.repo/'regen.json').write_text(json.dumps(plan));self.commit('declare generation inputs')
         self.git('push','-q','origin','main')
         worker=Verifier(self.repo,self.workspace,publish=True)
+        worker.bisect=True  # 这些用例测的是二分；生产默认关
         worker.watch(once=True)
         self.assertEqual(worker.index['last_consistent'],worker.index['last'])
         self.git('fetch','-q','origin','main');self.git('merge','--ff-only','origin/main')
