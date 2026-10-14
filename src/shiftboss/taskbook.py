@@ -88,6 +88,34 @@ def out_of_scope(name: str, meta: dict, paths: list[str]) -> list[str]:
     return [path for path in paths if not inside(path)]
 
 
+CATEGORY_KEY = "类别"
+# 次序即优先级：冲突或资源紧缺时前者先做（README 3.2 第 9 条的表）。未标类别按「开发」。
+CATEGORIES = ("架构", "开发", "修复", "核对", "性能")
+
+
+def category_of(meta: dict) -> str:
+    value = str((meta or {}).get(CATEGORY_KEY) or "开发").strip()
+    if value not in CATEGORIES:
+        raise ValueError(f"类别只能是 {' / '.join(CATEGORIES)}，不是 {value!r}")
+    return value
+
+
+def higher_active(repo: Path, book: "Taskbook") -> list[str]:
+    """类别次序排在本任务书之前、仍在办的任务书（编写中的不算）。
+
+    性能线只在这张单为空时派：前面的线随时可能改掉它要优化的那块。
+    """
+    rank = CATEGORIES.index(category_of(book.meta()))
+    found = []
+    for other in Taskbook.iter_active(repo):
+        meta = other.meta()
+        if other.name == book.name or str(meta.get(DISPATCH_STATUS, "")).startswith("编写中"):
+            continue
+        if CATEGORIES.index(category_of(meta)) < rank:
+            found.append(other.name)
+    return sorted(found)
+
+
 def unmet_dependencies(repo: Path, book: "Taskbook", key: str) -> list[str]:
     """依赖未满足的任务书：前置任务书归档才算满足；名字找不到的也算未满足并注明。
 

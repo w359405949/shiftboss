@@ -9,7 +9,7 @@
 """
 
 from __future__ import annotations
-from shiftboss.paths import project_root
+from shiftboss.paths import PLANS_DIR, project_root
 
 import argparse
 import json
@@ -716,6 +716,39 @@ def merge_dependency_reason(target: str) -> str | None:
     return None
 
 
+def performance_stale_reason(target: str) -> str | None:
+    """性能线的结果在它派出后被别线改过同一批文件时作废，不合并，重新评估后另派。
+
+    「被改过」按文件机械判定：自该线派出以来 main 第一父链上的提交，改到了该线也改的文件。
+    性能是最低类别，main 上的其他改动都在它之前（README 3.2 第 9 条）；任务书目录不算。
+    """
+    from shiftboss.taskbook import Taskbook, category_of
+    from shiftboss.dispatch import load_sessions
+    if git("merge-base", "--is-ancestor", target, "HEAD", check=False).returncode == 0:
+        return None
+    ledger = load_sessions()
+    for book in Taskbook.iter_active(REPO):
+        if category_of(book.meta()) != "性能":
+            continue
+        branch = book.meta().get("分支", f"codex/{book.name}")
+        ref = next((r for r in (f"origin/{branch}", branch)
+                    if git("rev-parse", "--verify", "--quiet", r, check=False).returncode == 0), None)
+        if not ref or git("merge-base", "--is-ancestor", target, ref, check=False).returncode:
+            continue
+        since = (ledger.get(book.name) or {}).get("dispatched_at")
+        if not since:
+            return f"{book.name} 是性能线，台账里没有派出时刻，判不了结果是否作废；先重新评估再派"
+        base = git("merge-base", "HEAD", target).stdout.strip()
+        mine = {p for p in git("diff", "--name-only", base, target).stdout.split() if not p.startswith(PLANS_DIR + "/")}
+        others = {p for p in git("log", "--first-parent", f"--since={since}", "--name-only", "--format=", "HEAD").stdout.split()
+                  if not p.startswith(PLANS_DIR + "/")}
+        if hit := sorted(mine & others):
+            listed = "、".join(hit[:10]) + (f" 等 {len(hit)} 个" if len(hit) > 10 else "")
+            return (f"{book.name} 是性能线，派出后 main 上又改过它改的文件：{listed}；"
+                    "结果作废，不合并，重新评估后另派（README 3.2 第 9 条）")
+    return None
+
+
 def moving_branch_reason(ref: str, target: str) -> str | None:
     """仍在推进的线只许按提交号合，不许按分支名合。
 
@@ -920,6 +953,8 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(moving)
         if waiting := merge_dependency_reason(target):
             raise MergeError(waiting)
+        if stale := performance_stale_reason(target):
+            raise MergeError(stale)
         if outside := merge_scope_reason(target):
             raise MergeError(outside)
         print(f"合并 {args.ref} ({target[:12]})：", flush=True)
