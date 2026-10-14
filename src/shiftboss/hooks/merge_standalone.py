@@ -15,7 +15,8 @@ import json
 import re
 import sys
 
-MERGE = re.compile(r"\bshiftboss(?:\s+|\.(?:cli\s+)?)merge\b")
+# 只认命令位置：行首、`;`、`&`、`|`、`(`、`{` 与 do/then/else 之后；字符串与注释里的字样不算。
+MERGE = re.compile(r"(?:^|[;&|({\n]|\b(?:do|then|else))\s*(?:cd\s+[^;&|]+?&&\s*)?(?:\S*python\S*\s+(?:-\S+\s+)*-m\s+shiftboss(?:\.cli\s+|\.)merge\b|shiftboss\s+merge\b)")
 STANDALONE = re.compile(
     r"^\s*(?:cd\s+[^;&|<>]+?\s*&&\s*)?shiftboss\s+merge(?:\s+[^;&|<>`$()]*?)?"
     r"(?:\s+2>&1)?(?:\s*\|\s*tail\s+(?:-n\s*)?-?\d+)?\s*$"
