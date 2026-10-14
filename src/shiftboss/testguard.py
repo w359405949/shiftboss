@@ -65,13 +65,15 @@ def forbidden(git: Callable[..., str], before: str, after: str | None, rules: li
               untracked: list[str] | None = None, read: Callable[[str], str] | None = None) -> list[str]:
     """项目在 `[[guard.forbid]]` 禁止的写法：每个文件净增的命中数大于 0 即报（改写、删减不算）。
 
-    规则字段：`name`、`pattern`（正则，逐行匹配）、`paths`（路径前缀）、`allow`（放行的文件）、`reason`。
+    规则字段：`name`、`pattern`（正则，逐行匹配）、`paths`（路径前缀）、`exclude`（不查的路径前缀，如第三方发行树）、
+    `allow`（放行的文件）、`reason`。
     """
     span = [before] if after is None else [before, after]
     found = []
     for rule in rules:
         pattern = re.compile(rule["pattern"])
         allow = set(rule.get("allow", []))
+        exclude = tuple(rule.get("exclude", []))
         counts: dict[str, int] = {}
         path = ""
         for line in git("diff", "-M", "-l100000", "-U0", *span, "--", *rule.get("paths", ["."])).splitlines():
@@ -84,7 +86,8 @@ def forbidden(git: Callable[..., str], before: str, after: str | None, rules: li
             if read and any(path.startswith(prefix) for prefix in prefixes):
                 counts[path] = counts.get(path, 0) + sum(1 for line in read(path).splitlines() if pattern.search(line))
         found += [f"新增{rule['name']} {path}（净增 {count} 处）：{rule.get('reason', '')}"
-                  for path, count in sorted(counts.items()) if count > 0 and path not in allow]
+                  for path, count in sorted(counts.items())
+                  if count > 0 and path not in allow and not (exclude and path.startswith(exclude))]
     return found
 
 
