@@ -152,6 +152,11 @@ def batch_candidates(repo: Path, low: str | None, tip: str, detail: str) -> list
     交出的是候选，不是结论；派活方据此开修复线，或开 `sweep` 线按信息排查。
     """
     commits = first_parent_range(repo, low, tip)
+    if commits is None and low:
+        # 上一轮验的是补齐用的生成提交（不在第一父链上）：以第一父链上最早包含它的提交为起点。
+        chain = git(repo, 'rev-list', '--first-parent', '--reverse', tip).stdout.split()
+        anchor = next((c for c in chain if git(repo, 'merge-base', '--is-ancestor', low, c, check=False).returncode == 0), None)
+        commits = first_parent_range(repo, anchor, tip) if anchor else None
     if not commits:
         return []
     # 失败详情常只是日志路径：顺着读进去，含生成日志里再引用的失败子日志（两层）。
@@ -608,7 +613,7 @@ class Verifier:
         self.save()
         for item in unique.values():
             if item['id'] not in previous and not item.get('batch_window'):
-                item['batch_window']={'low':baseline if contiguous else None,'high':sha}
+                item['batch_window']={'low':baseline,'high':sha}
             introduced=item['introduced_by']
             if introduced and not item['incoming']:
                 item['incoming']=git(self.workspace,'show','-s','--format=%P',introduced).stdout.split()[1:]
