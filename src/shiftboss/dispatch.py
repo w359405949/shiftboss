@@ -901,7 +901,7 @@ def main(argv: list[str] | None = None) -> int:
         if pending := unmet_dependencies(REPO, book, "派发前置"):
             print(f"派活拒绝：{book.name} 的派发前置未归档：{'、'.join(pending)}")
             return 2
-        # 性能线只在前面的类别全部收摊后派：它们随时可能改掉要优化的那块（README 3.2 第 9 条）。
+        # 性能线随时可派；更高类别的线改过它改的文件时，结果由 merge 判作废（README 3.2 第 9 条）。
         from shiftboss.taskbook import category_of, higher_active
         try:
             category = category_of(book.meta())
@@ -909,8 +909,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"派活拒绝：{book.name} 的{exc}")
             return 2
         if category == "性能" and (ahead := higher_active(REPO, book)):
-            print(f"派活拒绝：{book.name} 类别为性能，仍有更高类别的在办线：{'、'.join(ahead)}；等它们收摊再派")
-            return 2
+            print(f"注意：{book.name} 类别为性能，更高类别的在办线 {'、'.join(ahead)} 改到同一文件时，本线结果合并时作废")
     # **状态格说它不该派，就不派。** 表头是执行方判断处境的依据，也是我打开文件
     # 第一眼看到的东西；它和实际在跑对不上，下一次就会有人以为这条线没派出去。
     # 2026-09-05 实测：`monster-attack-effects` 已经派出去 21 分钟，表头还写着「待议」，

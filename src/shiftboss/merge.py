@@ -115,6 +115,47 @@ OLD_WORKFLOW_MODULE = re.compile(
 
 # 编辑器按 ES 模块加载；`node --check` 对 `.js` 按脚本解析，函数内误嵌的 `export` 查不出。
 # 手工合成冲突漏掉括号时正是这样蒙混过关，所以复制成 `.mjs` 再查。
+_SYNTAX_SCRIPT = r"""
+import {readFileSync} from 'node:fs';
+const [parserUrl, ...files] = process.argv.slice(2);
+const {parse} = await import(parserUrl);
+const failed = [];
+for (const file of files) {
+  try {
+    parse(readFileSync(file, 'utf8'), {ecmaVersion: 'latest', sourceType: 'module', allowHashBang: true});
+  } catch (error) {
+    failed.push(`${file}: ${error.message}`);
+  }
+}
+process.stdout.write(failed.join('\n'));
+"""
+
+
+def check_js_modules(names: list[str]) -> None:
+    """一次起一个 node 进程解析全部改动的 JS 模块；未配置 merge.js_parser 时逐个 `node --check`。"""
+    if not names:
+        return
+    parser = config.js_parser()
+    if not parser:
+        for name in names:
+            check_js_module(REPO / name, name)
+        return
+    import shutil
+    import tempfile
+    node = shutil.which("node")
+    if not node:
+        raise MergeError("找不到 node，无法检查改动的 JS")
+    with tempfile.TemporaryDirectory() as temp:
+        script = Path(temp) / "syntax.mjs"
+        script.write_text(_SYNTAX_SCRIPT, encoding="utf-8")
+        result = subprocess.run([node, str(script), (REPO / parser).as_uri(), *names], cwd=REPO,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if result.returncode:
+        raise MergeError(f"JS 语法检查失败：\n{result.stderr.strip()[:600]}")
+    if result.stdout.strip():
+        raise MergeError("JS 模块语法错误：\n  " + result.stdout.strip()[:1200].replace("\n", "\n  "))
+
+
 def check_js_module(path: Path, name: str) -> None:
     import shutil
     import tempfile
@@ -280,9 +321,11 @@ def check_js_imports(names: list[str]) -> None:
     changed = [n for n in touched if (REPO / n).is_file()]
     importers = set(changed)
     # 被删的模块也要找引用方：删了生成器而测试还在导入它，只有这样才查得到。
-    for name in touched:
-        found = git("grep", "-l", "-F", Path(name).name, "--", *prefixes, check=False).stdout.split()
-        importers.update(found)
+    basenames = sorted({Path(name).name for name in touched})
+    if basenames:
+        patterns = [arg for base in basenames for arg in ("-e", base)]
+        importers.update(git("grep", "-l", "-F", *patterns, "--", *prefixes, check=False).stdout.split())
+    exports: dict[Path, set[str] | None] = {}
     missing = []
     for name in sorted(importers):
         path = REPO / name
@@ -293,7 +336,9 @@ def check_js_imports(names: list[str]) -> None:
             if not module.is_file():
                 missing.append(f"{name} → {target}（模块不存在）")
                 continue
-            exported = js_exports(module)
+            if module not in exports:
+                exports[module] = js_exports(module)
+            exported = exports[module]
             if exported is None:
                 continue
             for item in group.split(","):
@@ -330,6 +375,7 @@ def fast_checks(before: str) -> None:
     started = time.monotonic()
     names = git("diff", "--name-only", "--no-renames", "-z", before).stdout.split("\0")
     counts = {".json": 0, ".py": 0, ".js": 0, ".mjs": 0}
+    js_modules: list[str] = []
     for name in names:
         path = REPO / name
         if not name or not path.is_file() or path.suffix not in counts:
@@ -349,10 +395,11 @@ def fast_checks(before: str) -> None:
                 raise MergeError(f"{name} 引用旧路径 `{stale.group(0)}`，改为 `shiftboss.{stale.group(1)}`"
                                  "（执行方插件在 `shiftboss.workers`）")
         elif any(name.startswith(prefix) for prefix in config.js_module_prefixes()):
-            check_js_module(path, name)
+            js_modules.append(name)
         else:
             continue
         counts[path.suffix] += 1
+    check_js_modules(js_modules)
     print(f"快速检查 改动 JSON/Python/JS 语法: {counts} {time.monotonic()-started:.3f}s", flush=True)
     started = time.monotonic()
     check_js_imports(names)
