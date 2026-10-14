@@ -137,16 +137,14 @@ def first_parent_range(repo: Path, last: str | None, tip: str):
     """`last` 之后到 `tip` 的第一父链提交；`last` 不是 `tip` 的祖先时为 None。
 
     `last` 不在第一父链上（补齐用的生成提交被别处的合并挤到第二父）时，
-    以第一父链上最早包含它的提交为界：那一点之前的都已验过。
+    取第一父链上 `last` 够不到的全部提交：它们都是本批新进来、尚未验过的。
     """
     if not last: return None
     if last == tip: return []
     if git(repo,'merge-base','--is-ancestor',last,tip,check=False).returncode: return None
     commits=git(repo,'rev-list','--first-parent','--reverse',f'{last}..{tip}').stdout.split()
     parents=git(repo,'show','-s','--format=%P',commits[0]).stdout.split() if commits else []
-    if parents and parents[0] == last: return commits
-    anchor=next((c for c in commits if git(repo,'merge-base','--is-ancestor',last,c,check=False).returncode == 0), None)
-    return commits[commits.index(anchor):] if anchor else []
+    return commits
 
 
 LOG_PATH = re.compile(r'[\w./-]+/[\w.-]+\.(?:js|mjs|cjs|py|json|html|css|toml)\b')
