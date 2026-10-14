@@ -134,12 +134,19 @@ from shiftboss.doorbell import ring  # 门铃（文件名、hook、写入）只�
 
 
 def first_parent_range(repo: Path, last: str | None, tip: str):
+    """`last` 之后到 `tip` 的第一父链提交；`last` 不是 `tip` 的祖先时为 None。
+
+    `last` 不在第一父链上（补齐用的生成提交被别处的合并挤到第二父）时，
+    以第一父链上最早包含它的提交为界：那一点之前的都已验过。
+    """
     if not last: return None
     if last == tip: return []
     if git(repo,'merge-base','--is-ancestor',last,tip,check=False).returncode: return None
     commits=git(repo,'rev-list','--first-parent','--reverse',f'{last}..{tip}').stdout.split()
     parents=git(repo,'show','-s','--format=%P',commits[0]).stdout.split() if commits else []
-    return commits if parents and parents[0] == last else None
+    if parents and parents[0] == last: return commits
+    anchor=next((c for c in commits if git(repo,'merge-base','--is-ancestor',last,c,check=False).returncode == 0), None)
+    return commits[commits.index(anchor):] if anchor else []
 
 
 LOG_PATH = re.compile(r'[\w./-]+/[\w.-]+\.(?:js|mjs|cjs|py|json|html|css|toml)\b')
@@ -152,11 +159,6 @@ def batch_candidates(repo: Path, low: str | None, tip: str, detail: str) -> list
     交出的是候选，不是结论；派活方据此开修复线，或开 `sweep` 线按信息排查。
     """
     commits = first_parent_range(repo, low, tip)
-    if commits is None and low:
-        # 上一轮验的是补齐用的生成提交（不在第一父链上）：以第一父链上最早包含它的提交为起点。
-        chain = git(repo, 'rev-list', '--first-parent', '--reverse', tip).stdout.split()
-        anchor = next((c for c in chain if git(repo, 'merge-base', '--is-ancestor', low, c, check=False).returncode == 0), None)
-        commits = first_parent_range(repo, anchor, tip) if anchor else None
     if not commits:
         return []
     # 失败详情常只是日志路径：顺着读进去，含生成日志里再引用的失败子日志（两层）。
