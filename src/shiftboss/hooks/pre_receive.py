@@ -66,7 +66,7 @@ def granted_prefixes(name: str, protected: list[str]) -> list[str]:
     """main 上任务书表头「写入范围」里明确写出的受保护目录（或其子目录）：即授予该线写权。
 
     写权跟着任务书走，不改 `shiftboss.toml`：该文件是生成输入，每改一次都触发大批生成阶段重跑。
-    范围须以受保护前缀开头才算授权；写更宽的目录（如 `engine/`）不授予其下受保护路径。
+    范围须是受保护文件本身，或以受保护目录开头的目录，才算授权；写更宽的目录（如 `engine/`）不授予其下受保护路径。
     """
     import json
     from shiftboss.taskbook import SCOPE_KEY, dependency_list
@@ -74,7 +74,8 @@ def granted_prefixes(name: str, protected: list[str]) -> list[str]:
     if shown.returncode:
         return []
     scope = dependency_list(json.loads(shown.stdout).get(SCOPE_KEY))
-    return [item for item in scope if item.endswith("/") and any(item.startswith(prefix) for prefix in protected)]
+    return [item for item in scope if any(
+        item == prefix or (prefix.endswith("/") and item.endswith("/") and item.startswith(prefix)) for prefix in protected)]
 
 
 def trespass(new: str, protected: list[str], granted: list[str] = ()) -> list[str]:
@@ -84,7 +85,7 @@ def trespass(new: str, protected: list[str], granted: list[str] = ()) -> list[st
         return []
     return [path for path in done.stdout.splitlines()
             if any(path == prefix or (prefix.endswith("/") and path.startswith(prefix)) for prefix in protected)
-            and not any(path.startswith(item) for item in granted)]
+            and not any(path == item or (item.endswith("/") and path.startswith(item)) for item in granted)]
 
 
 def scope_trespass(name: str, new: str) -> list[str]:
