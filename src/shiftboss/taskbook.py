@@ -103,7 +103,7 @@ def category_of(meta: dict) -> str:
 def higher_active(repo: Path, book: "Taskbook") -> list[str]:
     """类别次序排在本任务书之前、仍在办的任务书（编写中的不算）。
 
-    性能线只在这张单为空时派：前面的线随时可能改掉它要优化的那块。
+    性能线派出时列出这张单：它们改到同一文件时，性能线的结果作废。
     """
     rank = CATEGORIES.index(category_of(book.meta()))
     found = []
@@ -113,6 +113,22 @@ def higher_active(repo: Path, book: "Taskbook") -> list[str]:
             continue
         if CATEGORIES.index(category_of(meta)) < rank:
             found.append(other.name)
+    return sorted(found)
+
+
+def same_category_active(repo: Path, book: "Taskbook") -> list[str]:
+    """同类别、已派出（轮次 ≥ 1）且派发前置已满足的在办任务书；编写中与排队等前置的不算。"""
+    category = category_of(book.meta())
+    found = []
+    for other in Taskbook.iter_active(repo):
+        meta = other.meta()
+        if other.name == book.name or str(meta.get(DISPATCH_STATUS, "")).startswith("编写中"):
+            continue
+        if category_of(meta) != category or int(meta.get("轮次") or 0) < 1:
+            continue
+        if unmet_dependencies(repo, other, "派发前置"):
+            continue
+        found.append(other.name)
     return sorted(found)
 
 

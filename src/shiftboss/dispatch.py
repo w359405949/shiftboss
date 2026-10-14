@@ -902,11 +902,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"派活拒绝：{book.name} 的派发前置未归档：{'、'.join(pending)}")
             return 2
         # 性能线随时可派；更高类别的线改过它改的文件时，结果由 merge 判作废（README 3.2 第 9 条）。
-        from shiftboss.taskbook import category_of, higher_active
+        from shiftboss.taskbook import category_of, higher_active, same_category_active
         try:
             category = category_of(book.meta())
         except ValueError as exc:
             print(f"派活拒绝：{book.name} 的{exc}")
+            return 2
+        # 性能线同时只开一条：并行的性能线互相拖慢测量，结果不可比（README 3.2 第 9 条）。
+        if category == "性能" and (running := same_category_active(REPO, book)):
+            print(f"派活拒绝：{book.name} 类别为性能，已有在办的性能线：{'、'.join(running)}；同时只开一条，"
+                  f"排队就在表头写派发前置")
             return 2
         if category == "性能" and (ahead := higher_active(REPO, book)):
             print(f"注意：{book.name} 类别为性能，更高类别的在办线 {'、'.join(ahead)} 改到同一文件时，本线结果合并时作废")
