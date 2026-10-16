@@ -1,10 +1,11 @@
-"""派活方每次汇报末尾原样附上的状态摘要：待你定、在办任务、门铃与后备闹钟、常驻验证。
+"""派活方每次汇报末尾原样附上的状态摘要：待你定、在跑、待核对、已合并、排队、门铃与后备闹钟、常驻验证。
 
 Stop 钩子（`shiftboss.hooks.show_brief`）在每次回复结束时现算并显示给用户。
 """
 from __future__ import annotations
 
 import re
+import subprocess
 import time
 from datetime import datetime
 
@@ -51,6 +52,15 @@ def verify_lines(repo) -> list[str]:
     return lines
 
 
+def branch_merged(git_dir, meta: dict) -> bool:
+    """执行方分支已推过且已并进 origin 的 main：交回已合并，余下的是续派或收尾。"""
+    if not int(meta.get("轮次") or 0):
+        return False
+    ref = f"refs/heads/{meta.get('分支') or ''}"
+    run = lambda *args: subprocess.run(["git", f"--git-dir={git_dir}", *args], capture_output=True).returncode
+    return run("rev-parse", "--verify", "--quiet", ref) == 0 and run("merge-base", "--is-ancestor", ref, "refs/heads/main") == 0
+
+
 def main(argv: list[str] | None = None) -> int:
     repo = project_root()
     git_dir = inbox.origin_git_dir(repo)
@@ -63,29 +73,31 @@ def main(argv: list[str] | None = None) -> int:
         print(line)
     from shiftboss.dispatch import read_quota
     from shiftboss.taskbook import DEPENDENCY_KEYS, Taskbook, unmet_dependencies
-    running, review, ready, waiting = [], [], [], []
+    from shiftboss.taskbook import execution_status
+    running, review, merged, ready, waiting = [], [], [], [], []
     for name, _scheduled, _copy, state, pushed, _model in sorted(rows):
         book = Taskbook.find(repo, name)
         waits = tuple(w for key in DEPENDENCY_KEYS if book for w in unmet_dependencies(repo, book, key))
+        wait = f"｜等 {'、'.join(waits)}" if waits else ""
+        unreviewed = pushed.startswith("可核对") or state.startswith("做完了没推")
         if state.startswith("在干活"):
             running.append(f"{name}｜{state.removeprefix('在干活').strip('（）')}")
-        elif waits:
-            waiting.append((name, waits))
-        elif pushed.startswith("可核对") or state.startswith("做完了没推"):
+        elif unreviewed and not waits:
             review.append(f"{name}｜{pushed.removeprefix('可核对').strip('（）') if pushed.startswith('可核对') else state}")
+        elif book and not unreviewed and branch_merged(git_dir, book.meta()):
+            status = execution_status(book.delivery_text()) or "—"
+            follow = "待收尾" if status == "完成" else "待续派"
+            merged.append(f"{name}｜{status}｜{follow}{wait}")
+        elif waits:
+            waiting.append(f"{name}{wait}" + ("｜分支待核" if unreviewed else ""))
         else:
-            ready.append(name)
-    print(f"【在跑】{len(running)}/{read_quota()}" + ("" if running else "：无"))
-    for item in running:
-        print(f"- {item}")
-    print(f"【待核对】{len(review)}" + ("" if review else "：无"))
-    for item in review:
-        print(f"- {item}")
-    print(f"【排队】{len(ready) + len(waiting)}" + ("" if ready or waiting else "：无"))
-    for name in ready:
-        print(f"- {name}｜可派")
-    for name, waits in waiting:
-        print(f"- {name}｜等 {'、'.join(waits)}")
+            ready.append(f"{name}｜可派" + ("｜分支有未合进展" if pushed.startswith("进行中") else ""))
+    sections = [("在跑", running, f"/{read_quota()}"), ("待核对", review, ""), ("已合并", merged, ""),
+                ("排队", ready + waiting, "")]
+    for title, items, suffix in sections:
+        print(f"【{title}】{len(items)}{suffix}" + ("" if items else "：无"))
+        for item in items:
+            print(f"- {item}")
     print("【门铃】")
     for line in bell_lines():
         print(line)
