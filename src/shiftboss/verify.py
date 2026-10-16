@@ -22,7 +22,7 @@
 **跑什么**：`regen.json` 的 `verification.test_directories` 声明全量测试目录，
 文件由每次运行现发现；每个 `test_*.py` 都载入，**导入异常也变成失败记录**，
 不中断后续文件；跳过的测试单列，不冒充已执行。
-先生成，再跑全部测试、未被全量套件覆盖的原闸、以及 `verification.build` 打包命令；
+先生成，再跑全部测试、未被全量套件覆盖的原闸、`verification.build` 打包命令，最后跑 `verification.pages` 页面闸（按环境变量 `SHIFTBOSS_VERIFY_BASE`／`SHIFTBOSS_VERIFY_HEAD` 给出的本批范围只核改到的页面，不计入预算）；
 **普通测试红不阻止其余阶段**。生成失败同样报告，已有结果不冒充新生成结果。
 生成输入自上次派生物一致的提交以来没有改动时跳过生成（判法见 `generation_needed`）。
 验证用固定源提交；测试驱动按内容哈希快照，避免控制副本更新时中途换驱动。
@@ -477,6 +477,8 @@ class Verifier:
         limit=budget*60*2 if budget else None
         with log.open('w',encoding='utf-8') as output:
             env=os.environ.copy();env['PYTHONIOENCODING']='utf-8'
+            base,head=getattr(self,'batch',('',sha))
+            env['SHIFTBOSS_VERIFY_BASE']=base;env['SHIFTBOSS_VERIFY_HEAD']=head
             try:
                 process=subprocess.Popen(cmd,cwd=self.workspace,stdout=output,stderr=subprocess.STDOUT,env=env,start_new_session=True)
                 try:
@@ -495,6 +497,8 @@ class Verifier:
         if self.index.get('last'):
             old=read_state(self.directory/'runs'/f"{self.index['last']}.json")
             if contiguous: previous={x['id']:x for x in old['failures']}
+        # 本批改动范围交给闸：项目脚本据此只核受影响的部分（如页面闸只开改到的页面）。
+        self.batch=(self.index.get('last') or '',sha)
         report={'schema':SCHEMA,'commit':sha,'source_commit':sha,'started':started,
                 'policy_commit':self.policy_commit,'test_runner_sha256':self.driver_hash,'stages':{},'failures':[],
                 'publication':'未补齐','generated_commit':None}
@@ -510,6 +514,8 @@ class Verifier:
             if not isinstance(directories,list): raise ValueError('测试目录清单必须是列表')
             build=policy['build']
             if not isinstance(build,list): raise ValueError('打包命令清单必须是列表')
+            pages=policy.get('pages',[])
+            if not isinstance(pages,list): raise ValueError('页面闸清单必须是列表')
             leftovers=conflict_leftovers(self.workspace)
             if leftovers:
                 failures.append({'id':'stage:conflict-leftovers',
@@ -566,6 +572,10 @@ class Verifier:
                 label=f'build-{number}'
                 result=self.command(sha,label,cmd);report['stages'][label]=result
                 if result['returncode']: failures.append({'id':'stage:'+label.split('-')[0]+':'+subprocess.list2cmdline(cmd),'detail':result['log']})
+            for number, cmd in enumerate(pages):
+                label=f'pages-{number}'
+                result=self.command(sha,label,cmd);report['stages'][label]=result
+                if result['returncode']: failures.append({'id':'stage:pages:'+subprocess.list2cmdline(cmd),'detail':result['log']})
             changed=git(self.workspace,'status','--porcelain','--untracked-files=all').stdout
             if changed:
                 # 列出改动的路径：只说「被改动」的票据无从归因。
@@ -589,9 +599,10 @@ class Verifier:
             failures.append({'id':'stage:infrastructure','detail':str(exc)})
         # 产出 1 MB 的项目，一轮生成＋闸超过预算就是生成或测试膨胀了：报红，先查膨胀。
         budget=config.verify_budget_minutes(self.workspace)
-        spent=sum(stage.get('seconds') or 0 for stage in report['stages'].values())
+        # 页面闸按本批改到的页面开浏览器，耗时随改动量变，不计入生成与闸的预算。
+        spent=sum(stage.get('seconds') or 0 for name,stage in report['stages'].items() if not name.startswith('pages-'))
         if budget and spent>budget*60:
-            slow=sorted(((stage.get('seconds') or 0,name) for name,stage in report['stages'].items()),reverse=True)[:5]
+            slow=sorted(((stage.get('seconds') or 0,name) for name,stage in report['stages'].items() if not name.startswith('pages-')),reverse=True)[:5]
             failures.append({'id':'stage:budget','detail':f'生成与闸合计 {spent/60:.1f} 分钟，超过预算 {budget} 分钟；先查生成与测试是否膨胀。最慢：'
                              +'；'.join(f'{name} {seconds/60:.1f} 分钟' for seconds,name in slow)})
         observed=time.time()
