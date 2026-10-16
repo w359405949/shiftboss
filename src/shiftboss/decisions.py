@@ -40,18 +40,16 @@ def pending(repo: Path | None = None) -> list[dict]:
 
 
 def summary_lines(items: list[dict]) -> list[str]:
-    """状态摘要里每条一行：编号、登记时间、问题、选项（推荐项标出）、关联任务书。"""
+    """状态摘要里每条一行：编号｜登记时间｜问题｜选项（推荐项标出）｜关联任务书。"""
     lines = []
     for item in items:
-        options = "；".join(
-            f"{index}) {text}" + ("（推荐）" if index == item.get("recommend") else "")
-            for index, text in enumerate(item.get("options", []), 1))
-        line = f"- {item['id']}（{item['asked'][5:16].replace('T', ' ')}）{item['question']}"
-        if options:
-            line += f" ｜ {options}"
+        cells = [item["id"], item["asked"][5:16].replace("T", " "), item["question"]]
+        if item.get("options"):
+            cells.append("；".join(f"{index}) {text}" + ("（推荐）" if index == item.get("recommend") else "")
+                                  for index, text in enumerate(item["options"], 1)))
         if item.get("line"):
-            line += f" ｜ 关联 {item['line']}"
-        lines.append(line)
+            cells.append(f"关联 {item['line']}")
+        lines.append("- " + "｜".join(cells))
     return lines
 
 
