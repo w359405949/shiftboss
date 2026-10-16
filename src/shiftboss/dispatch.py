@@ -688,6 +688,16 @@ def write_note(book, message: str, executor: str = "codex") -> None:
             "而它手上有现场、有更细的检查，甲方只有二手资料。\n"
             "把那几段删掉，改写成「要成立什么」与「算不算做到了」；\n"
             "字节表、地址、发布数据的形状是事实，用 ```text 或不带标签的围栏照写不误。")
+    # 写入范围含受保护目录即授予测试与构建线写权（DONE.md 第 2 节首段）。执行方曾多次把自己读成
+    # 不许写检查的开发线而停下，所以由派活在交代末尾写明，不靠它自己对照 [guard]。
+    from shiftboss.config import load
+    protected = load(REPO).get("guard", {}).get("protected", [])
+    scope = book.meta().get("写入范围") or []
+    granted = [p for p in protected if any(s == p or s.startswith(p) for s in scope)]
+    if granted:
+        message = (message.rstrip() + "\n\n" if message.strip() else "") + (
+            f"写入范围含受保护目录 {'、'.join(f'`{p}`' for p in granted)}：按 DONE.md 第 2 节首段，"
+            "本线持测试与构建线写权，可按合同新写检查、测试与生成代码。")
     n = round_number(book)
     book.append_round(f"{'#' * level} 第 {n} 轮派出时的交代（{today()}，{executor}）", message)
     if book.is_dir:
