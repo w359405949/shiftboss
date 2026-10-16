@@ -304,15 +304,19 @@ SCAFFOLD_ROUNDS = """# 轮次记录
 """
 
 EXECUTION_STATUSES = ("进展", "完成", "停下")
+# 英文交回的写法（README 2.2 第 10 条），一律换算成上面的状态词。
+ENGLISH_STATUSES = {"progress": "进展", "done": "完成", "stopped": "停下"}
 
 
 def execution_status(text: str | None) -> str | None:
     """交回顶部执行方自报的执行状态（README 2.4）；没写或写错给 None。
 
-    与表头的调度状态对称。存量交回写作「信号：」「交付信号：」，一并认。
+    与表头的调度状态对称。存量交回写作「信号：」「交付信号：」，英文交回写作 `Status: done`，一并认。
     """
-    match = re.search(r"^(?:执行状态|交付信号|信号)[:：]\s*(\S+)\s*$", text or "", re.M)
-    return match.group(1) if match and match.group(1) in EXECUTION_STATUSES else None
+    match = re.search(r"^(?:执行状态|交付信号|信号|Status)[:：]\s*`?(\S+?)`?\s*$", text or "", re.M | re.I)
+    word = match.group(1) if match else ""
+    word = ENGLISH_STATUSES.get(word.lower(), word)
+    return word if word in EXECUTION_STATUSES else None
 
 
 SCAFFOLD_DELIVERY = """# 执行方交回
