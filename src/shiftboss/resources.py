@@ -67,10 +67,11 @@ def heavy_slot(repo: Path, what: str):
 
 @contextlib.contextmanager
 def exclusive(repo: Path, what: str):
-    """占满全部名额再执行：后台验证的生成与闸是全仓正确性的底线，跑时让执行方的重活排队，不与之抢 CPU。"""
+    """占去除一个以外的全部名额再执行：后台验证的生成与闸是全仓正确性的底线，跑时压低执行方重活的并发；
+    留一个名额给执行方，免得一轮生成十几分钟把执行方的检查整段堵死。"""
     directory, handles = slots_dir(repo), []
     try:
-        for index in range(1, limit() + 1):
+        for index in range(1, max(limit() - 1, 1) + 1):
             handle = open(directory / f"{index}.lock", "a+")
             fcntl.flock(handle, fcntl.LOCK_EX)
             handle.seek(0)
