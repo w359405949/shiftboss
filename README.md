@@ -33,6 +33,16 @@
 - 派活方与执行方用的 AI 代理（Claude Code、Codex 等）需要自行安装并登录；shiftboss 不负责安装它们。
 - 对 IDE 和编辑器没有要求：只要能在项目目录里和 AI 对话（终端、IDE 插件、桌面应用都行），就能使用。
 
+## 让你的 AI 帮你装
+
+在用 AI 编程助手（Claude Code、Cursor、Codex、GitHub Copilot 等）？把下面这段粘贴给它：
+
+```text
+Set up shiftboss on this PC for me: https://github.com/w359405949/shiftboss - follow docs/AI_SETUP.md in that repository.
+```
+
+它会先问你要在哪个项目启用、用哪个 AI 当派活方和执行方，再按 [docs/AI_SETUP.md](docs/AI_SETUP.md) 装好并核对。
+
 ## 安装
 
 在本仓库里以可编辑模式安装：
