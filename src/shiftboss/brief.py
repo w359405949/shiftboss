@@ -12,7 +12,6 @@ import psutil
 from shiftboss import decisions, doorbell, inbox
 from shiftboss.paths import project_root
 
-MARKER = "【在办】"
 
 
 def clock(epoch: float) -> str:
@@ -45,22 +44,40 @@ def verify_line(repo) -> str:
 def main(argv: list[str] | None = None) -> int:
     repo = project_root()
     git_dir = inbox.origin_git_dir(repo)
-    rows, _ledger, _active, _live = inbox.status_rows(repo, git_dir)
+    rows, ledger, _active, _live = inbox.status_rows(repo, git_dir)
     print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")
+    # 待你定始终显示：空时写「无」，用户据此区分「确实没有」与「没显示出来」。
     asks = decisions.pending(repo)
-    if asks:
-        print(f"【待你定】{len(asks)} 件（答复直接回在对话里）")
-        for line in decisions.summary_lines(asks):
-            print(line)
-    print(MARKER)
+    print(f"【待你定】{len(asks)} 件（答复直接回在对话里）" if asks else "【待你定】无")
+    for line in decisions.summary_lines(asks):
+        print(line)
+    from shiftboss.dispatch import read_quota
     from shiftboss.taskbook import DEPENDENCY_KEYS, Taskbook, unmet_dependencies
-    for name, scheduled, copy, running, pushed, _model in sorted(rows):
-        book = Taskbook.find(repo, name)
-        waits = [f"{key}：{'、'.join(pending)}" for key in DEPENDENCY_KEYS
-                 if book and (pending := unmet_dependencies(repo, book, key))]
-        print(f"- {name}｜{running}｜{pushed}｜{scheduled}" + (f"｜等 {'；'.join(waits)}" if waits else ""))
-    if not rows:
-        print("- （无）")
+    running, review, ready, waiting = [], [], [], {}
+    for name, _scheduled, _copy, state, pushed, _model in sorted(rows):
+        if state.startswith("在干活"):
+            running.append(f"{name}（{state.removeprefix('在干活').strip('（）')}）")
+        elif pushed.startswith("可核对") or state.startswith("做完了没推"):
+            review.append(f"{name}（{pushed.removeprefix('可核对').strip('（）') if pushed.startswith('可核对') else state}）")
+        else:
+            book = Taskbook.find(repo, name)
+            waits = tuple(w for key in DEPENDENCY_KEYS if book for w in unmet_dependencies(repo, book, key))
+            if waits:
+                waiting.setdefault(waits, []).append(name)
+            else:
+                ready.append(name)
+    print(f"【在跑】{len(running)}/{read_quota()}" + ("" if running else "：无"))
+    for item in running:
+        print(f"- {item}")
+    print(f"【待核对】{len(review)}" + ("" if review else "：无"))
+    for item in review:
+        print(f"- {item}")
+    queued = len(ready) + sum(map(len, waiting.values()))
+    print(f"【排队】{queued}" + ("" if queued else "：无"))
+    if ready:
+        print(f"- 可派（{len(ready)}）：" + "、".join(ready))
+    for waits, names in waiting.items():
+        print(f"- 等 {'、'.join(waits)}（{len(names)}）：" + "、".join(names))
     for line in bell_lines():
         print(line)
     print(verify_line(repo))
