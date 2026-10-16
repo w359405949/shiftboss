@@ -693,11 +693,11 @@ def write_note(book, message: str, executor: str = "codex") -> None:
     from shiftboss.config import load
     protected = load(REPO).get("guard", {}).get("protected", [])
     scope = book.meta().get("写入范围") or []
-    granted = [p for p in protected if any(s == p or s.startswith(p) for s in scope)]
+    granted = [s for s in scope if any(s == p or s.startswith(p) for p in protected)]
     if granted:
         message = (message.rstrip() + "\n\n" if message.strip() else "") + (
-            f"写入范围含受保护目录 {'、'.join(f'`{p}`' for p in granted)}：按 DONE.md 第 2 节首段，"
-            "本线持测试与构建线写权，可按合同新写检查、测试与生成代码。")
+            f"写入范围含受保护路径 {'、'.join(f'`{p}`' for p in granted)}：按 DONE.md 第 2 节首段，"
+            "本线对这些路径持测试与构建线写权，可按合同修改。")
     n = round_number(book)
     book.append_round(f"{'#' * level} 第 {n} 轮派出时的交代（{today()}，{executor}）", message)
     if book.is_dir:
