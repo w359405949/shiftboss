@@ -1,4 +1,4 @@
-"""派活方每次汇报末尾原样附上的状态摘要：待你定、在跑、待核对、已合并、排队、门铃与后备闹钟、常驻验证。
+"""派活方每次汇报末尾原样附上的状态摘要：待你定、在跑、待核对、已合并、排队、门铃、常驻验证。
 
 Stop 钩子（`shiftboss.hooks.show_brief`）在每次回复结束时现算并显示给用户。
 """
@@ -30,9 +30,6 @@ def bell_lines() -> list[str]:
         lines = [f"- 监听｜在｜心跳 {clock(due)}"]
     else:
         lines = ["- 监听｜不在｜需重挂"]
-    alarms = sorted((proc.create_time() + minutes * 60, minutes)
-                    for proc, minutes in doorbell.alarm_processes(path, path))
-    lines += [f"- 闹钟 {minutes} 分｜{clock(due)}" for due, minutes in alarms] or ["- 闹钟｜无"]
     return lines
 
 

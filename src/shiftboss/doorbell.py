@@ -142,7 +142,7 @@ def rival_listeners(path: Path, fallback: Path) -> list[psutil.Process]:
                            for a in names)
                        or (len(names) > 1 and any(a.endswith(("shiftboss", "shiftboss.exe", "shiftboss-script.py")) for a in names)
                            and "bell" in names))
-        if not is_listener or "--alarm-minutes" in names:
+        if not is_listener:
             continue
         theirs = watched_path(proc, fallback)
         if theirs and _same_file(theirs, path):
@@ -291,13 +291,10 @@ def _event_time(line: str) -> float | None:
 # 推荐的重挂命令只在这里写一处。**心跳必须短于宿主的后台时限**：Claude Code 的后台命令
 # 默认满 30 分钟即被结束，起门铃时把时限设为 6 小时（`timeout` 21600000，工作区 settings 的
 # BASH_MAX_TIMEOUT_MS 把上限抬到 6 小时）；超过时限的心跳永远等不到。
-# 心跳 50 分钟：派活方的输入缓存 60 分钟过期，醒得比它早。另挂一个 50 分钟的闹钟，不随监听器重挂，
-# 响后只重挂它自己，即每 50 分钟叫醒一次，防止监听器被忘了重挂；新闹钟结束旧闹钟，从头计时。
+# 心跳 50 分钟：派活方的输入缓存 60 分钟过期，醒得比它早；心跳从监听器起挂或门铃最后一件事起算，
+# 即无事时每 50 分钟叫醒一次。
 HEARTBEAT_MINUTES = 50
-ALARM_MINUTES = (50,)
-REARM_COMMANDS = (f"shiftboss bell --once --ignore-green --heartbeat-minutes {HEARTBEAT_MINUTES}",
-                  *(f"shiftboss bell --alarm-minutes {minutes}" for minutes in ALARM_MINUTES))
-REARM_COMMAND = "、".join(REARM_COMMANDS) + "（各自单独一条后台命令）"
+REARM_COMMAND = f"shiftboss bell --once --ignore-green --heartbeat-minutes {HEARTBEAT_MINUTES}（单独一条后台命令）"
 
 
 def last_event(path: Path) -> float:
@@ -357,7 +354,7 @@ def watch(path: Path, heartbeat_minutes: int, fallback: Path, once: bool = False
     if not path.parent.exists():
         raise SystemExit(f"门铃所在目录不存在：{path.parent}")
     handle = acquire(lock_path, path, fallback)
-    started = time.time()   # 闹钟由同批重挂起的新闹钟替换（同分钟数的旧闹钟自行结束），监听器不碰它们，免得并发起时误杀
+    started = time.time()
     try:
         offset = read_mark(path)
         while True:
@@ -392,43 +389,6 @@ def watch(path: Path, heartbeat_minutes: int, fallback: Path, once: bool = False
         handle.close()
 
 
-def alarm_processes(path: Path, fallback: Path) -> list[tuple[psutil.Process, int]]:
-    """盯同一个门铃的后备闹钟与其分钟数。"""
-    me = {os.getpid(), *(p.pid for p in psutil.Process().parents())}
-    out = []
-    for proc in psutil.process_iter(["pid", "cmdline"]):
-        argv = proc.info.get("cmdline") or []
-        if proc.pid in me or "--alarm-minutes" not in argv or "bell" not in argv:
-            continue
-        theirs = watched_path(proc, fallback)
-        index = argv.index("--alarm-minutes")
-        if theirs and _same_file(theirs, path) and index + 1 < len(argv) and argv[index + 1].isdigit():
-            out.append((proc, int(argv[index + 1])))
-    return out
-
-
-def stop_alarms(path: Path, fallback: Path, *, before: float, minutes: int | None = None) -> None:
-    """结束早于 `before` 起的闹钟（给了 `minutes` 只结束同分钟数的）：重挂即重新计时。"""
-    for proc, their_minutes in alarm_processes(path, fallback):
-        if minutes is not None and their_minutes != minutes:
-            continue
-        try:
-            if proc.create_time() < before:
-                proc.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-
-
-def alarm(path: Path, fallback: Path, minutes: int) -> int:
-    """后备闹钟：满 `minutes` 分钟仍未被重挂结束，就叫醒派活方。"""
-    stop_alarms(path, fallback, before=psutil.Process().create_time(), minutes=minutes)
-    time.sleep(minutes * 60)
-    say(f"门铃闹钟：已满 {minutes} 分钟。重挂闹钟（shiftboss bell --alarm-minutes {minutes}），"
-        f"监听器没在跑就一并重挂（{REARM_COMMANDS[0]}），各自单独一条后台命令；"
-        "再把整个收件箱过一遍：shiftboss inbox list")
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -440,14 +400,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="响一次（门铃或心跳）就退出，供后台等待一次事件")
     parser.add_argument("--ignore-green", action="store_true",
                         help="全绿的验证行照样打印但不算响，不叫醒派活方")
-    parser.add_argument("--alarm-minutes", type=int, default=None,
-                        help="后备闹钟：这么多分钟后叫醒派活方；下一次重挂会结束它")
     args = parser.parse_args(argv)
     from shiftboss.state import require_dispatcher
     require_dispatcher()
     fallback = default_path()
-    if args.alarm_minutes is not None:
-        return alarm(args.path or fallback, fallback, args.alarm_minutes)
     try:
         return watch(args.path or fallback, args.heartbeat_minutes, fallback, args.once,
                      args.ignore_green)

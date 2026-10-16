@@ -20,9 +20,8 @@ STANDALONE = re.compile(r"^\s*(?:cd\s+[^;&|<>]+?\s*&&\s*)?shiftboss\s+bell(?:\s+
 MAX_TIMEOUT = 21600000
 
 ADVICE = (
-    "门铃要单独一条后台命令；监听器与闹钟各自单独一条：\n"
+    "门铃要单独一条后台命令：\n"
     "    command: cd <项目根> && shiftboss bell --once --ignore-green --heartbeat-minutes 50\n"
-    "    command: cd <项目根> && shiftboss bell --alarm-minutes 50\n"
     f"    run_in_background: true，timeout: {MAX_TIMEOUT}\n"
     "不要折进带 &、;、|、重定向的复合命令，也不要用默认时限。"
 )

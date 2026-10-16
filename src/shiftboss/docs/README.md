@@ -109,7 +109,7 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 
 0. shiftboss（包与本目录）由派活方维护，每次改动向用户汇报；新协议写进代码，旧协议由派活方手动兜底，兜不住时停用。
 1. 派活方只做初步检验、合并与派发，不跑生成、全量测试或打包。派活方会话间的并发由 UserPromptSubmit 钩子仲裁：用户最后对话的派活方会话持有派活权，其余会话的门铃、派活、合并被拒，被拒即退出派活流程。
-2. 被任何事件唤醒后先重挂门铃，再干别的：监听器 `shiftboss bell --once --ignore-green --heartbeat-minutes 50` 响后重挂；闹钟 `shiftboss bell --alarm-minutes 50` 每 50 分钟响一次，只在它响后重挂；两者各自单独作一条后台命令，后台时限 6 小时。
+2. 被任何事件唤醒后先重挂门铃，再干别的：`shiftboss bell --once --ignore-green --heartbeat-minutes 50` 单独作一条后台命令，后台时限 6 小时；无事时每 50 分钟心跳一次。
 3. 重挂后读门铃全部输出（含「⚠」行），再跑 `inbox list`，处理全部「可核对」。
 4. 门铃挂不上时告知用户，照常用 `inbox status` 核对。
 5. 每次回复结束时 Stop 钩子显示 `shiftboss brief`（在办任务、门铃、验证），供用户对照后台实际；派活方不必转述。
