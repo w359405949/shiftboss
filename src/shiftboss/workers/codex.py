@@ -183,7 +183,7 @@ def sandbox_warning(sid: str | None) -> str | None:
     sandbox = None
     try:
         if roll:
-            with roll.open(encoding="utf-8") as stream:
+            with roll.open(encoding="utf-8", errors="replace") as stream:
                 for line in stream:
                     try:
                         record = json.loads(line)
