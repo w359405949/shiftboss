@@ -65,6 +65,29 @@ def heavy_slot(repo: Path, what: str):
         time.sleep(5)
 
 
+@contextlib.contextmanager
+def exclusive(repo: Path, what: str):
+    """占满全部名额再执行：后台验证的生成与闸是全仓正确性的底线，跑时让执行方的重活排队，不与之抢 CPU。"""
+    directory, handles = slots_dir(repo), []
+    try:
+        for index in range(1, limit() + 1):
+            handle = open(directory / f"{index}.lock", "a+")
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            handle.seek(0)
+            handle.truncate()
+            handle.write(json.dumps({"what": what, "where": str(repo), "pid": os.getpid(),
+                                     "since": time.time()}, ensure_ascii=False))
+            handle.flush()
+            handles.append(handle)
+        yield
+    finally:
+        for handle in handles:
+            handle.seek(0)
+            handle.truncate()
+            fcntl.flock(handle, fcntl.LOCK_UN)
+            handle.close()
+
+
 def holders(repo: Path) -> list[dict]:
     """当前持有名额的进程：锁仍被占用且记有持有者的那些。"""
     found = []
