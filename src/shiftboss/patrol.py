@@ -35,6 +35,7 @@ from shiftboss.verify import git, origin
 
 NAME = "patrol"
 CHECK_TIMEOUT = 900   # 单页上限：页面闸自身有 120 秒会话期限与两次启动重试，超过即视为卡死
+MIN_FREE_BYTES = 5 * 2**30   # 磁盘剩余低于此值即停：逐页证据会累积，写满会拖垮全部执行方与常驻验证
 
 
 def state_dir(remote: Path) -> Path:
@@ -147,6 +148,9 @@ class Patrol:
                 for index, route in enumerate(routes):
                     if stop.exists():
                         break
+                    free = shutil.disk_usage(self.workspace).free
+                    if free < MIN_FREE_BYTES:
+                        raise RuntimeError(f"磁盘剩余 {free / 2**30:.1f} GiB，低于 {MIN_FREE_BYTES / 2**30:.0f} GiB，巡检停下")
                     self.state.update(position=index + 1, route=route); self.save()
                     code, log = self.check(policy["check"], route, index)
                     self.record(route, code, log, sha)
