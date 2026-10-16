@@ -94,9 +94,6 @@ catalog = "project/derived-artifacts.json"   # 生产端产物清单
 [workers]
 default = "codex"                       # 任务书没写执行方时派给谁
 
-[resources]
-heavy_limit = 3                       # 整机同时跑的快速检查等重活；执行方会话数另由配额管
-
 [merge]
 js_module_prefixes = ["engine/"]        # 合并时按 ES 模块检查语法的路径前缀
 assertion_dirs     = ["engine/tests"]   # 合并时列出断言增删的测试目录

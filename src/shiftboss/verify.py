@@ -465,12 +465,6 @@ class Verifier:
         self.stage(sha,label)
         cmd=[sys.executable,*command[1:]] if command[0]=='python' else command
         log=self.directory/'logs'/f'{sha}-{label}.log'
-        from shiftboss.resources import exclusive
-        with exclusive(self.workspace,f'后台验证 {label}'):
-            return self._command(sha,label,command,cmd,log)
-
-    def _command(self, sha, label, command, cmd, log):
-        # 计时从占满名额后开始：等执行方手头的检查跑完不算进预算。
         start=time.monotonic()
         # 卡死才结束：上限取整轮预算的两倍。超出预算本身照报 stage:budget；并行负载下按预算就杀会让生成发布不了。
         budget=config.verify_budget_minutes(self.workspace)

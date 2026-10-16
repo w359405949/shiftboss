@@ -350,6 +350,9 @@ def check_js_imports(names: list[str]) -> None:
         raise MergeError("JS 具名导入在目标模块中没有导出：\n  " + "\n  ".join(missing))
 
 
+SLOW_CHECK_SECONDS = 60
+
+
 def fast_checks(before: str) -> None:
     """Only structural checks; freshness and semantic correctness belong to verification.
 
@@ -424,7 +427,11 @@ def run_fast_commands(names: list[str]) -> None:
         if result.returncode:
             tail = "\n".join((result.stderr or result.stdout).strip().splitlines()[-12:])
             raise MergeError(f"快速检查 {name} 失败（退出码 {result.returncode}）：\n{tail}")
-        print(f"快速检查 {name}: {time.monotonic()-started:.3f}s", flush=True)
+        spent = time.monotonic() - started
+        print(f"快速检查 {name}: {spent:.3f}s", flush=True)
+        # 开发线只跑秒级检查；做了才发现慢的，挪进常驻验证的闸（README 3.3c 例外），不在开发线排队限量。
+        if spent > SLOW_CHECK_SECONDS:
+            print(f"  ⚠ {name} 超过 {SLOW_CHECK_SECONDS} 秒：按 README 3.3c 移入常驻验证的闸", flush=True)
 
 
 def check_new_tests(before: str) -> None:
