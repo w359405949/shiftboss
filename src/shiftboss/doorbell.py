@@ -223,7 +223,8 @@ def say(text: str) -> None:
 
 
 # 不叫醒派活方的行：全绿的验证、红数与上一份相同的验证（上一份已响过），以及派活方自己 `verify claim` 回响的认领。
-GREEN = re.compile(r"verification (?:[0-9a-f]{40} red=(?:0 |\d+ delta=0;)|claimed )")
+# 巡检的红页逐页记进门铃但不叫醒：一遍可能上百页，派活方醒来时按 `shiftboss patrol status` 成批归因。
+GREEN = re.compile(r"verification (?:[0-9a-f]{40} red=(?:0 |\d+ delta=0;)|claimed |patrol red )")
 
 
 def drain(path: Path, offset: int, ignore_green: bool = False) -> tuple[int, bool]:
