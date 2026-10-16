@@ -1,4 +1,4 @@
-"""派活方每次汇报末尾原样附上的状态摘要：在办任务、门铃与后备闹钟、常驻验证。
+"""派活方每次汇报末尾原样附上的状态摘要：待你定、在办任务、门铃与后备闹钟、常驻验证。
 
 Stop 钩子（`shiftboss.hooks.show_brief`）在每次回复结束时现算并显示给用户。
 """
@@ -9,7 +9,7 @@ from datetime import datetime
 
 import psutil
 
-from shiftboss import doorbell, inbox
+from shiftboss import decisions, doorbell, inbox
 from shiftboss.paths import project_root
 
 MARKER = "【在办】"
@@ -47,6 +47,11 @@ def main(argv: list[str] | None = None) -> int:
     git_dir = inbox.origin_git_dir(repo)
     rows, _ledger, _active, _live = inbox.status_rows(repo, git_dir)
     print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")
+    asks = decisions.pending(repo)
+    if asks:
+        print(f"【待你定】{len(asks)} 件（答复直接回在对话里）")
+        for line in decisions.summary_lines(asks):
+            print(line)
     print(MARKER)
     from shiftboss.taskbook import DEPENDENCY_KEYS, Taskbook, unmet_dependencies
     for name, scheduled, copy, running, pushed, _model in sorted(rows):
