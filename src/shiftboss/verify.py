@@ -704,6 +704,26 @@ class Verifier:
                  "先做哪个，由派活方定；开了线再 `shiftboss.verify claim` 关联。"]
         return "\n".join(body)+"\n"
 
+    def workflow_only(self, last: str, current: str) -> bool:
+        """这一批只改了 `shiftboss/`（任务书、工作流文档）：不影响生成、测试与构建。"""
+        changed=git(self.workspace,'diff','--name-only','-z',last,current,check=False)
+        paths=[p for p in changed.stdout.split('\0') if p]
+        return changed.returncode==0 and bool(paths) and all(p.startswith('shiftboss/') for p in paths)
+
+    def carry(self, last: str, current: str) -> None:
+        """只改了工作流文件的批次沿用上一份报告：不跑生成与闸，不响门铃；票据与趋势照旧。"""
+        old=read_state(self.directory/'runs'/f'{last}.json')
+        now=time.time()
+        report=dict(old,commit=current,source_commit=current,carried_from=last,started=now,finished=now,seconds=0,
+                    delta=0,covered_from=last,covered_count=len(first_parent_range(self.workspace,last,current) or []),
+                    stages={'carried':{'skipped':f'自 {last[:12]} 起只改了 shiftboss/，沿用其结果','returncode':0,'seconds':0,'log':''}})
+        write_state(self.directory/'runs'/f'{current}.json',report)
+        for key in ('last_consistent','last_green'):
+            if self.index.get(key)==last: self.index[key]=current
+        self.index['last']=current
+        self.index.pop('active',None);self.save()
+        print(f"验证 {current[:12]}：只改了 shiftboss/，沿用 {last[:12]} 的结果",flush=True)
+
     def watch(self, once=False, interval=2.0):
         lock=self.directory/'worker.lock'
         try:
@@ -719,7 +739,10 @@ class Verifier:
                 current=self.current(); last=self.index.get('last')
                 if current != last:
                     contiguous=first_parent_range(self.workspace,last,current) is not None
-                    self.run(current,contiguous)
+                    if contiguous and self.workflow_only(last,current):
+                        self.carry(last,current)
+                    else:
+                        self.run(current,contiguous)
                     if once: break
                 elif once: break
                 time.sleep(interval)
