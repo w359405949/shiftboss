@@ -65,14 +65,16 @@ def main(argv: list[str] | None = None) -> int:
     from shiftboss.taskbook import DEPENDENCY_KEYS, Taskbook, unmet_dependencies
     running, review, ready, waiting = [], [], [], []
     for name, _scheduled, _copy, state, pushed, _model in sorted(rows):
+        book = Taskbook.find(repo, name)
+        waits = tuple(w for key in DEPENDENCY_KEYS if book for w in unmet_dependencies(repo, book, key))
         if state.startswith("在干活"):
             running.append(f"{name}｜{state.removeprefix('在干活').strip('（）')}")
+        elif waits:
+            waiting.append((name, waits))
         elif pushed.startswith("可核对") or state.startswith("做完了没推"):
             review.append(f"{name}｜{pushed.removeprefix('可核对').strip('（）') if pushed.startswith('可核对') else state}")
         else:
-            book = Taskbook.find(repo, name)
-            waits = tuple(w for key in DEPENDENCY_KEYS if book for w in unmet_dependencies(repo, book, key))
-            (waiting.append((name, waits)) if waits else ready.append(name))
+            ready.append(name)
     print(f"【在跑】{len(running)}/{read_quota()}" + ("" if running else "：无"))
     for item in running:
         print(f"- {item}")
