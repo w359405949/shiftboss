@@ -76,13 +76,13 @@ def main(argv: list[str] | None = None) -> int:
     from shiftboss.taskbook import DEPENDENCY_KEYS, Taskbook, unmet_dependencies
     from shiftboss.taskbook import execution_status
     running, review, merged, ready, waiting = [], [], [], [], []
-    for name, _scheduled, _copy, state, pushed, _model in sorted(rows):
+    for name, _scheduled, copy, state, pushed, _model in sorted(rows):
         book = Taskbook.find(repo, name)
         waits = tuple(w for key in DEPENDENCY_KEYS if book for w in unmet_dependencies(repo, book, key))
         wait = f"｜等 {'、'.join(waits)}" if waits else ""
         unreviewed = pushed.startswith("可核对") or state.startswith("做完了没推")
         if state.startswith("在干活"):
-            running.append(f"{name}｜{state.removeprefix('在干活').strip('（）')}")
+            running.append(f"{name}｜{Path(copy).name if copy and copy != '—' else '—'}｜{state.removeprefix('在干活').strip('（）')}")
         elif unreviewed and not waits:
             review.append(f"{name}｜{pushed.removeprefix('可核对').strip('（）') if pushed.startswith('可核对') else state}")
         elif book and not unreviewed and branch_merged(git_dir, book.meta()):
