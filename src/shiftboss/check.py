@@ -8,14 +8,18 @@ import argparse
 import sys
 
 from shiftboss.merge import MergeError, fast_checks, git
+from shiftboss.paths import project_root
+from shiftboss.resources import heavy_slot
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--base", default="origin/main", help="比对的上游（缺省 origin/main；先自行 fetch）")
     args = ap.parse_args(argv)
+    # 快速检查吃资源，整机限量排队（shiftboss.resources）；执行方会话本身不受此限。
     try:
-        fast_checks(git("merge-base", "HEAD", args.base).stdout.strip())
+        with heavy_slot(project_root(), "快速检查"):
+            fast_checks(git("merge-base", "HEAD", args.base).stdout.strip())
     except MergeError as exc:
         print(f"[检查失败] {exc}", file=sys.stderr)
         return 1

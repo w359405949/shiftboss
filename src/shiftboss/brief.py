@@ -8,6 +8,7 @@ import re
 import subprocess
 import time
 from datetime import datetime
+from pathlib import Path
 
 import psutil
 
@@ -92,8 +93,11 @@ def main(argv: list[str] | None = None) -> int:
             waiting.append(f"{name}{wait}" + ("｜分支待核" if unreviewed else ""))
         else:
             ready.append(f"{name}｜可派" + ("｜分支有未合进展" if pushed.startswith("进行中") else ""))
-    sections = [("在跑", running, f"/{read_quota()}"), ("待核对", review, ""), ("已合并", merged, ""),
-                ("排队", ready + waiting, "")]
+    from shiftboss import resources
+    heavy = [f"名额 {h['slot']}｜{h.get('what', '—')}｜{Path(h.get('where', '—')).name}｜已 {int((time.time() - h.get('since', time.time())) // 60)} 分"
+             for h in resources.holders(repo)]
+    sections = [("在跑", running, f"/{read_quota()} 会话"), ("重资源", heavy, f"/{resources.limit()}"),
+                ("待核对", review, ""), ("已合并", merged, ""), ("排队", ready + waiting, "")]
     for title, items, suffix in sections:
         print(f"【{title}】{len(items)}{suffix}" + ("" if items else "：无"))
         for item in items:
