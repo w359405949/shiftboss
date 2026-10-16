@@ -1,4 +1,4 @@
-"""派活方每次汇报末尾原样附上的状态摘要：待你定、在跑、待核对、已合并、排队、门铃、常驻验证。
+"""派活方每次汇报末尾原样附上的状态摘要：待你定、在跑、待核对、已合并、排队、门铃、常驻验证、常驻巡检。
 
 Stop 钩子（`shiftboss.hooks.show_brief`）在每次回复结束时现算并显示给用户。
 """
@@ -101,6 +101,10 @@ def main(argv: list[str] | None = None) -> int:
         print(line)
     print("【验证】")
     for line in verify_lines(repo):
+        print(line)
+    from shiftboss import patrol
+    print("【巡检】")
+    for line in patrol.status_lines(inbox.origin_git_dir(repo)):
         print(line)
     return 0
 

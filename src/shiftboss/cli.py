@@ -21,6 +21,7 @@ COMMANDS = {
     "recover": "recover",
     "regen": "regen",
     "verify": "verify",
+    "patrol": "patrol",     # 常驻巡检：逐页扫全部页面，查到一页红敲一次门铃
     "bootstrap": "bootstrap",
     "init": "bootstrap",   # 在项目里装载 shiftboss：与 bootstrap 同一件事
 }
