@@ -719,10 +719,17 @@ def prune_line_evidence(name: str, copy: str | None) -> None:
     不留着它，20 个副本轮换承接几百条线，`out/` 会无界增长到上百 GB。
     **只按名删**：一个副本先后承接多条线，按名才不碰在办线的证据。
     临时目录里的干净检出每份约 1 GiB，落在内存盘上；不带名就删不到，十几份就能把它写满。
+    **在办任务书引用了 `out/<name>/` 的不删副本里的证据**：后续线要拿它重放，删了就无从复现。
     """
     import shutil
     import tempfile
+    from shiftboss.taskbook import Taskbook
     temp = [target for target in Path(tempfile.gettempdir()).glob(f"*{name}*") if target.is_dir()]
+    users = [book.name for book in Taskbook.iter_active(REPO)
+             if book.name != name and f"out/{name}/" in book.contract_text()]
+    if users:
+        print(f"  保留证据 {Path(copy) / 'out' / name if copy else 'out/' + name}：在办任务书 {'、'.join(users)} 引用", flush=True)
+        copy = None
     out = Path(copy) / "out" if copy else None
     local = [out / name, *out.glob(f"*/{name}")] if out else []
     for target in [*local, *temp]:
