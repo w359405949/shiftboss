@@ -467,8 +467,9 @@ class Verifier:
         log=self.directory/'logs'/f'{sha}-{label}.log'
         start=time.monotonic()
         # 卡死才结束：上限取整轮预算的两倍。超出预算本身照报 stage:budget；并行负载下按预算就杀会让生成发布不了。
+        # 页面闸不计预算，耗时随本批改到的页面数变（全量约半小时），不套这个上限；单页卡死由页面闸自己的会话期限兜。
         budget=config.verify_budget_minutes(self.workspace)
-        limit=budget*60*2 if budget else None
+        limit=budget*60*2 if budget and not label.startswith('pages-') else None
         with log.open('w',encoding='utf-8') as output:
             env=os.environ.copy();env['PYTHONIOENCODING']='utf-8'
             base,head=getattr(self,'batch',('',sha))
