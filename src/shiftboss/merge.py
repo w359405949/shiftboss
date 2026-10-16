@@ -683,15 +683,21 @@ def finish_line(name: str, superseded_by: str | None = None) -> None:
     archive_after_merge(name, book)
     copy = (entry or {}).get("copy") or book.meta().get("你的工作副本")
     prune_line_evidence(name, copy)
-    stash_copy_leftovers(name, copy)
+    stash_copy_leftovers(name, copy, branch)
 
 
-def stash_copy_leftovers(name: str, copy: str | None) -> None:
+def stash_copy_leftovers(name: str, copy: str | None, branch: str) -> None:
     """归档即把该线副本里未提交的残留存进 stash：残留会让副本永远算不上空闲，派活时报「没有空闲副本」。
 
     存 stash 而不丢弃，需要时可在该副本 `git stash list` 里找回。
+    **副本已切到别的分支就不动**：表头的副本可能已派给另一条在跑的线，那里的未提交改动是它正在做的活。
     """
     if not copy or not Path(copy).is_dir():
+        return
+    current = subprocess.run(["git", "-C", copy, "branch", "--show-current"],
+                             capture_output=True, text=True).stdout.strip()
+    if current != branch:
+        print(f"  副本 {copy} 已在 {current or '游离 HEAD'}，不是 {branch}，不清理残留", flush=True)
         return
     dirty = subprocess.run(["git", "-C", copy, "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
     if dirty:
