@@ -50,7 +50,7 @@ def heavy_slot(repo: Path, what: str):
                                      "since": time.time()}, ensure_ascii=False))
             handle.flush()
             if waited:
-                print(f"取得重资源名额 {index}/{cap}", flush=True)
+                print("开始检查", flush=True)
             try:
                 yield index
             finally:
@@ -60,7 +60,7 @@ def heavy_slot(repo: Path, what: str):
                 handle.close()
             return
         if not waited:
-            print(f"重资源名额已满（{cap}），排队等待……", flush=True)
+            print("等待检查空位，自动继续……", flush=True)
             waited = True
         time.sleep(5)
 
