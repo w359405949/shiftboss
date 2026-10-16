@@ -16,4 +16,4 @@ shiftboss = "shiftboss.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-shiftboss = ["scripts/*/*", "docs/*.md", "docs/templates/*/*"]
+shiftboss = ["scripts/*/*", "docs/*.md", "docs/templates/*/*", "keys/*.md"]

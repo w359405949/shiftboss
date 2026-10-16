@@ -292,6 +292,8 @@ class Taskbook:
 # **新增一类＝加一个目录**，这里按目录现数，不写死。
 # 骨架取自包内源，不取项目里装的那份：新建任务书不依赖项目文档是否已同步。
 TEMPLATES = Path(__file__).resolve().with_name("docs") / "templates"
+# 参考答案（如 `onboard` 的答题卷）放包内 `keys/<kind>.md`，不在 `docs/` 下：装进项目的文档执行方读得到，答案不能跟着去。
+KEYS = Path(__file__).resolve().with_name("keys")
 KINDS = tuple(sorted(d.name for d in TEMPLATES.iterdir()
                      if (d / META).is_file() and (d / CONTRACT).is_file()))
 
@@ -378,8 +380,10 @@ def new(repo: Path, name: str, *, copy: str = "", kind: str, branch: str = "") -
     (directory / CONTRACT).write_text(contract, encoding="utf-8")
     (directory / ROUNDS).write_text(SCAFFOLD_ROUNDS, encoding="utf-8")
     (directory / DELIVERY).write_text(SCAFFOLD_DELIVERY, encoding="utf-8")
+    key = KEYS / f"{kind}.md"
     return (f"已按「{kind}」建 {PLANS_DIR}/{name}/：{META} / {CONTRACT} / {ROUNDS} / {DELIVERY}\n"
-            f"状态是「编写中」——写完合同再改成「待派」才派得出去。")
+            f"状态是「编写中」——写完合同再改成「待派」才派得出去。"
+            + (f"\n参考答案（只给派活方，不进仓库）：{key}" if key.is_file() else ""))
 
 
 def migrate(repo: Path, name: str, *, apply: bool = False) -> str:
