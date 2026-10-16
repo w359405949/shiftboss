@@ -291,10 +291,10 @@ def _event_time(line: str) -> float | None:
 # 推荐的重挂命令只在这里写一处。**心跳必须短于宿主的后台时限**：Claude Code 的后台命令
 # 默认满 30 分钟即被结束，起门铃时把时限设为 6 小时（`timeout` 21600000，工作区 settings 的
 # BASH_MAX_TIMEOUT_MS 把上限抬到 6 小时）；超过时限的心跳永远等不到。
-# 心跳 50 分钟：派活方的输入缓存 60 分钟过期，醒得比它早。再挂三个后备闹钟（100、150、300 分钟），
-# 防止被叫醒却忘了重挂；每次重挂起的新闹钟结束同分钟数的旧闹钟，从头计时。
+# 心跳 50 分钟：派活方的输入缓存 60 分钟过期，醒得比它早。另挂一个 50 分钟的闹钟，不随监听器重挂，
+# 响后只重挂它自己，即每 50 分钟叫醒一次，防止监听器被忘了重挂；新闹钟结束旧闹钟，从头计时。
 HEARTBEAT_MINUTES = 50
-ALARM_MINUTES = (100, 150, 300)
+ALARM_MINUTES = (50,)
 REARM_COMMANDS = (f"shiftboss bell --once --ignore-green --heartbeat-minutes {HEARTBEAT_MINUTES}",
                   *(f"shiftboss bell --alarm-minutes {minutes}" for minutes in ALARM_MINUTES))
 REARM_COMMAND = "、".join(REARM_COMMANDS) + "（各自单独一条后台命令）"
@@ -423,7 +423,8 @@ def alarm(path: Path, fallback: Path, minutes: int) -> int:
     """后备闹钟：满 `minutes` 分钟仍未被重挂结束，就叫醒派活方。"""
     stop_alarms(path, fallback, before=psutil.Process().create_time(), minutes=minutes)
     time.sleep(minutes * 60)
-    say(f"门铃后备闹钟：距上次重挂已 {minutes} 分钟仍未重挂。先重挂门铃（{REARM_COMMAND}），"
+    say(f"门铃闹钟：已满 {minutes} 分钟。重挂闹钟（shiftboss bell --alarm-minutes {minutes}），"
+        f"监听器没在跑就一并重挂（{REARM_COMMANDS[0]}），各自单独一条后台命令；"
         "再把整个收件箱过一遍：shiftboss inbox list")
     return 0
 
