@@ -28,6 +28,13 @@ CAN_QUEUE = False
 # 起来先登录，会话记录要等登录完、第一轮开始才写；恢复也可能换成新会话号。
 SESSION_WAIT = 180
 APPROVAL = ("--approval-mode", "yolo")
+# omp 的中文写作不可靠：交回、提交说明一律用英文（README 2.2 第 10 条允许）；
+# 随每次启动与恢复经系统提示传入，不靠每轮交代提醒。
+ENGLISH = ("--append-system-prompt",
+           "You MUST write delivery.md and every commit message in English. "
+           "Keep the machine-read markers exact: the first status line is `Status: progress`, "
+           "`Status: done` or `Status: stopped`; mark undecided items `PENDING`; in contract.md only tick the status boxes. "
+           "Reading the Chinese workflow and project documents is still required.")
 TOOL_USE = "toolUse"
 
 
@@ -44,7 +51,7 @@ def resolve_omp() -> Path:
 
 def tui_command(copy: str, prompt: str, *, resume_id: str | None = None) -> list[str]:
     """工作目录由启动方设为副本。"""
-    return ([str(resolve_omp()), *APPROVAL]
+    return ([str(resolve_omp()), *APPROVAL, *ENGLISH]
             + (["--resume", resume_id] if resume_id else []) + [prompt])
 
 
