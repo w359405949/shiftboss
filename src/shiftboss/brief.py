@@ -33,6 +33,19 @@ def bell_lines() -> list[str]:
     return lines
 
 
+def publication_lines(git_dir) -> list[str]:
+    """最近一次发布（派生物与源一致）的提交，及 main 领先它几个第一父链提交：发布落后时先排除这一因。"""
+    from shiftboss import verify
+    sha = (verify.index_of(git_dir) or {}).get("last_consistent")
+    if not sha:
+        return ["- 发布｜无记录"]
+    run = lambda *args: subprocess.run(["git", f"--git-dir={git_dir}", *args],
+                                       capture_output=True, text=True).stdout.strip()
+    when = run("log", "-1", "--format=%cd", "--date=format:%m-%d %H:%M", sha)
+    behind = run("rev-list", "--count", "--first-parent", f"{sha}..refs/heads/main")
+    return [f"- 发布｜{sha[:12]}｜{when}｜main 领先 {behind or '?'} 个提交"]
+
+
 def verify_lines(repo) -> list[str]:
     from shiftboss import verify
     report = verify.show_report(inbox.origin_git_dir(repo)).splitlines()
@@ -41,6 +54,7 @@ def verify_lines(repo) -> list[str]:
     head = report[0].removeprefix("后台验证：")
     ref, _, state = head.partition(" ")
     lines = [f"- 当前｜{ref}｜{state.split('（')[0]}"]
+    lines += publication_lines(inbox.origin_git_dir(repo))
     for line in report[1:]:
         text = line.strip()
         if match := re.match(r"最近 (\S+)：(红 \d+ 条)，(较上次验证 [+-]?\d+)", text):
