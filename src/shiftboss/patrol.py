@@ -180,7 +180,11 @@ def status_lines(remote: Path) -> list[str]:
     if state.get("error"):
         lines.append(f"- 出错｜{state['error'][:120]}")
     for route, item in sorted(state.get("red", {}).items(), key=lambda pair: pair[1]["first"]):
-        lines.append(f"- 红｜{route}｜首见 {item['first'][5:16].replace('T', ' ')}｜{item['log']}")
+        # 红页沿用最后一次扫到它的那遍结果；早于当前遍的是修复合入前的旧结果，本遍扫到即更新或消红。
+        seen = Path(item["log"]).name.split("-", 1)[0]
+        stale = seen.isdigit() and int(seen) < state.get("pass", 0)
+        lines.append(f"- 红｜{route}｜首见 {item['first'][5:16].replace('T', ' ')}｜第 {int(seen) if seen.isdigit() else '?'} 遍"
+                     + ("（待本遍复扫）" if stale else "") + f"｜{item['log']}")
     return lines
 
 
