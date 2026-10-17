@@ -34,9 +34,11 @@ from shiftboss.doorbell import ring
 from shiftboss.paths import project_root
 from shiftboss.state import read_state, write_state
 from shiftboss.verify import git, origin
+from shiftboss import verify
 
 NAME = "patrol"
 CHECK_TIMEOUT = 900   # 单页上限：页面闸自身有 120 秒会话期限与两次启动重试，超过即视为卡死
+YIELD_POLL = 30   # 让路时每隔多少秒再看一次常驻验证的阶段
 MIN_FREE_BYTES = 5 * 2**30   # 磁盘剩余低于此值即停：逐页证据会累积，写满会拖垮全部执行方与常驻验证
 
 
@@ -128,6 +130,22 @@ class Patrol:
         if not known:
             ring(self.remote, f"patrol red {route}; run shiftboss patrol status")
 
+    def verify_browsing(self) -> bool:
+        """常驻验证正在跑页面阶段：两边同时开浏览器会把机器压满，页面闸大面积超时成假红。"""
+        import psutil
+        index = verify.index_of(self.remote) or {}
+        stage = str((index.get("active") or {}).get("stage") or "")
+        pid = index.get("pid")
+        return stage.startswith("pages") and isinstance(pid, int) and psutil.pid_exists(pid)
+
+    def yield_to_verify(self, stop: Path) -> None:
+        if not self.verify_browsing():
+            return
+        self.state["yielding"] = now(); self.save()
+        while self.verify_browsing() and not stop.exists():
+            time.sleep(YIELD_POLL)
+        self.state.pop("yielding", None); self.save()
+
     def watch(self) -> None:
         lock = self.directory / "worker.lock"
         try:
@@ -153,6 +171,9 @@ class Patrol:
                     free = shutil.disk_usage(self.workspace).free
                     if free < MIN_FREE_BYTES:
                         raise RuntimeError(f"磁盘剩余 {free / 2**30:.1f} GiB，低于 {MIN_FREE_BYTES / 2**30:.0f} GiB，巡检停下")
+                    self.yield_to_verify(stop)
+                    if stop.exists():
+                        break
                     self.state.update(position=index + 1, route=route); self.save()
                     code, log = self.check(policy["check"], route, index)
                     self.record(route, code, log, sha)
@@ -223,7 +244,8 @@ def status_lines(remote: Path, detail: bool = False) -> list[str]:
     alive = pid.isdigit() and psutil.pid_exists(int(pid))
     if not state:
         return [f"- 进度｜{'在跑' if alive else '没在跑'}｜尚无记录"]
-    head = (f"- 进度｜{'在跑' if alive else '没在跑'}｜第 {state.get('pass', 0)} 遍 "
+    running = ("让路（常驻验证在跑页面）" if state.get("yielding") else "在跑") if alive else "没在跑"
+    head = (f"- 进度｜{running}｜第 {state.get('pass', 0)} 遍 "
             f"{state.get('position', 0)}/{state.get('total', '?')}｜main@{(state.get('commit') or '')[:12]}")
     lines = [head]
     if state.get("error"):
