@@ -86,8 +86,15 @@ def approved_tests(root: Path | None = None) -> list[str]:
 
 
 def verify_budget_minutes(root: Path | None = None) -> float | None:
-    """常驻验证一轮（生成＋全部闸）的时间预算；超出即报红。不配则不查。"""
-    return _get("verify", "budget_minutes", None, root)
+    """常驻验证一轮（生成＋全部闸）的时间预算；超出即报红。不配则不查。
+
+    按被验提交的检出现读，不走 `load` 的缓存：常驻验证是长驻进程，缓存会一直停在启动时那份预算。
+    """
+    path = (root or project_root()) / CONFIG_NAME
+    if not path.exists():
+        return None
+    with path.open("rb") as handle:
+        return tomllib.load(handle).get("verify", {}).get("budget_minutes")
 
 
 def default_worker(root: Path | None = None) -> str:
