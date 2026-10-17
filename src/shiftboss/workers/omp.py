@@ -28,12 +28,9 @@ CAN_QUEUE = False
 # 起来先登录，会话记录要等登录完、第一轮开始才写；恢复也可能换成新会话号。
 SESSION_WAIT = 180
 APPROVAL = ("--approval-mode", "yolo")
-# omp 的中文写作不可靠：交回、提交说明一律用英文（README 2.2 第 10 条允许）；
-# 随每次启动与恢复经系统提示传入，不靠每轮交代提醒。
-ENGLISH = ("You MUST write delivery.md and every commit message in English. "
-           "Keep the machine-read markers exact: the first status line is `Status: progress`, "
-           "`Status: done` or `Status: stopped`; mark undecided items `PENDING`; in contract.md only tick the status boxes. "
-           "Reading the Chinese workflow and project documents is still required.")
+# 交回语言不限（README 2.2 第 10 条）；机器读的标记随每次启动与恢复经系统提示传入，不靠每轮交代提醒。
+MARKERS = ("Keep the machine-read markers in delivery.md exact: the first status line is `执行状态：进展／完成／停下` "
+           "or `Status: progress／done／stopped`; mark undecided items `待议` or `PENDING`; in contract.md only tick the status boxes.")
 # 思考档位由派活方按实际表现调（用户授权）：high 时出过思考死循环，上下文又小、一个会话压缩四五次。
 THINKING = ("--thinking", "medium")
 
@@ -60,7 +57,7 @@ def tui_command(copy: str, prompt: str, *, resume_id: str | None = None) -> list
     """工作目录显式传 `--cwd`，不依赖启动方的当前目录；临时文件圈进 `scratch_dir`。"""
     scratch = scratch_dir(copy)
     scratch.mkdir(parents=True, exist_ok=True)
-    system = (ENGLISH + f" Your working copy is {copy}; run every command there. "
+    system = (MARKERS + f" Your working copy is {copy}; run every command there. "
               f"Put every scratch or temporary file under {scratch} (also $TMPDIR); never write directly under /tmp, "
               "another agent shares that directory.")
     return (["env", f"TMPDIR={scratch}", str(resolve_omp()), *APPROVAL, "--cwd", copy, *THINKING,
