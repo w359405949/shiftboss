@@ -133,10 +133,19 @@ def newest_session(copy_win: str, since: float, previous: str | None = None,
     return newest[1] if newest else None
 
 
+def _last_turn(session_id: str | None) -> dict:
+    """末条消息；末轮出错时 omp 仍给未执行的工具调用补 `toolResult`，这时取出错的那条 `assistant`。"""
+    messages = _messages(session_id)
+    turn = next((row for row in reversed(messages)
+                 if (row.get("message") or {}).get("role") != "toolResult"), {})
+    if (turn.get("message") or {}).get("stopReason") == "error":
+        return turn
+    return messages[-1] if messages else {}
+
+
 def parked_at(session_id: str | None) -> str | None:
     """会话停在等输入上的时刻（末条消息的时间戳）；在干活或读不到返回 None。"""
-    messages = _messages(session_id)
-    last = messages[-1] if messages else {}
+    last = _last_turn(session_id)
     body = last.get("message") or {}
     if body.get("role") != "assistant" or body.get("stopReason") == TOOL_USE:
         return None
@@ -171,11 +180,13 @@ def sandbox_warning(session_id: str | None) -> str | None:
     """权限每次启动时经命令行给定（见 `configured`），会话里不另记；这里报末轮的接口错误。
 
     末条 `stopReason` 为 `error` 时 `parked_at` 照样判为停在等输入，收件箱会显示成「做完了没推」；
-    实为模型服务拒收（如未开视觉编码器却收到图片），历史里留着出错的内容，`--recover` 会再撞一次，改用 `--fresh`。
+    带状态码的是模型服务拒收（如未开视觉编码器却收到图片），历史里留着出错的内容，`--recover` 会再撞一次，改用 `--fresh`；
+    不带状态码的是服务中断（引擎退出、连接断开），服务恢复后续派原会话。
     """
-    messages = _messages(session_id)
-    body = (messages[-1].get("message") or {}) if messages else {}
+    body = _last_turn(session_id).get("message") or {}
     if body.get("role") == "assistant" and body.get("stopReason") == "error":
         first = str(body.get("errorMessage") or "").splitlines()[:1]
-        return f"末轮接口错误 {body.get('errorStatus') or ''}：{first[0][:120] if first else '无错误文本'}；用 --fresh 重派"
+        status = body.get("errorStatus")
+        action = "用 --fresh 重派" if status else "模型服务恢复后续派原会话"
+        return f"末轮接口错误 {status or '（无状态码）'}：{first[0][:120] if first else '无错误文本'}；{action}"
     return None
