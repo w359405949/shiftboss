@@ -197,23 +197,24 @@ def claim(remote: Path, route: str, taskbook: str) -> None:
     print(f"已认领 {route} → {taskbook}")
 
 
-def owner_text(remote: Path, item: dict, claimed: dict | None) -> str:
+def red_state(remote: Path, item: dict, claimed: dict | None) -> tuple[str, str]:
+    """→ (状态词, 负责线)。只有「无人负责」与「修复无效」要开线。"""
     if not claimed or claimed.get("first") != item["first"]:
-        return "负责：无"
+        return "无人负责", ""
     taskbook = claimed["taskbook"]
     info = owner(remote, taskbook)
     if info is None:
-        return f"负责：{taskbook}（main 上找不到）"
+        return "任务书缺失", taskbook
     if not info["archived"]:
-        return f"负责：{taskbook}"
+        return "在修", taskbook
     if not info["merge"]:
-        return f"负责：{taskbook}（已归档）"
+        return "已归档", taskbook
     scanned = git(remote, "merge-base", "--is-ancestor", info["merge"], item["commit"], check=False).returncode == 0
-    return f"负责：{taskbook}（已归档，" + ("扫的提交已含修复仍红，须另开线）" if scanned else "红扫于修复合入前，待复扫）")
+    return ("修复无效" if scanned else "待复扫"), taskbook
 
 
-def status_lines(remote: Path) -> list[str]:
-    """供状态摘要与 `status` 共用：进度一行，红页逐行。"""
+def status_lines(remote: Path, detail: bool = False) -> list[str]:
+    """进度一行；红页按（状态，负责线）合并成行。`detail` 再逐页列首见、所在遍与日志（`status` 用）。"""
     import psutil
     directory = state_dir(remote)
     state = read_state(directory / "state.json")
@@ -228,12 +229,15 @@ def status_lines(remote: Path) -> list[str]:
     if state.get("error"):
         lines.append(f"- 出错｜{state['error'][:120]}")
     claims = read_state(directory / "claims.json") or {}
-    for route, item in sorted(state.get("red", {}).items(), key=lambda pair: pair[1]["first"]):
-        # 红页沿用最后一次扫到它的那遍结果；早于当前遍的是修复合入前的旧结果，本遍扫到即更新或消红。
-        seen = Path(item["log"]).name.split("-", 1)[0]
-        stale = seen.isdigit() and int(seen) < state.get("pass", 0)
-        lines.append(f"- 红｜{route}｜首见 {item['first'][5:16].replace('T', ' ')}｜第 {int(seen) if seen.isdigit() else '?'} 遍"
-                     + ("（待本遍复扫）" if stale else "") + f"｜{owner_text(remote, item, claims.get(route))}｜{item['log']}")
+    groups: dict[tuple[str, str], list[str]] = {}
+    reds = sorted(state.get("red", {}).items(), key=lambda pair: pair[1]["first"])
+    for route, item in reds:
+        groups.setdefault(red_state(remote, item, claims.get(route)), []).append(route)
+    for (word, taskbook), routes in groups.items():
+        lines.append(f"- 红 {len(routes)}｜{word}" + (f"｜{taskbook}" if taskbook else "") + "｜" + "、".join(route.removeprefix("/?view=") for route in routes))
+    if detail:
+        for route, item in reds:
+            lines.append(f"  {route}｜首见 {item['first'][5:16].replace('T', ' ')}｜{item['log']}")
     return lines
 
 
@@ -284,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
     remote = origin(repo)
     workspace = args.workspace or config.copies_dir(remote) / NAME
     if args.command == "status":
-        print("\n".join(status_lines(remote))); return 0
+        print("\n".join(status_lines(remote, detail=True))); return 0
     if args.command == "claim":
         if not args.route or not args.taskbook:
             parser.error("claim 需要 路由 任务书名")
