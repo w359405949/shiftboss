@@ -14,12 +14,14 @@
     shiftboss patrol start      # 起后台进程
     shiftboss patrol status     # 当前进度与红页
     shiftboss patrol stop       # 当前页核完后停
+    shiftboss patrol claim <路由> <任务书名>   # 红页关联负责修它的线（在办或已归档）
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -164,6 +166,52 @@ class Patrol:
             lock.unlink(missing_ok=True)
 
 
+def owner(remote: Path, taskbook: str) -> dict | None:
+    """main 上该任务书的归属状态：在办，或已归档及其合并提交；main 上没有返回 None。"""
+    from shiftboss.taskbook import from_ref
+    def _read(rel):
+        out = git(remote, "show", f"refs/heads/main:{rel}", check=False)
+        return "" if out.returncode else out.stdout
+    meta, _body = from_ref(_read, taskbook)
+    if meta is None:
+        return None
+    status = str(meta.get("调度状态") or "")
+    merged = re.search(r"合并 ([0-9a-f]{7,40})", status) if status.startswith("已归档") else None
+    return {"archived": status.startswith("已归档"), "merge": merged.group(1) if merged else None}
+
+
+def claim(remote: Path, route: str, taskbook: str) -> None:
+    if Path(taskbook).name != taskbook:
+        raise ValueError("任务书给文件名，不带目录或扩展名")
+    red = (read_state(state_dir(remote) / "state.json") or {}).get("red", {})
+    if route not in red:
+        raise ValueError("这一页当前不红；认领 `patrol status` 列出的红页")
+    if owner(remote, taskbook) is None:
+        raise ValueError("认领拒绝：main 上没有这份任务书")
+    # 认领绑定这一段红（首见时刻）：消红后再红是新的一段，旧认领不再显示；巡检进程因此不必写认领文件。
+    path = state_dir(remote) / "claims.json"
+    claims = {key: item for key, item in (read_state(path) or {}).items()
+              if key in red and item.get("first") == red[key]["first"]}
+    claims[route] = {"taskbook": taskbook, "first": red[route]["first"], "claimed": now()}
+    write_state(path, claims)
+    print(f"已认领 {route} → {taskbook}")
+
+
+def owner_text(remote: Path, item: dict, claimed: dict | None) -> str:
+    if not claimed or claimed.get("first") != item["first"]:
+        return "负责：无"
+    taskbook = claimed["taskbook"]
+    info = owner(remote, taskbook)
+    if info is None:
+        return f"负责：{taskbook}（main 上找不到）"
+    if not info["archived"]:
+        return f"负责：{taskbook}"
+    if not info["merge"]:
+        return f"负责：{taskbook}（已归档）"
+    scanned = git(remote, "merge-base", "--is-ancestor", info["merge"], item["commit"], check=False).returncode == 0
+    return f"负责：{taskbook}（已归档，" + ("扫的提交已含修复仍红，须另开线）" if scanned else "红扫于修复合入前，待复扫）")
+
+
 def status_lines(remote: Path) -> list[str]:
     """供状态摘要与 `status` 共用：进度一行，红页逐行。"""
     import psutil
@@ -179,12 +227,13 @@ def status_lines(remote: Path) -> list[str]:
     lines = [head]
     if state.get("error"):
         lines.append(f"- 出错｜{state['error'][:120]}")
+    claims = read_state(directory / "claims.json") or {}
     for route, item in sorted(state.get("red", {}).items(), key=lambda pair: pair[1]["first"]):
         # 红页沿用最后一次扫到它的那遍结果；早于当前遍的是修复合入前的旧结果，本遍扫到即更新或消红。
         seen = Path(item["log"]).name.split("-", 1)[0]
         stale = seen.isdigit() and int(seen) < state.get("pass", 0)
         lines.append(f"- 红｜{route}｜首见 {item['first'][5:16].replace('T', ' ')}｜第 {int(seen) if seen.isdigit() else '?'} 遍"
-                     + ("（待本遍复扫）" if stale else "") + f"｜{item['log']}")
+                     + ("（待本遍复扫）" if stale else "") + f"｜{owner_text(remote, item, claims.get(route))}｜{item['log']}")
     return lines
 
 
@@ -224,7 +273,9 @@ def start(repo: Path, workspace: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["watch", "start", "status", "stop"])
+    parser.add_argument("command", choices=["watch", "start", "status", "stop", "claim"])
+    parser.add_argument("route", nargs="?", help="claim：红页路由，照 `status` 所列")
+    parser.add_argument("taskbook", nargs="?", help="claim：负责修它的任务书名")
     parser.add_argument("--repo", type=Path, default=None)
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--now", action="store_true", help="stop：不等当前页核完，立即结束整棵进程树")
@@ -234,6 +285,10 @@ def main(argv: list[str] | None = None) -> int:
     workspace = args.workspace or config.copies_dir(remote) / NAME
     if args.command == "status":
         print("\n".join(status_lines(remote))); return 0
+    if args.command == "claim":
+        if not args.route or not args.taskbook:
+            parser.error("claim 需要 路由 任务书名")
+        claim(remote, args.route, args.taskbook); return 0
     if args.command == "stop":
         if args.now:
             return stop_now(remote)
