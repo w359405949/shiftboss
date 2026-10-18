@@ -1,4 +1,4 @@
-"""派活方每次汇报末尾原样附上的状态摘要：待你定、在跑、待核对、已合并、排队、派活方待办、门铃、机器、常驻验证、常驻巡检。
+"""派活方每次汇报末尾原样附上的状态摘要：该你处理、待你定、在跑、待核对、已合并、排队、派活方待办、门铃、机器、常驻验证、常驻巡检。
 
 Stop 钩子（`shiftboss.hooks.show_brief`）在每次回复结束时现算并显示给用户。
 """
@@ -109,19 +109,48 @@ def branch_merged(git_dir, meta: dict) -> bool:
     return run("rev-parse", "--verify", "--quiet", ref) == 0 and run("merge-base", "--is-ancestor", ref, "refs/heads/main") == 0
 
 
+def todo_lines(repo, git_dir) -> list[str]:
+    from shiftboss import todo
+    return todo.summary_lines(repo, git_dir)
+
+
+def actionable(review, merged, ready, todos, bell, verify, patrol_lines) -> list[str]:
+    """派活方现在就能动手的事项：在等条件的不算。Stop 钩子据此拦下收尾，见 `shiftboss.hooks.show_brief`。"""
+    items = []
+    if review:
+        items.append(f"待核对 {len(review)}")
+    follow = [line.split("｜")[0] for line in merged if "｜等 " not in line]
+    if follow:
+        items.append("待续派/收尾 " + "、".join(follow))
+    if ready:
+        items.append(f"可派 {len(ready)}")
+    ripe = [line.split("｜")[0].removeprefix("- ") for line in todos if "｜可做｜" in line]
+    if ripe:
+        items.append("待办 " + "、".join(ripe))
+    reds = [line for line in verify if line.startswith("- 红｜") and ("无人负责" in line or "修复无效" in line)]
+    if reds:
+        items.append(f"验证红无主或修复无效 {len(reds)}")
+    patrol_reds = [line for line in patrol_lines if line.startswith("- 红 ") and ("｜无人负责" in line or "｜修复无效" in line)]
+    if patrol_reds:
+        items.append(f"巡检红无主或修复无效 {len(patrol_reds)} 组")
+    if any("不在" in line for line in bell):
+        items.append("门铃不在")
+    return items
+
+
 def main(argv: list[str] | None = None) -> int:
     repo = project_root()
     git_dir = inbox.origin_git_dir(repo)
     rows, ledger, _active, _live = inbox.status_rows(repo, git_dir)
-    print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")
+    out = []
     # 待你定始终显示：空时写「无」，用户据此区分「确实没有」与「没显示出来」。
     asks = decisions.pending(repo)
-    print(f"【待你定】{len(asks)}" if asks else "【待你定】：无")
-    for line in decisions.summary_lines(asks):
-        print(line)
+    out.append(f"【待你定】{len(asks)}" if asks else "【待你定】：无")
+    out += decisions.summary_lines(asks)
     from shiftboss.dispatch import read_quota
     from shiftboss.taskbook import DEPENDENCY_KEYS, Taskbook, unmet_dependencies
     from shiftboss.taskbook import execution_status
+    from shiftboss import todo
     running, review, merged, ready, waiting = [], [], [], [], []
     for name, _scheduled, copy, state, pushed, _model in sorted(rows):
         book = Taskbook.find(repo, name)
@@ -144,27 +173,23 @@ def main(argv: list[str] | None = None) -> int:
     sections = [("在跑", running, f"/{read_quota()} 会话"),
                 ("待核对", review, ""), ("已合并", merged, ""), ("排队", ready + waiting, "")]
     for title, items, suffix in sections:
-        print(f"【{title}】{len(items)}{suffix}" + ("" if items else "：无"))
-        for item in items:
-            print(f"- {item}")
-    from shiftboss import todo
-    todos = todo.summary_lines(repo, git_dir)
-    print(f"【派活方待办】{len(todos)}" + ("" if todos else "：无"))
-    for line in todos:
-        print(line)
-    print("【门铃】")
-    for line in bell_lines():
-        print(line)
-    print("【机器】")
-    for line in machine_lines(git_dir):
-        print(line)
-    print("【验证】")
-    for line in verify_lines(repo):
-        print(line)
+        out.append(f"【{title}】{len(items)}{suffix}" + ("" if items else "：无"))
+        out += [f"- {item}" for item in items]
+    todos = todo_lines(repo, git_dir)
+    out.append(f"【派活方待办】{len(todos)}" + ("" if todos else "：无"))
+    out += todos
+    bell = bell_lines()
+    out += ["【门铃】", *bell, "【机器】", *machine_lines(git_dir)]
+    verify = verify_lines(repo)
+    out += ["【验证】", *verify]
     from shiftboss import patrol
-    print("【巡检】")
-    for line in patrol.status_lines(inbox.origin_git_dir(repo)):
-        print(line)
+    patrol_lines = patrol.status_lines(git_dir)
+    out += ["【巡检】", *patrol_lines]
+    items = actionable(review, merged, ready, todos, bell, verify, patrol_lines)
+    print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")
+    # 该你处理放在最前：派活方每次收尾前据此逐项处理，钩子也据此拦下收尾。
+    print(f"【该你处理】{'；'.join(items)}" if items else "【该你处理】：无")
+    print("\n".join(out))
     return 0
 
 
