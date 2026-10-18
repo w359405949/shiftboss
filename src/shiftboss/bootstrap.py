@@ -290,6 +290,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="只处理这个执行方（--copies 缺省作用于 codex）；省略时各执行方按已存配额补齐")
     ap.add_argument("--check", action="store_true", help="只报告差在哪，不动手")
     args = ap.parse_args(argv)
+    # shiftboss 包自身的仓库不是被管理的项目：在这里装载会建一套家目录、换掉它的远端并装钩子。
+    if (REPO / "src" / "shiftboss" / "__init__.py").is_file():
+        print(f"拒绝：{REPO} 是 shiftboss 包自身的仓库，不在这里装载；项目根按当前目录所在工作树认", file=sys.stderr)
+        return 2
 
     from shiftboss.state import read_quota, validate_quota
     try:
