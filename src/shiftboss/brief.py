@@ -127,7 +127,10 @@ def actionable(review, merged, ready, todos, bell, verify, patrol_lines) -> list
     ripe = [line.split("｜")[0].removeprefix("- ") for line in todos if "｜可做｜" in line]
     if ripe:
         items.append("待办 " + "、".join(ripe))
-    reds = [line for line in verify if line.startswith("- 红｜") and ("无人负责" in line or "修复无效" in line)]
+    # 待办正文写明了票据号的红已由派活方带条件跟进（如「下一轮仍红再开线」），不再计入。
+    followed = " ".join(todos)
+    reds = [line for line in verify if line.startswith("- 红｜") and ("无人负责" in line or "修复无效" in line)
+            and line.rsplit("｜", 1)[-1] not in followed]
     if reds:
         items.append(f"验证红无主或修复无效 {len(reds)}")
     patrol_reds = [line for line in patrol_lines if line.startswith("- 红 ") and ("｜无人负责" in line or "｜修复无效" in line)]
