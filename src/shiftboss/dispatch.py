@@ -63,6 +63,9 @@ HEADER_CELL = re.compile(r"^\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$")
 # **打回三次还没解决就换新会话。** 复用会话省的是重读，代价是它带着自己的历史；
 # 在一个错里打转时，那段历史正是让它转不出来的东西。
 MAX_ATTEMPTS = 3
+LAUNCH_ATTEMPTS = 4   # 执行方启动失败（多为网络抖动）时的启动重试次数
+# 合同出现这些词即为对应子类型的活：perf 测量压耗时，sweep 全量遍历出清单。
+SUBTYPE_SIGNALS = (("perf", ("五组成对", "CPU 剖面", "首次可见完成")), ("sweep", ("遍历全部登记路由", "全路由", "逐路由")))
 
 # **提示词只说一件事：按工作流去读哪一份。模式、停止条件、交代一个字都不写。**
 #
@@ -950,6 +953,16 @@ def main(argv: list[str] | None = None) -> int:
               f"改：shiftboss taskbook set {args.taskbook} --field 破坏性=<否|是>")
         return 2
 
+    # 子类型决定执行方能做什么（DONE.md 第 2 节）：开发线不开页面遍历、不做测量，判据却要求时执行方只能停下。
+    if not args.close and cells.get("子类型") == "task":
+        contract = book.contract_text() if book else ""
+        wrong = [(kind, words) for kind, words in SUBTYPE_SIGNALS if any(word in contract for word in words)]
+        if wrong:
+            kind, words = wrong[0]
+            print(f"合同判据含「{'／'.join(w for w in words if w in contract)}」，属 `{kind}` 子类型的活"
+                  f"（TEMPLATE.md 子类型表），开发线不能做；改：shiftboss taskbook set {args.taskbook} --field 子类型={kind}")
+            return 2
+
     ledger = load_sessions()
     entry = ledger.get(args.taskbook) or {}
     if args.close:
@@ -1179,11 +1192,19 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         if fresh and old_id:
             close_session(copy_win)   # 换新会话之前把旧的关掉，别在同一副本上留两个
-        since = time.time()
-        steps = None if fresh else WORKERS[executor].step_count(old_id)
-        if not launch_tui(copy_win, prompt, args.taskbook, resume_id=None if fresh else old_id,
-                          executor=executor):
-            print("派活失败：执行方进程没起来（多为网络问题）；台账不记，这一轮的交代已推送，查明后重派。")
+        # 网络抖动时执行方常在启动数秒内自行退出；只重试启动，不重写轮次交代。
+        for attempt in range(1, LAUNCH_ATTEMPTS + 1):
+            since = time.time()
+            steps = None if fresh else WORKERS[executor].step_count(old_id)
+            started = launch_tui(copy_win, prompt, args.taskbook, resume_id=None if fresh else old_id,
+                                 executor=executor) and bool(launched_identities(copy_win))
+            if started:
+                break
+            close_session(copy_win)
+            if attempt < LAUNCH_ATTEMPTS:
+                print(f"  执行方没起来（第 {attempt} 次），重试", flush=True)
+        else:
+            print(f"派活失败：执行方进程连续 {LAUNCH_ATTEMPTS} 次没起来（多为网络问题）；台账不记，这一轮的交代已推送，查明后重派。")
             return 2
         new_id = None
         for _ in range(WORKERS[executor].SESSION_WAIT):

@@ -860,6 +860,11 @@ def performance_stale_reason(target: str) -> str | None:
             listed = "、".join(hit[:10]) + (f" 等 {len(hit)} 个" if len(hit) > 10 else "")
             return (f"{book.name} 是性能线，派出后 main 上又改过它改的文件：{listed}；"
                     "结果作废，不合并，重新评估后另派（README 3.2 第 9 条）")
+        # 改了代码却把耗时判据留到发布后：没有改前改后同机对照就合入，退化要到别的线补测才暴露。
+        delivery = git("show", f"{target}:{PLANS_DIR}/{book.name}/delivery.md", check=False).stdout
+        if mine and "待发布后补" in delivery:
+            return (f"{book.name} 是性能线，交回把判据留到发布后，没有改前改后同机耗时对照；"
+                    "不合并，续派让它在副本生成后测（README 3.2 第 9 条）")
     return None
 
 
