@@ -291,11 +291,13 @@ def red_state(remote: Path, item: dict, claimed: dict | None) -> tuple[str, str]
     scanned = git(remote, "merge-base", "--is-ancestor", info["merge"], item["commit"], check=False).returncode == 0
     if not scanned:
         return "待复扫", taskbook
-    # 页面读取已发布的派生物：修复已在所扫提交里、但最近一次发布还不含它时，修复尚未生效，不算无效。
+    # 页面读取已发布的派生物：修复已在所扫提交里、但最近一次发布还不含它时，修复尚未生效，不算无效；
+    # 发布已含修复、但所扫提交早于这次发布时，等下一遍复扫。
     published = (verify.index_of(remote) or {}).get("last_consistent")
-    if not published or git(remote, "merge-base", "--is-ancestor", info["merge"], published, check=False).returncode:
+    ancestor = lambda older, newer: git(remote, "merge-base", "--is-ancestor", older, newer, check=False).returncode == 0
+    if not published or not ancestor(info["merge"], published):
         return "待发布", taskbook
-    return "修复无效", taskbook
+    return ("修复无效" if ancestor(published, item["commit"]) else "待复扫"), taskbook
 
 
 def status_lines(remote: Path, detail: bool = False) -> list[str]:
