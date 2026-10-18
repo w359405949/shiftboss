@@ -35,18 +35,22 @@ def load(remote: Path) -> list[dict]:
     return (read_state(store(remote)) or {}).get("items", [])
 
 
-def save(remote: Path, items: list[dict]) -> None:
-    write_state(store(remote), {"items": items})
+def save(remote: Path, items: list[dict], last: int | None = None) -> None:
+    # 编号只增不复用：了结的编号再出现会让简报与汇报里的指代混淆。
+    previous = (read_state(store(remote)) or {}).get("last", 0)
+    numbers = [int(item["id"][1:]) for item in items]
+    write_state(store(remote), {"items": items, "last": max([previous, last or 0, *numbers])})
 
 
 def add(remote: Path, text: str, when: str | None = None) -> str:
     if when and not re.fullmatch(r"(publish|archived|answered):\S+", when):
         raise ValueError("条件写成 publish:<提交>、archived:<任务书> 或 answered:<编号>")
     items = load(remote)
-    number = max((int(item["id"][1:]) for item in items), default=0) + 1
+    number = max([(read_state(store(remote)) or {}).get("last", 0),
+                  *(int(item["id"][1:]) for item in items)]) + 1
     item = {"id": f"T{number}", "text": text, "when": when, "created": time.time(), "notified": False}
     items.append(item)
-    save(remote, items)
+    save(remote, items, number)
     return item["id"]
 
 
