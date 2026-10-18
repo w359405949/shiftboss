@@ -7,6 +7,11 @@
     shiftboss ask "问题" --option "甲：说明" --option "乙：说明" [--recommend 1] [--line 任务书名]
     shiftboss ask --list
     shiftboss ask --resolve <编号> "用户的答复"
+
+要用户补充的数据或证据（操作步骤、截图、文件、本机现场）用 `shiftboss need` 登记，编号以 E 开头，
+状态摘要单列「待你补充」，与要用户取舍的「待你定」分开：
+    shiftboss need "要补充什么、用来做什么" [--line 任务书名]
+    shiftboss need --resolve <编号> "用户补充的内容"
 """
 from __future__ import annotations
 
@@ -35,8 +40,11 @@ def save(items: list[dict], repo: Path | None = None) -> None:
     path.write_text(json.dumps(items, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def pending(repo: Path | None = None) -> list[dict]:
-    return [item for item in load(repo) if item.get("answer") is None]
+KINDS = {"decide": "D", "need": "E"}
+
+
+def pending(repo: Path | None = None, kind: str = "decide") -> list[dict]:
+    return [item for item in load(repo) if item.get("answer") is None and item.get("kind", "decide") == kind]
 
 
 def summary_lines(items: list[dict]) -> list[str]:
@@ -53,8 +61,12 @@ def summary_lines(items: list[dict]) -> list[str]:
     return lines
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="shiftboss ask", description=__doc__,
+def need_main(argv: list[str] | None = None) -> int:
+    return main(argv, kind="need")
+
+
+def main(argv: list[str] | None = None, kind: str = "decide") -> int:
+    parser = argparse.ArgumentParser(prog="shiftboss " + ("need" if kind == "need" else "ask"), description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("question", nargs="?", help="要用户定夺的问题；与 --resolve 连用时为用户的答复")
     parser.add_argument("--option", action="append", default=[], help="一个选项，可重复")
@@ -76,13 +88,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"已记下 {item['id']} 的答复")
         return 0
     if args.list or not args.question:
-        lines = summary_lines(pending())
-        print("\n".join(lines) if lines else "没有待你定的事项")
+        lines = summary_lines(pending(kind=kind))
+        print("\n".join(lines) if lines else ("没有待你补充的事项" if kind == "need" else "没有待你定的事项"))
         return 0
     if args.recommend is not None and not 1 <= args.recommend <= len(args.option):
         raise SystemExit("--recommend 须是已给选项的序号")
-    number = max((int(item["id"].lstrip("D")) for item in items), default=0) + 1
-    item = {"id": f"D{number}", "asked": datetime.now().isoformat(timespec="seconds"),
+    prefix = KINDS[kind]
+    number = max((int(item["id"][1:]) for item in items if item["id"].startswith(prefix)), default=0) + 1
+    item = {"id": f"{prefix}{number}", "kind": kind, "asked": datetime.now().isoformat(timespec="seconds"),
             "question": args.question, "options": args.option, "recommend": args.recommend,
             "line": args.line, "answer": None}
     items.append(item)

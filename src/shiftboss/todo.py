@@ -5,7 +5,7 @@
 条件（`--when`）：
     publish:<提交>    常驻验证的最近一次发布已包含该提交
     archived:<任务书>  该任务书已归档
-    answered:<编号>    用户已答复该待定事项
+    answered:<编号>    用户已答复该待定事项（D）或已补充（E）
     省略              立即可做
 
 用法：
@@ -82,7 +82,8 @@ def condition(remote: Path, repo: Path, when: str | None) -> tuple[bool, str]:
         return bool(book and book.archived), f"等 {value} 归档"
     if kind == "answered":
         from shiftboss import decisions
-        return value not in {item.get("id") for item in decisions.pending(repo)}, f"等用户答 {value}"
+        open_ids = {item.get("id") for item in decisions.load(repo) if item.get("answer") is None}
+        return value not in open_ids, f"等用户{'补充' if value.startswith('E') else '答'} {value}"
     return False, f"条件不认识：{when}"
 
 

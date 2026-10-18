@@ -1,4 +1,4 @@
-"""派活方每次汇报末尾原样附上的状态摘要：该你处理、待你定、在跑、待核对、已合并、排队、派活方待办、门铃、机器、常驻验证、常驻巡检。
+"""派活方每次汇报末尾原样附上的状态摘要：该你处理、待你定、待你补充、在跑、待核对、已合并、排队、派活方待办、门铃、机器、常驻验证、常驻巡检。
 
 Stop 钩子（`shiftboss.hooks.show_brief`）在每次回复结束时现算并显示给用户。
 """
@@ -147,6 +147,9 @@ def main(argv: list[str] | None = None) -> int:
     asks = decisions.pending(repo)
     out.append(f"【待你定】{len(asks)}" if asks else "【待你定】：无")
     out += decisions.summary_lines(asks)
+    needs = decisions.pending(repo, kind="need")
+    out.append(f"【待你补充】{len(needs)}" if needs else "【待你补充】：无")
+    out += decisions.summary_lines(needs)
     from shiftboss.dispatch import read_quota
     from shiftboss.taskbook import DEPENDENCY_KEYS, Taskbook, unmet_dependencies
     from shiftboss.taskbook import execution_status
@@ -156,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         book = Taskbook.find(repo, name)
         waits = tuple(w for key in DEPENDENCY_KEYS if book for w in unmet_dependencies(repo, book, key))
         waits += tuple(f"用户答 {item['id']}" for item in asks if item.get("line") == name)
+        waits += tuple(f"用户补充 {item['id']}" for item in needs if item.get("line") == name)
         wait = f"｜等 {'、'.join(waits)}" if waits else ""
         unreviewed = pushed.startswith("可核对") or state.startswith("做完了没推")
         if state.startswith("在干活"):
