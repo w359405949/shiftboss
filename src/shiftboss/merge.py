@@ -605,10 +605,7 @@ def archive_after_merge(name: str, book) -> Path:
     # 「2. 合同 3.2 保持待议」整条溜过去——`move-python-to-browser` 就是这么
     # 带着两条待议被归档的，而它合同里的勾还停在早几轮打的「完成」。
     # 「无待议」「无阻塞、待议或偏差」「待议事项均为无」是说没有，不喊；英文交回的待议写作 `PENDING`（README 2.2 第 10 条）。
-    pending = [line.strip() for line in book.delivery_text().splitlines()
-               if ("待议" in line or "待定夺" in line or "PENDING" in line)
-               and not re.search(r"(无|没有)[^|。；]{0,12}(待议|待定夺)|(待议|待定夺)[^|]*(均为|为|[:：])\s*无", line)
-               and re.match(r"\s*(\||\d+[.、])", line)]
+    pending = pending_lines(book.delivery_text())
     already = path.parent.name == "archive"
     target = path if already else path.parent / "archive" / path.name
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -664,6 +661,14 @@ def close_merged_sessions(target: str) -> None:
             print(f"{name}：已合入，执行状态「{signal}」，会话未动。"
                   f"完成或拆分后用 `shiftboss.merge --done {name}` 收摊归档；否则续派。", flush=True)
             register_followups(name, book.delivery_text() if book else "")
+
+
+def pending_lines(delivery: str) -> list[str]:
+    """交回里仍待议／待定夺的条目行（表格行或编号行）。"""
+    return [line.strip() for line in delivery.splitlines()
+            if ("待议" in line or "待定夺" in line or "PENDING" in line)
+            and not re.search(r"(无|没有)[^|。；]{0,12}(待议|待定夺)|(待议|待定夺)[^|]*(均为|为|[:：])\s*无", line)
+            and re.match(r"\s*(\||\d+[.、])", line)]
 
 
 def register_followups(name: str, delivery: str) -> None:

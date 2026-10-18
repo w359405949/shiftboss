@@ -45,6 +45,7 @@ from shiftboss import verify
 
 NAME = "patrol"
 CHECK_TIMEOUT = 900   # 单页上限：页面闸自身有 120 秒会话期限与两次启动重试，超过即视为卡死
+AUTOMERGE_INTERVAL = 120   # 自动合入至多每两分钟查一次
 YIELD_POLL = 30   # 让路时每隔多少秒再看一次常驻验证的阶段
 MIN_FREE_BYTES = 5 * 2**30   # 磁盘剩余低于此值即停：逐页证据会累积，写满会拖垮全部执行方与常驻验证
 
@@ -104,8 +105,32 @@ class Patrol:
     def periodic_workspace(self) -> Path:
         return self.workspace.with_name(self.workspace.name + "-periodic")
 
+    def run_automerge(self) -> None:
+        """满足条件的交回自动合入（`shiftboss.automerge`），在独立副本里做，每两分钟至多一次。"""
+        from shiftboss import automerge
+        if time.time() - self.state.get("automerge_tried", 0) < AUTOMERGE_INTERVAL:
+            return
+        self.state["automerge_tried"] = time.time(); self.save()
+        workspace = self.workspace.with_name(self.workspace.name + "-automerge")
+        marker = workspace / ".git/shiftboss-patrol-owned"
+        if not workspace.exists():
+            git(self.repo, "clone", "--quiet", str(self.remote), str(workspace))
+            marker.write_text(str(self.remote), encoding="utf-8")
+        elif not marker.is_file() or marker.read_text(encoding="utf-8") != str(self.remote):
+            raise ValueError("拒绝接管不是巡检创建的自动合入副本")
+        name = config.local_config_file(self.repo)
+        if name and (self.repo / name).is_file():
+            shutil.copyfile(self.repo / name, workspace / name)
+        automerge.run(self.remote, workspace, ring)
+
     def run_periodic(self) -> None:
         """到点的定时检查在独立副本里跑 main 最新提交：巡检一遍要几小时，构建错误不能等到下一遍才发现。"""
+        # 自动合入出错只记下并敲铃，不让巡检整体停下。
+        try:
+            self.run_automerge()
+        except Exception as exc:
+            self.state["automerge_error"] = str(exc)[:300]; self.save()
+            ring(self.remote, f"automerge failed: {str(exc)[:120]}")
         try:
             checks = self.policy().get("periodic") or []
         except (OSError, ValueError):

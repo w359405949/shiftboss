@@ -114,9 +114,11 @@ def todo_lines(repo, git_dir) -> list[str]:
     return todo.summary_lines(repo, git_dir)
 
 
-def actionable(review, merged, ready, todos, bell, verify, patrol_lines) -> list[str]:
+def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged=()) -> list[str]:
     """派活方现在就能动手的事项：在等条件的不算。Stop 钩子据此拦下收尾，见 `shiftboss.hooks.show_brief`。"""
     items = []
+    if automerged:
+        items.append("复核自动合入 " + "、".join(automerged))
     if review:
         items.append(f"待核对 {len(review)}")
     follow = [line.split("｜")[0] for line in merged if "｜等 " not in line]
@@ -192,7 +194,9 @@ def main(argv: list[str] | None = None) -> int:
     from shiftboss import patrol
     patrol_lines = patrol.status_lines(git_dir)
     out += ["【巡检】", *patrol_lines]
-    items = actionable(review, merged, ready, todos, bell, verify, patrol_lines)
+    from shiftboss import automerge
+    automerged = automerge.unreviewed(git_dir)
+    items = actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged)
     print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")
     # 该你处理放在最前：派活方每次收尾前据此逐项处理，钩子也据此拦下收尾。
     print(f"【该你处理】{'；'.join(items)}" if items else "【该你处理】：无")

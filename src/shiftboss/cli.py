@@ -13,6 +13,7 @@ COMMANDS = {
     "inbox": "inbox",
     "brief": "brief",       # 派活方每次汇报末尾附的状态摘要
     "ask": "decisions",     # 待用户定夺的事项：登记、列出、记下答复
+    "automerge": "automerge",  # 自动合入的线：列出待复核、复核完确认
     "need": "need",         # 待用户补充的数据或证据：登记、列出、记下补充
     "taskbook": "taskbook",
     "dispatch": "dispatch",
