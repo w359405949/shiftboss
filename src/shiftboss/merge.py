@@ -582,7 +582,18 @@ def regenerate(before: str) -> tuple[str | None, str]:
         git("worktree", "prune", check=False)
 
 
-def archive_after_merge(name: str, book) -> Path:
+def adopt_branch_delivery(book, ref: str) -> None:
+    """不合入的线，交回只在分支上：取来写进任务书目录，归档后仍可引用。"""
+    if not book.is_dir:
+        return
+    relative = (book.path / "delivery.md").relative_to(REPO)
+    shown = git("show", f"{ref}:{relative.as_posix()}", check=False)
+    if shown.returncode == 0 and shown.stdout.strip():
+        (REPO / relative).write_text(shown.stdout, encoding="utf-8")
+        git("add", "--", str(relative))
+
+
+def archive_after_merge(name: str, book, unmerged_branch: str | None = None) -> Path:
     """`--done` 时把任务书**直接归档**——不是「核对中」。
 
     **核对认定结束就是验收动作**，不必等常驻验证跑完再确认一次。
@@ -611,7 +622,7 @@ def archive_after_merge(name: str, book) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     if book.is_dir:
         # **目录布局：状态那格在 meta.json，正文一个字不碰。**
-        book.set_meta(调度状态=f"已归档（合并 {sha}）")
+        book.set_meta(调度状态=f"已归档（未合入，分支 {unmerged_branch} 保留）" if unmerged_branch else f"已归档（合并 {sha}）")
         if not already:
             shutil.move(str(path), str(target))
             git("add", "--", str(path.relative_to(REPO)))
@@ -626,7 +637,7 @@ def archive_after_merge(name: str, book) -> Path:
             path.unlink()
             git("add", "--", str(path.relative_to(REPO)))
     git("add", "--", str(target.relative_to(REPO)))
-    git("commit", "-q", "-m", f"plans: {name} 交付已合并，归档")
+    git("commit", "-q", "-m", f"plans: {name} {'核对后不合入' if unmerged_branch else '交付已合并'}，归档")
     print(f"{name}：已归档（{target.relative_to(REPO)}）。", flush=True)
     if pending:
         print(f"  ⚠ 交回里还有 {len(pending)} 条待议/待定夺，归档不代表裁定过了：\n    "
@@ -699,10 +710,11 @@ def register_followups(name: str, delivery: str) -> None:
     print(f"  登记待补核 {ident}：{text}", flush=True)
 
 
-def finish_line(name: str, superseded_by: str | None = None) -> None:
+def finish_line(name: str, superseded_by: str | None = None, unmerged: bool = False) -> None:
     """`--done`：派活方核对认定这份任务书结束（做完，或已拆出新任务书），关会话并归档。
 
     只收已合进当前分支的线：分支上还有没合的提交就拒，免得把交付丢在分支上。
+    `unmerged`：派活方核对后决定不合（如性能线未达标），分支保留在远端，分支上的交回带进归档。
     """
     from shiftboss import dispatch
     from shiftboss.taskbook import Taskbook
@@ -712,8 +724,10 @@ def finish_line(name: str, superseded_by: str | None = None) -> None:
     branch = book.meta().get("分支", f"codex/{name}")
     for ref in (f"origin/{branch}", branch):
         if git("rev-parse", "--verify", "--quiet", ref, check=False).returncode == 0:
-            if git("merge-base", "--is-ancestor", ref, "HEAD", check=False).returncode:
-                raise MergeError(f"{ref} 还有没合进当前分支的提交；先合或确认丢弃再 --done")
+            if unmerged:
+                adopt_branch_delivery(book, ref)
+            elif git("merge-base", "--is-ancestor", ref, "HEAD", check=False).returncode:
+                raise MergeError(f"{ref} 还有没合进当前分支的提交；先合，或核对后决定不合用 --unmerged")
             break
     from shiftboss.taskbook import execution_status
     # 派活方已把余下的活交给另一份任务书时，执行方停在「进展」也可收；接手方写进台账输出。
@@ -723,7 +737,7 @@ def finish_line(name: str, superseded_by: str | None = None) -> None:
     entry = ledger.get(name)
     if entry and not entry.get("closed"):
         dispatch.close_line(name, entry["copy"], ledger)
-    archive_after_merge(name, book)
+    archive_after_merge(name, book, unmerged_branch=branch if unmerged else None)
     copy = (entry or {}).get("copy") or book.meta().get("你的工作副本")
     prune_line_evidence(name, copy)
     stash_copy_leftovers(name, copy, branch)
@@ -1029,6 +1043,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="核对认定该任务书结束（做完或已拆分）：关会话并归档；不合并")
     ap.add_argument("--superseded-by", metavar="TASKBOOK",
                     help="与 --done 同用：余下的活已由该任务书接手，执行状态为「进展」也收")
+    ap.add_argument("--unmerged", action="store_true",
+                    help="与 --done 同用：核对后决定不合入，分支保留，分支上的交回带进归档")
     args = ap.parse_args(argv)
     from shiftboss.state import require_dispatcher
     require_dispatcher()
@@ -1040,7 +1056,7 @@ def main(argv: list[str] | None = None) -> int:
             holding = True
             if args.superseded_by:
                 print(f"{args.done}：余下的活由 {args.superseded_by} 接手。", flush=True)
-            finish_line(args.done, superseded_by=args.superseded_by)
+            finish_line(args.done, superseded_by=args.superseded_by, unmerged=args.unmerged)
             return 0
         if args.regen:
             preflight()
