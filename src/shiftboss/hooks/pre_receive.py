@@ -95,8 +95,8 @@ def scope_trespass(name: str, new: str) -> list[str]:
     shown = git("show", f"refs/heads/main:{PLANS_DIR}/{name}/meta.json")
     if shown.returncode:
         return []
-    # 只算这条线自己的提交，经合并带进来的 main 提交不算。
-    done = git("log", "--name-only", "--format=", "--no-renames", new, "--not", "refs/heads/main")
+    # 按自分叉点起的净改动算：经合并带进来的 main 提交不算，先写后撤回（如误提交的证据）也不算。
+    done = git("diff", "--name-only", "--no-renames", "refs/heads/main..." + new)
     if done.returncode:
         return []
     return out_of_scope(name, json.loads(shown.stdout), sorted({line for line in done.stdout.splitlines() if line}))
