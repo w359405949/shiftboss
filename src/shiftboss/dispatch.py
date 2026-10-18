@@ -739,13 +739,18 @@ def publish_note(book, message: str, executor: str = "codex", copy: str = "") ->
     而这一次改的可能是 rounds.md 与 meta.json 两个文件。
     `copy` 非空时同一提交把表头「你的工作副本」改成本轮分到的副本。
     """
-    from shiftboss.state import lock_path, take_workspace
+    from shiftboss.state import ENV_BYPASS, lock_path, take_workspace
     taken = take_workspace(REPO, f"dispatch={book.name}")
+    # 持锁者自己的提交须过 pre-commit 的「合并在飞」守卫。
+    bypass = os.environ.get(ENV_BYPASS)
+    os.environ[ENV_BYPASS] = "1"
     try:
         publish_locked(book, message, executor, copy)
     finally:
         if taken:
             lock_path(REPO).unlink(missing_ok=True)
+            if bypass is None:
+                os.environ.pop(ENV_BYPASS, None)
 
 
 def publish_locked(book, message: str, executor: str, copy: str) -> None:
