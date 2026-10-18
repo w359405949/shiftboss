@@ -352,8 +352,12 @@ def status_lines(remote: Path, detail: bool = False) -> list[str]:
     reds = sorted(state.get("red", {}).items(), key=lambda pair: pair[1]["first"])
     for route, item in reds:
         groups.setdefault(red_state(remote, item, claims.get(route)), []).append(route)
+    # 摘要只列前几条路由，全量见 `shiftboss patrol status`。
+    shown = 5
     for (word, taskbook), routes in groups.items():
-        lines.append(f"- 红 {len(routes)}｜{word}" + (f"｜{taskbook}" if taskbook else "") + "｜" + "、".join(route.removeprefix("/?view=") for route in routes))
+        names = [route.removeprefix("/?view=") for route in routes]
+        lines.append(f"- 红 {len(routes)}｜{word}" + (f"｜{taskbook}" if taskbook else "") + "｜" + "、".join(names[:shown])
+                     + (f" 等 {len(names)} 条" if len(names) > shown else ""))
     if detail:
         for route, item in reds:
             lines.append(f"  {route}｜首见 {item['first'][5:16].replace('T', ' ')}｜{item['log']}")
