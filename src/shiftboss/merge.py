@@ -604,10 +604,10 @@ def archive_after_merge(name: str, book) -> Path:
     # **两种交回格式都要认。** 只匹配 `| 2.` 开头的表格行时，写成编号列表的
     # 「2. 合同 3.2 保持待议」整条溜过去——`move-python-to-browser` 就是这么
     # 带着两条待议被归档的，而它合同里的勾还停在早几轮打的「完成」。
-    # 「无待议」「待议事项均为无」是说没有，不喊；英文交回的待议写作 `PENDING`（README 2.2 第 10 条）。
+    # 「无待议」「无阻塞、待议或偏差」「待议事项均为无」是说没有，不喊；英文交回的待议写作 `PENDING`（README 2.2 第 10 条）。
     pending = [line.strip() for line in book.delivery_text().splitlines()
                if ("待议" in line or "待定夺" in line or "PENDING" in line)
-               and not re.search(r"(无|没有)(待议|待定夺)|(待议|待定夺)[^|]*(均为|为|[:：])\s*无", line)
+               and not re.search(r"(无|没有)[^|。；]{0,12}(待议|待定夺)|(待议|待定夺)[^|]*(均为|为|[:：])\s*无", line)
                and re.match(r"\s*(\||\d+[.、])", line)]
     already = path.parent.name == "archive"
     target = path if already else path.parent / "archive" / path.name
@@ -667,22 +667,31 @@ def close_merged_sessions(target: str) -> None:
 
 
 def register_followups(name: str, delivery: str) -> None:
-    """交回里写「待发布后补」的项，登记为以本次合并提交发布为条件的待办：合入后没人追就会丢。"""
+    """交回里写「待发布后补」的项，登记为以本次合并提交发布为条件的待办：合入后没人追就会丢。
+
+    每条线只留一条待办：同一交回的多处「待发布后补」逐条登记会把简报刷满；再次合入时以新的合并提交替换旧的。
+    """
     from shiftboss import todo
     from shiftboss.verify import origin
     merged = git("rev-parse", "HEAD").stdout.strip()
     remote = origin(REPO)
-    known = {item["text"] for item in todo.load(remote)}
+    labels = []
     for line in delivery.splitlines():
         if "待发布后补" not in line:
             continue
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        what = next((cell for cell in cells if "待发布后补" in cell), line.strip())
-        text = f"补核 {name}：{(cells[0] + ' ') if len(cells) > 1 else ''}{what}"[:160]
-        if text not in known:
-            ident = todo.add(remote, text, f"publish:{merged}")
-            known.add(text)
-            print(f"  登记待补核 {ident}：{text}", flush=True)
+        label = cells[0] if len(cells) > 1 else line.strip()[:20]
+        if label not in labels:
+            labels.append(label)
+    if not labels:
+        return
+    prefix = f"补核 {name}："
+    for item in todo.load(remote):
+        if item["text"].startswith(prefix):
+            todo.done(remote, item["id"])
+    text = f"{prefix}交回中 {len(labels)} 处「待发布后补」（{'、'.join(labels)}），发布后按交回补测"[:200]
+    ident = todo.add(remote, text, f"publish:{merged}")
+    print(f"  登记待补核 {ident}：{text}", flush=True)
 
 
 def finish_line(name: str, superseded_by: str | None = None) -> None:
