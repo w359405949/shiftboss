@@ -102,6 +102,16 @@ def scope_trespass(name: str, new: str) -> list[str]:
     return out_of_scope(name, json.loads(shown.stdout), sorted({line for line in done.stdout.splitlines() if line}))
 
 
+def ignored_additions(new: str) -> list[str]:
+    """分支自与 main 分叉以来新增的、被根 `.gitignore` 忽略的路径（强行提交的一次性产物）。"""
+    from shiftboss.taskbook import ignored_paths
+    shown = git("show", f"{new}:.gitignore")
+    added = git("log", "--diff-filter=A", "--name-only", "--format=", "--no-renames", new, "--not", "refs/heads/main")
+    if shown.returncode or added.returncode:
+        return []
+    return ignored_paths(shown.stdout, sorted({line for line in added.stdout.splitlines() if line}))
+
+
 def new_tests(new: str, settings: dict) -> list[str]:
     """分支自与 main 分叉以来未登记的新增测试项。"""
     from shiftboss import testguard
@@ -145,6 +155,12 @@ def main() -> int:
         if outside := scope_trespass(name, new):
             print(f"拒收 {ref}：写到了任务书表头「写入范围」之外，撤回这些改动或请派活方调整范围：", file=sys.stderr)
             for path in outside[:40]:
+                print(f"  {path}", file=sys.stderr)
+            trespassed = True
+            continue
+        if ignored := ignored_additions(new):
+            print(f"拒收 {ref}：提交了被 .gitignore 忽略的路径；交回证据留在工作副本的 out/ 里、交回写绝对路径，不进提交：", file=sys.stderr)
+            for path in ignored[:40]:
                 print(f"  {path}", file=sys.stderr)
             trespassed = True
             continue

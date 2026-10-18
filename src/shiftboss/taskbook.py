@@ -88,6 +88,36 @@ def out_of_scope(name: str, meta: dict, paths: list[str]) -> list[str]:
     return [path for path in paths if not inside(path)]
 
 
+def ignored_paths(gitignore: str, paths: list[str]) -> list[str]:
+    """新增路径里被根 `.gitignore` 忽略的：被忽略的目录（如 `out/`）是一次性产物，强行提交会让交回证据进仓库。
+
+    只实现根 `.gitignore` 的常用语法：`#` 注释、`!` 取反、`/` 锚定、尾 `/` 只配目录、glob；规则按序，后者覆盖前者。
+    """
+    import fnmatch
+    rules = []
+    for raw in gitignore.splitlines():
+        text = raw.strip()
+        if not text or text.startswith("#"):
+            continue
+        negate = text.startswith("!")
+        text = text[1:] if negate else text
+        directory = text.endswith("/")
+        text = text.rstrip("/")
+        anchored = text.startswith("/") or "/" in text
+        rules.append((negate, directory, anchored, text.lstrip("/")))
+    def ignored(path: str) -> bool:
+        parts = path.split("/")
+        result = False
+        for negate, directory, anchored, pattern in rules:
+            for end in range(1, len(parts) + (0 if directory else 1)):
+                prefix = "/".join(parts[:end])
+                if fnmatch.fnmatchcase(prefix if anchored else parts[end - 1], pattern):
+                    result = not negate
+                    break
+        return result
+    return [path for path in paths if ignored(path)]
+
+
 CATEGORY_KEY = "类别"
 # 次序即优先级：冲突或资源紧缺时前者先做（README 3.2 第 9 条的表）。未标类别按「开发」。
 CATEGORIES = ("架构", "开发", "修复", "核对", "性能")

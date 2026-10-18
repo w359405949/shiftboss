@@ -793,6 +793,20 @@ def merge_scope_reason(target: str) -> str | None:
     return None
 
 
+def merge_ignored_reason(target: str) -> str | None:
+    """要合的提交新增了被根 `.gitignore` 忽略的路径时拒绝：一次性产物（交回证据等）不进仓库。"""
+    from shiftboss.taskbook import ignored_paths
+    shown = git("show", f"{target}:.gitignore", check=False)
+    if shown.returncode:
+        return None
+    added = sorted({line for line in git("log", "--diff-filter=A", "--name-only", "--format=", "--no-renames",
+                                         target, "--not", "HEAD", check=False).stdout.splitlines() if line})
+    if ignored := ignored_paths(shown.stdout, added):
+        return (f"新增了 {len(ignored)} 个被 .gitignore 忽略的路径（交回证据留在工作副本 out/，不进提交）："
+                + "、".join(ignored[:20]) + ("……" if len(ignored) > 20 else ""))
+    return None
+
+
 def merge_dependency_reason(target: str) -> str | None:
     """要合的提交属于某条在办线，而该线的合入前置还没归档时，拒绝合并。
 
@@ -1056,6 +1070,8 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(stale)
         if outside := merge_scope_reason(target):
             raise MergeError(outside)
+        if ignored := merge_ignored_reason(target):
+            raise MergeError(ignored)
         print(f"合并 {args.ref} ({target[:12]})：", flush=True)
         merged = git("-c", "rerere.enabled=false", "-c", "merge.autoStash=false",
                      "merge", "--no-ff", "--no-commit", "--no-edit", target, check=False)
