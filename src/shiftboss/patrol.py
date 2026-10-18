@@ -128,7 +128,7 @@ class Patrol:
             if previous.get("commit") == sha:
                 results[name] = {**previous, "tried": time.time()}; self.save()
                 continue
-            log = self.directory / "logs" / f"periodic-{re.sub(r'[^0-9A-Za-z_-]+', '_', name) or 'check'}.log"
+            log = self.directory / "logs" / f"periodic-{re.sub(r'[\s/\\:]+', '_', name)}.log"
             env = os.environ.copy(); env["PYTHONIOENCODING"] = "utf-8"
             started = time.time()
             with log.open("w", encoding="utf-8") as handle:
