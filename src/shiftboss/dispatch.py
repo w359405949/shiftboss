@@ -944,6 +944,12 @@ def main(argv: list[str] | None = None) -> int:
               f"改：shiftboss taskbook set {args.taskbook} --field 完成标准=<列名>")
         return 2
 
+    # 破坏性由派活方派活前判定：「否」时执行方不得减少既有能力，「是」时合同逐条列出允许失去的能力。
+    if not args.close and cells.get("破坏性") not in ("否", "是"):
+        print(f"表头「破坏性」是 `{cells.get('破坏性', '（缺）')}`，须为 否／是（见 shiftboss/TEMPLATE.md）；"
+              f"改：shiftboss taskbook set {args.taskbook} --field 破坏性=<否|是>")
+        return 2
+
     ledger = load_sessions()
     entry = ledger.get(args.taskbook) or {}
     if args.close:
