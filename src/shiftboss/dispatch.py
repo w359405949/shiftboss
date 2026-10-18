@@ -1193,28 +1193,27 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         if fresh and old_id:
             close_session(copy_win)   # 换新会话之前把旧的关掉，别在同一副本上留两个
-        # 网络抖动时执行方常在启动数秒内自行退出；只重试启动，不重写轮次交代。
+        # 网络抖动时执行方常在启动后数十秒内自行退出；只重试启动，不重写轮次交代。
+        # 等到会话记录出现、再隔一段仍有进程才算起来。
         for attempt in range(1, LAUNCH_ATTEMPTS + 1):
             since = time.time()
             steps = None if fresh else WORKERS[executor].step_count(old_id)
-            # 连不上后端时进程会先起来再在数秒内退出；隔一段再看一次仍在才算起来。
-            started = launch_tui(copy_win, prompt, args.taskbook, resume_id=None if fresh else old_id,
-                                 executor=executor) and bool(launched_identities(copy_win)) \
-                and (time.sleep(LAUNCH_SETTLE) or bool(process_identities(copy_win)))
-            if started:
-                break
+            new_id = None
+            if launch_tui(copy_win, prompt, args.taskbook, resume_id=None if fresh else old_id, executor=executor):
+                for _ in range(WORKERS[executor].SESSION_WAIT):
+                    new_id = newest_session(copy_win, since, executor, None if fresh else old_id, steps)
+                    if new_id:
+                        break
+                    time.sleep(1)
+                time.sleep(LAUNCH_SETTLE)
+                if process_identities(copy_win):
+                    break
             close_session(copy_win)
             if attempt < LAUNCH_ATTEMPTS:
-                print(f"  执行方没起来（第 {attempt} 次），重试", flush=True)
+                print(f"  执行方没起来或随即退出（第 {attempt} 次），重试", flush=True)
         else:
             print(f"派活失败：执行方进程连续 {LAUNCH_ATTEMPTS} 次没起来（多为网络问题）；台账不记，这一轮的交代已推送，查明后重派。")
             return 2
-        new_id = None
-        for _ in range(WORKERS[executor].SESSION_WAIT):
-            new_id = newest_session(copy_win, since, executor, None if fresh else old_id, steps)
-            if new_id:
-                break
-            time.sleep(1)
         # 恢复不一定新建会话记录；找不到新的就还是原会话。
         new_id = new_id or (None if fresh else old_id)
         if burned:
