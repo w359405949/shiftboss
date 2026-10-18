@@ -182,20 +182,45 @@ def lock_path(repo: Path) -> Path:
     return repo / ".git" / LOCK_NAME
 
 
-def acquire_merge_lock(repo: Path, why: str) -> None:
-    """占住这个工作副本，并让本进程自己的提交能过 hook。"""
+LOCK_WAIT_SECONDS = 1200
+
+
+def take_workspace(repo: Path, why: str) -> bool:
+    """独占派活方工作树：合并与派活写任务书都在这里提交，同时进行会互相弄脏工作树。
+
+    占用者还活着就排队等（最多 LOCK_WAIT_SECONDS），进程已死的锁直接接管；本进程已占着时返回 False（不重复占、不该由调用方释放）。
+    """
     import os
+    import re
     import time
+    import psutil
     path = lock_path(repo)
-    if path.exists():
-        raise SystemExit(
-            f"这个工作副本里已经有一次合并在飞：{path}\n"
-            f"内容：{path.read_text(encoding='utf-8', errors='replace').strip()}\n"
-            "等它结束，或确认那个进程已经死了再删掉这个文件。")
+    deadline = time.time() + LOCK_WAIT_SECONDS
+    announced = False
+    while path.exists():
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+        pid = re.match(r"pid=(\d+)", text)
+        if pid and int(pid[1]) == os.getpid():
+            return False
+        if not pid or not psutil.pid_exists(int(pid[1])):
+            break
+        if time.time() > deadline:
+            raise SystemExit(f"派活方工作树被占用超过 {LOCK_WAIT_SECONDS} 秒：{path}\n内容：{text}")
+        if not announced:
+            print(f"派活方工作树正被占用（{text}），排队等待…", flush=True)
+            announced = True
+        time.sleep(2)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f"pid={os.getpid()} {why} started={time.strftime('%Y-%m-%dT%H:%M:%S')}\n",
         encoding="utf-8")
+    return True
+
+
+def acquire_merge_lock(repo: Path, why: str) -> None:
+    """占住这个工作副本，并让本进程自己的提交能过 hook。"""
+    import os
+    take_workspace(repo, why)
     os.environ[ENV_BYPASS] = "1"
 
 
