@@ -677,7 +677,7 @@ def register_followups(name: str, delivery: str) -> None:
     remote = origin(REPO)
     labels = []
     for line in delivery.splitlines():
-        if "待发布后补" not in line:
+        if "待发布后补" not in line or line.lstrip().startswith("#"):
             continue
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         label = cells[0] if len(cells) > 1 else line.strip()[:20]

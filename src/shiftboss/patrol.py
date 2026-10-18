@@ -277,7 +277,7 @@ def claim(remote: Path, route: str, taskbook: str) -> None:
 
 
 def red_state(remote: Path, item: dict, claimed: dict | None) -> tuple[str, str]:
-    """→ (状态词, 负责线)。只有「无人负责」与「修复无效」要开线。"""
+    """→ (状态词, 负责线)。只有「无人负责」与「修复无效」要开线；「待发布」等常驻验证发布。"""
     if not claimed or claimed.get("first") != item["first"]:
         return "无人负责", ""
     taskbook = claimed["taskbook"]
@@ -289,7 +289,13 @@ def red_state(remote: Path, item: dict, claimed: dict | None) -> tuple[str, str]
     if not info["merge"]:
         return "已归档", taskbook
     scanned = git(remote, "merge-base", "--is-ancestor", info["merge"], item["commit"], check=False).returncode == 0
-    return ("修复无效" if scanned else "待复扫"), taskbook
+    if not scanned:
+        return "待复扫", taskbook
+    # 页面读取已发布的派生物：修复已在所扫提交里、但最近一次发布还不含它时，修复尚未生效，不算无效。
+    published = (verify.index_of(remote) or {}).get("last_consistent")
+    if not published or git(remote, "merge-base", "--is-ancestor", info["merge"], published, check=False).returncode:
+        return "待发布", taskbook
+    return "修复无效", taskbook
 
 
 def status_lines(remote: Path, detail: bool = False) -> list[str]:
