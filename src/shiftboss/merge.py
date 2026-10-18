@@ -663,6 +663,26 @@ def close_merged_sessions(target: str) -> None:
             signal = execution_status(book.delivery_text() if book else "") or "未标"
             print(f"{name}：已合入，执行状态「{signal}」，会话未动。"
                   f"完成或拆分后用 `shiftboss.merge --done {name}` 收摊归档；否则续派。", flush=True)
+            register_followups(name, book.delivery_text() if book else "")
+
+
+def register_followups(name: str, delivery: str) -> None:
+    """交回里写「待发布后补」的项，登记为以本次合并提交发布为条件的待办：合入后没人追就会丢。"""
+    from shiftboss import todo
+    from shiftboss.verify import origin
+    merged = git("rev-parse", "HEAD").stdout.strip()
+    remote = origin(REPO)
+    known = {item["text"] for item in todo.load(remote)}
+    for line in delivery.splitlines():
+        if "待发布后补" not in line:
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        what = next((cell for cell in cells if "待发布后补" in cell), line.strip())
+        text = f"补核 {name}：{(cells[0] + ' ') if len(cells) > 1 else ''}{what}"[:160]
+        if text not in known:
+            ident = todo.add(remote, text, f"publish:{merged}")
+            known.add(text)
+            print(f"  登记待补核 {ident}：{text}", flush=True)
 
 
 def finish_line(name: str, superseded_by: str | None = None) -> None:

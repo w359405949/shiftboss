@@ -349,6 +349,21 @@ def write_mark(path: Path, offset: int) -> None:
         pass
 
 
+def ring_ripe_todos(path: Path) -> None:
+    """待办条件刚满足时往门铃文件写一行，叫醒派活方去做；每条只敲一次。"""
+    from shiftboss import todo
+    from shiftboss.paths import project_root
+    from shiftboss.verify import origin
+    try:
+        repo = project_root()
+        remote = origin(repo)
+    except (ValueError, RuntimeError):
+        return
+    for item in todo.ripe(repo, remote):
+        with path.open("a", encoding="utf-8") as bell:
+            bell.write(f"{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')} todo {item['id']} 可做：{item['text']}\n")
+
+
 def watch(path: Path, heartbeat_minutes: int, fallback: Path, once: bool = False,
           ignore_green: bool = False) -> int:
     lock_path = path.parent / "bell.lock"
@@ -359,6 +374,7 @@ def watch(path: Path, heartbeat_minutes: int, fallback: Path, once: bool = False
     try:
         offset = read_mark(path)
         while True:
+            ring_ripe_todos(path)
             offset, rang = drain(path, offset, ignore_green)
             write_mark(path, offset)
             if rang:

@@ -1,4 +1,4 @@
-"""派活方每次汇报末尾原样附上的状态摘要：待你定、在跑、待核对、已合并、排队、门铃、常驻验证、常驻巡检。
+"""派活方每次汇报末尾原样附上的状态摘要：待你定、在跑、待核对、已合并、排队、派活方待办、门铃、机器、常驻验证、常驻巡检。
 
 Stop 钩子（`shiftboss.hooks.show_brief`）在每次回复结束时现算并显示给用户。
 """
@@ -46,6 +46,33 @@ def publication_lines(git_dir) -> list[str]:
     return [f"- 发布｜{sha[:12]}｜{when}｜main 领先 {behind or '?'} 个提交"]
 
 
+def red_owner(git_dir, owner: str) -> str:
+    """验证红页的负责线及其状态：负责线已归档时，按其合并提交是否已在最近验过的提交里分「待复扫」「修复无效」。"""
+    if owner.startswith("派活方"):
+        return "无人负责"
+    from shiftboss import patrol, verify
+    info = patrol.owner(git_dir, owner)
+    if info is None:
+        return f"{owner}（main 上找不到）"
+    if not info["archived"]:
+        return f"{owner}（在修）"
+    verified = (verify.index_of(git_dir) or {}).get("last")
+    if not info["merge"] or not verified:
+        return f"{owner}（已归档）"
+    scanned = subprocess.run(["git", f"--git-dir={git_dir}", "merge-base", "--is-ancestor", info["merge"], verified],
+                             capture_output=True).returncode == 0
+    return f"{owner}（已归档，{'修复无效，须另开线' if scanned else '待复扫'}）"
+
+
+def machine_lines(git_dir) -> list[str]:
+    """负载、常驻验证阶段与巡检状态：页面闸会不会因负载出假红，先看这一行。"""
+    import os
+    from shiftboss import verify
+    load = "／".join(f"{value:.1f}" for value in os.getloadavg())
+    stage = ((verify.index_of(git_dir) or {}).get("active") or {}).get("stage") or "空闲"
+    return [f"- 负载｜{load}（{os.cpu_count()} 核）｜验证阶段 {stage}"]
+
+
 def verify_lines(repo) -> list[str]:
     from shiftboss import verify
     report = verify.show_report(inbox.origin_git_dir(repo)).splitlines()
@@ -60,7 +87,8 @@ def verify_lines(repo) -> list[str]:
         if match := re.match(r"最近 (\S+)：(红 \d+ 条)，(较上次验证 [+-]?\d+)", text):
             lines.append(f"- 最近｜{match[1][:12]}｜{match[2]}｜{match[3]}")
         elif match := re.match(r"\[(\w+)\] ([^；]+)；.*负责：(.+)$", text):
-            lines.append(f"- 红｜{match[2]}｜{match[3].split(' / ')[0]}｜{match[1]}")
+            owner = match[3].split(' / ')[0]
+            lines.append(f"- 红｜{match[2]}｜{red_owner(inbox.origin_git_dir(repo), owner)}｜{match[1]}")
     return lines
 
 
@@ -90,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, _scheduled, copy, state, pushed, _model in sorted(rows):
         book = Taskbook.find(repo, name)
         waits = tuple(w for key in DEPENDENCY_KEYS if book for w in unmet_dependencies(repo, book, key))
+        waits += tuple(f"用户答 {item['id']}" for item in asks if item.get("line") == name)
         wait = f"｜等 {'、'.join(waits)}" if waits else ""
         unreviewed = pushed.startswith("可核对") or state.startswith("做完了没推")
         if state.startswith("在干活"):
@@ -110,8 +139,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"【{title}】{len(items)}{suffix}" + ("" if items else "：无"))
         for item in items:
             print(f"- {item}")
+    from shiftboss import todo
+    todos = todo.summary_lines(repo, git_dir)
+    print(f"【派活方待办】{len(todos)}" + ("" if todos else "：无"))
+    for line in todos:
+        print(line)
     print("【门铃】")
     for line in bell_lines():
+        print(line)
+    print("【机器】")
+    for line in machine_lines(git_dir):
         print(line)
     print("【验证】")
     for line in verify_lines(repo):

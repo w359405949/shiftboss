@@ -22,6 +22,7 @@ COMMANDS = {
     "regen": "regen",
     "verify": "verify",
     "patrol": "patrol",     # 常驻巡检：逐页扫全部页面，查到一页红敲一次门铃
+    "todo": "todo",         # 派活方待办：带触发条件，状态摘要列出，满足时敲门铃
     "bootstrap": "bootstrap",
     "init": "bootstrap",   # 在项目里装载 shiftboss：与 bootstrap 同一件事
 }
