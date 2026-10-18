@@ -64,6 +64,7 @@ HEADER_CELL = re.compile(r"^\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$")
 # 在一个错里打转时，那段历史正是让它转不出来的东西。
 MAX_ATTEMPTS = 3
 LAUNCH_ATTEMPTS = 4   # 执行方启动失败（多为网络抖动）时的启动重试次数
+LAUNCH_SETTLE = 15   # 启动后隔多少秒复查进程仍在
 # 合同出现这些词即为对应子类型的活：perf 测量压耗时，sweep 全量遍历出清单。
 SUBTYPE_SIGNALS = (("perf", ("五组成对", "CPU 剖面", "首次可见完成")), ("sweep", ("遍历全部登记路由", "全路由", "逐路由")))
 
@@ -1196,8 +1197,10 @@ def main(argv: list[str] | None = None) -> int:
         for attempt in range(1, LAUNCH_ATTEMPTS + 1):
             since = time.time()
             steps = None if fresh else WORKERS[executor].step_count(old_id)
+            # 连不上后端时进程会先起来再在数秒内退出；隔一段再看一次仍在才算起来。
             started = launch_tui(copy_win, prompt, args.taskbook, resume_id=None if fresh else old_id,
-                                 executor=executor) and bool(launched_identities(copy_win))
+                                 executor=executor) and bool(launched_identities(copy_win)) \
+                and (time.sleep(LAUNCH_SETTLE) or bool(process_identities(copy_win)))
             if started:
                 break
             close_session(copy_win)
