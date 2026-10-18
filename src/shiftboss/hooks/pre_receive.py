@@ -106,7 +106,8 @@ def ignored_additions(new: str) -> list[str]:
     """分支自与 main 分叉以来新增的、被根 `.gitignore` 忽略的路径（强行提交的一次性产物）。"""
     from shiftboss.taskbook import ignored_paths
     shown = git("show", f"{new}:.gitignore")
-    added = git("log", "--diff-filter=A", "--name-only", "--format=", "--no-renames", new, "--not", "refs/heads/main")
+    # 按净改动算：先提交后删除的不算。
+    added = git("diff", "--diff-filter=A", "--name-only", "--no-renames", "refs/heads/main..." + new)
     if shown.returncode or added.returncode:
         return []
     return ignored_paths(shown.stdout, sorted({line for line in added.stdout.splitlines() if line}))

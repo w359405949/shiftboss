@@ -799,8 +799,9 @@ def merge_ignored_reason(target: str) -> str | None:
     shown = git("show", f"{target}:.gitignore", check=False)
     if shown.returncode:
         return None
-    added = sorted({line for line in git("log", "--diff-filter=A", "--name-only", "--format=", "--no-renames",
-                                         target, "--not", "HEAD", check=False).stdout.splitlines() if line})
+    # 按净改动算：先提交后删除的不算。
+    added = sorted({line for line in git("diff", "--diff-filter=A", "--name-only", "--no-renames",
+                                         f"HEAD...{target}", check=False).stdout.splitlines() if line})
     if ignored := ignored_paths(shown.stdout, added):
         return (f"新增了 {len(ignored)} 个被 .gitignore 忽略的路径（交回证据留在工作副本 out/，不进提交）："
                 + "、".join(ignored[:20]) + ("……" if len(ignored) > 20 else ""))
