@@ -34,16 +34,24 @@ def bell_lines() -> list[str]:
 
 
 def publication_lines(git_dir) -> list[str]:
-    """最近一次发布（派生物与源一致）的提交，及 main 领先它几个第一父链提交：发布落后时先排除这一因。"""
+    """最近一次发布（派生物与源一致）的提交，及 main 领先它几个第一父链提交：发布落后时先排除这一因。
+
+    最近一轮生成阶段失败时标出「生成失败，发布停滞」：发布落后不一定是还没轮到，
+    生成每轮都失败时等多久都发布不出来，须按生成失败开线。
+    """
     from shiftboss import verify
-    sha = (verify.index_of(git_dir) or {}).get("last_consistent")
+    from shiftboss.state import read_state
+    index = verify.index_of(git_dir) or {}
+    sha = index.get("last_consistent")
     if not sha:
         return ["- 发布｜无记录"]
     run = lambda *args: subprocess.run(["git", f"--git-dir={git_dir}", *args],
                                        capture_output=True, text=True).stdout.strip()
     when = run("log", "-1", "--format=%cd", "--date=format:%m-%d %H:%M", sha)
     behind = run("rev-list", "--count", "--first-parent", f"{sha}..refs/heads/main")
-    return [f"- 发布｜{sha[:12]}｜{when}｜main 领先 {behind or '?'} 个提交"]
+    report = read_state(verify.state_dir(git_dir) / "runs" / f"{index.get('last')}.json") if index.get("last") else None
+    stalled = any(item.get("id") == "stage:generate" for item in (report or {}).get("failures", []))
+    return [f"- 发布｜{sha[:12]}｜{when}｜main 领先 {behind or '?'} 个提交" + ("｜生成失败，发布停滞" if stalled else "")]
 
 
 def red_owner(git_dir, owner: str) -> str:
