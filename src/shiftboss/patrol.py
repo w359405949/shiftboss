@@ -10,6 +10,13 @@
 - `list` 在工作区运行，标准输出某一行是 JSON 对象，其 `pages` 为 `[{"route": ...}, ...]`；
 - `check` 对一页运行，`{route}` 换成该页路由、`{index}` 换成序号；退出码非 0 即该页红，输出记进日志。
 
+可选 `periodic` 登记定时检查（如构建）：
+
+    "periodic": [{"name": "演示项目构建", "run": [...], "every_minutes": 10}]
+
+- 巡检在页与页之间、以及给常驻验证让路的等待期间，到点就在独立副本里检出 main 最新提交运行；
+- main 自上次运行未前进则跳过；退出码非 0 即红，转红时敲门铃。
+
 用法：
     shiftboss patrol start      # 起后台进程
     shiftboss patrol status     # 当前进度与红页
@@ -80,17 +87,66 @@ class Patrol:
             raise ValueError(f"{config.plan_file(self.repo)} 的 verification.patrol 缺 list 或 check")
         return patrol
 
-    def checkout_tip(self) -> str:
-        git(self.workspace, "fetch", "--quiet", "origin", "main")
-        sha = git(self.workspace, "rev-parse", "FETCH_HEAD").stdout.strip()
-        git(self.workspace, "checkout", "--quiet", "--force", "--detach", sha)
-        git(self.workspace, "clean", "-fdq", "-e", "out/")
+    def checkout_tip(self, workspace: Path | None = None) -> str:
+        workspace = workspace or self.workspace
+        git(workspace, "fetch", "--quiet", "origin", "main")
+        sha = git(workspace, "rev-parse", "FETCH_HEAD").stdout.strip()
+        git(workspace, "checkout", "--quiet", "--force", "--detach", sha)
+        git(workspace, "clean", "-fdq", "-e", "out/")
         # 本机路径配置不进 git，clean 会删掉它；每遍检出后从项目根重拷。
         name = config.local_config_file(self.repo)
         local = self.repo / name if name else None
         if local and local.is_file():
-            shutil.copyfile(local, self.workspace / local.name)
+            shutil.copyfile(local, workspace / local.name)
         return sha
+
+    @property
+    def periodic_workspace(self) -> Path:
+        return self.workspace.with_name(self.workspace.name + "-periodic")
+
+    def run_periodic(self) -> None:
+        """到点的定时检查在独立副本里跑 main 最新提交：巡检一遍要几小时，构建错误不能等到下一遍才发现。"""
+        try:
+            checks = self.policy().get("periodic") or []
+        except (OSError, ValueError):
+            return
+        results = self.state.setdefault("periodic", {})
+        due = [item for item in checks
+               if time.time() - (results.get(item["name"]) or {}).get("tried", 0) >= int(item.get("every_minutes", 10)) * 60]
+        if not due:
+            return
+        workspace = self.periodic_workspace
+        marker = workspace / ".git/shiftboss-patrol-owned"
+        if not workspace.exists():
+            git(self.repo, "clone", "--no-checkout", str(self.remote), str(workspace))
+            marker.write_text(str(self.remote), encoding="utf-8")
+        elif not marker.is_file() or marker.read_text(encoding="utf-8") != str(self.remote):
+            raise ValueError("拒绝接管不是巡检创建的定时检查副本")
+        sha = self.checkout_tip(workspace)
+        for item in due:
+            name, previous = item["name"], results.get(item["name"]) or {}
+            if previous.get("commit") == sha:
+                results[name] = {**previous, "tried": time.time()}; self.save()
+                continue
+            log = self.directory / "logs" / f"periodic-{re.sub(r'[^0-9A-Za-z_-]+', '_', name) or 'check'}.log"
+            env = os.environ.copy(); env["PYTHONIOENCODING"] = "utf-8"
+            started = time.time()
+            with log.open("w", encoding="utf-8") as handle:
+                handle.write(f"{now()} {name} @ {sha}\n$ {subprocess.list2cmdline(item['run'])}\n")
+                handle.flush()
+                try:
+                    code = subprocess.run(item["run"], cwd=workspace, stdout=handle, stderr=subprocess.STDOUT,
+                                          env=env, timeout=CHECK_TIMEOUT).returncode
+                except subprocess.TimeoutExpired:
+                    handle.write(f"\n超过 {CHECK_TIMEOUT} 秒，按卡死记红\n")
+                    code = 124
+            red = code != 0
+            first = previous.get("first") if red and previous.get("code") else (now() if red else None)
+            results[name] = {"commit": sha, "at": now(), "tried": time.time(), "code": code,
+                             "seconds": round(time.time() - started), "log": str(log), "first": first}
+            self.save()
+            if red and not previous.get("code"):
+                ring(self.remote, f"patrol periodic red {name} @ {sha[:12]}; run shiftboss patrol status")
 
     def routes(self, command: list[str]) -> list[str]:
         p = subprocess.run(command, cwd=self.workspace, capture_output=True, text=True, encoding="utf-8")
@@ -143,6 +199,7 @@ class Patrol:
             return
         self.state["yielding"] = now(); self.save()
         while self.verify_browsing() and not stop.exists():
+            self.run_periodic()
             time.sleep(YIELD_POLL)
         self.state.pop("yielding", None); self.save()
 
@@ -171,6 +228,7 @@ class Patrol:
                     free = shutil.disk_usage(self.workspace).free
                     if free < MIN_FREE_BYTES:
                         raise RuntimeError(f"磁盘剩余 {free / 2**30:.1f} GiB，低于 {MIN_FREE_BYTES / 2**30:.0f} GiB，巡检停下")
+                    self.run_periodic()
                     self.yield_to_verify(stop)
                     if stop.exists():
                         break
@@ -250,6 +308,12 @@ def status_lines(remote: Path, detail: bool = False) -> list[str]:
     lines = [head]
     if state.get("error"):
         lines.append(f"- 出错｜{state['error'][:120]}")
+    for name, item in (state.get("periodic") or {}).items():
+        if "code" not in item:
+            continue
+        word = f"红（首见 {item['first'][5:16].replace('T', ' ')}）" if item["code"] else "绿"
+        lines.append(f"- {name}｜{word}｜main@{item['commit'][:12]}｜{item['at'][11:16]}｜{item.get('seconds', '?')} 秒"
+                     + (f"｜{item['log']}" if item["code"] else ""))
     claims = read_state(directory / "claims.json") or {}
     groups: dict[tuple[str, str], list[str]] = {}
     reds = sorted(state.get("red", {}).items(), key=lambda pair: pair[1]["first"])
