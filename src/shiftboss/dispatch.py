@@ -1227,7 +1227,7 @@ def main(argv: list[str] | None = None) -> int:
             if attempt < LAUNCH_ATTEMPTS:
                 print(f"  执行方没起来或随即退出（第 {attempt} 次），重试", flush=True)
         else:
-            print(f"派活失败：执行方进程连续 {LAUNCH_ATTEMPTS} 次没起来（多为网络问题）；台账不记，这一轮的交代已推送，查明后重派。")
+            print(f"派活失败：执行方进程连续 {LAUNCH_ATTEMPTS} 次没起来（多为网络问题）；台账不记，这一轮的交代已推送，稍后重派即可，不必查原因。")
             return 2
         # 恢复不一定新建会话记录；找不到新的就还是原会话。
         new_id = new_id or (None if fresh else old_id)
