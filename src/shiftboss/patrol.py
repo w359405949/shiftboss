@@ -1,4 +1,4 @@
-"""常驻巡检：按项目登记的页面清单挨个核对 main 的最新提交，查到一页红就敲一次门铃。
+"""常驻巡检：按项目登记的页面清单挨个核对最近一次发布的提交（页面读已发布的派生物），查到一页红就敲一次门铃。
 
 与常驻验证并行、分工不同：常驻验证只核本批改到的页面，快；巡检不看改动，一遍遍从头扫全部页面，
 兜住改动之外受牵连的页面。逐页串行，一次只占一个浏览器。
@@ -97,10 +97,15 @@ class Patrol:
             raise ValueError(f"{config.plan_file(self.repo)} 的 verification.patrol 缺 list 或 check")
         return patrol
 
-    def checkout_tip(self, workspace: Path | None = None) -> str:
+    def checkout_tip(self, workspace: Path | None = None, published: bool = False) -> str:
+        """检出 main 最新提交；`published` 时检出最近一次发布：页面读已发布的派生物，
+        代码比发布新时新代码要的发布文件不存在，整批页面假红。"""
         workspace = workspace or self.workspace
         git(workspace, "fetch", "--quiet", "origin", "main")
         sha = git(workspace, "rev-parse", "FETCH_HEAD").stdout.strip()
+        release = (verify.index_of(self.remote) or {}).get("last_consistent") if published else None
+        if release and git(workspace, "merge-base", "--is-ancestor", release, sha, check=False).returncode == 0:
+            sha = release
         git(workspace, "checkout", "--quiet", "--force", "--detach", sha)
         git(workspace, "clean", "-fdq", "-e", "out/")
         # 本机路径配置不进 git，clean 会删掉它；每遍检出后从项目根重拷。
@@ -268,7 +273,7 @@ class Patrol:
         try:
             self.prepare()
             while not stop.exists():
-                sha = self.checkout_tip()
+                sha = self.checkout_tip(published=True)
                 policy = self.policy()
                 routes = self.routes(policy["list"])
                 self.state["pass"] += 1
