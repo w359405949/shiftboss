@@ -53,6 +53,11 @@ YIELD_POLL = 30   # 让路时每隔多少秒再看一次常驻验证的阶段
 MIN_FREE_BYTES = 5 * 2**30   # 磁盘剩余低于此值即停：逐页证据会累积，写满会拖垮全部执行方与常驻验证
 
 
+def interpreter(command: list[str]) -> list[str]:
+    """项目命令开头的 `python` 换成本进程的解释器（项目虚拟环境），与常驻验证、生成一致；系统 python 缺项目依赖。"""
+    return [sys.executable, *command[1:]] if command and command[0] == "python" else list(command)
+
+
 def state_dir(remote: Path) -> Path:
     return config.control_dir(remote) / NAME
 
@@ -163,7 +168,7 @@ class Patrol:
                 handle.write(f"{now()} {name} @ {sha}\n$ {subprocess.list2cmdline(item['run'])}\n")
                 handle.flush()
                 try:
-                    code = subprocess.run(item["run"], cwd=workspace, stdout=handle, stderr=subprocess.STDOUT,
+                    code = subprocess.run(interpreter(item["run"]), cwd=workspace, stdout=handle, stderr=subprocess.STDOUT,
                                           env=env, timeout=CHECK_TIMEOUT).returncode
                 except subprocess.TimeoutExpired:
                     handle.write(f"\n超过 {CHECK_TIMEOUT} 秒，按卡死记红\n")
@@ -177,7 +182,7 @@ class Patrol:
                 ring(self.remote, f"patrol periodic red {name} @ {sha[:12]}; run shiftboss patrol status")
 
     def routes(self, command: list[str]) -> list[str]:
-        p = subprocess.run(command, cwd=self.workspace, capture_output=True, text=True, encoding="utf-8")
+        p = subprocess.run(interpreter(command), cwd=self.workspace, capture_output=True, text=True, encoding="utf-8")
         for line in p.stdout.splitlines():
             line = line.strip()
             if line.startswith("{"):
@@ -188,7 +193,7 @@ class Patrol:
 
     def check(self, command: list[str], route: str, index: int) -> tuple[int, Path]:
         log = self.directory / "logs" / f"{self.state['pass']:04d}-{index:03d}.log"
-        argv = [part.replace("{route}", route).replace("{index}", str(index)) for part in command]
+        argv = interpreter([part.replace("{route}", route).replace("{index}", str(index)) for part in command])
         env = os.environ.copy(); env["PYTHONIOENCODING"] = "utf-8"
         with log.open("w", encoding="utf-8") as handle:
             handle.write(f"{now()} {route}\n$ {subprocess.list2cmdline(argv)}\n")
