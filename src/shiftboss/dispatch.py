@@ -928,7 +928,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.close:
         from shiftboss.taskbook import unmet_dependencies
         if pending := unmet_dependencies(REPO, book, "派发前置"):
-            print(f"派活拒绝：{book.name} 的派发前置未归档：{'、'.join(pending)}")
+            print(f"派活拒绝：{book.name} 的派发前置未满足：{'、'.join(pending)}")
             return 2
         # 性能线随时可派；更高类别的线改过它改的文件时，结果由 merge 判作废（README 3.2 第 9 条）。
         from shiftboss.taskbook import category_of, higher_active, same_category_active

@@ -166,9 +166,17 @@ def unmet_dependencies(repo: Path, book: "Taskbook", key: str) -> list[str]:
     """依赖未满足的任务书：前置任务书归档才算满足；名字找不到的也算未满足并注明。
 
     任务之间的先后不靠派活方记忆：写进表头，由派活与合并入口在这里核对后拒绝。
+    带冒号的项按待办条件核对（如 `publish:<提交>`：判据要等发布物的线写它，排队而不列为可派）。
     """
     pending = []
     for name in dependency_list(book.meta().get(key)):
+        if ":" in name:
+            from shiftboss import todo
+            from shiftboss.verify import origin
+            ok, wait = todo.condition(origin(repo), repo, name)
+            if not ok:
+                pending.append(wait.removeprefix("等").strip())
+            continue
         other = Taskbook.find(repo, name)
         if other is None:
             pending.append(f"{name}（不存在）")
@@ -573,9 +581,10 @@ def main(argv=None) -> int:
         for key in DEPENDENCY_KEYS:
             if key in pairs:
                 pairs[key] = dependency_list(pairs[key])
-                missing = [name for name in pairs[key] if Taskbook.find(repo, name) is None]
+                missing = [name for name in pairs[key] if not re.fullmatch(r"(publish|archived|answered):\S+", name)
+                           and Taskbook.find(repo, name) is None]
                 if missing:
-                    print(f"{key}里的任务书不存在：{'、'.join(missing)}")
+                    print(f"{key}里的任务书不存在（条件写成 publish:<提交> 等）：{'、'.join(missing)}")
                     return 2
         book.set_meta(**pairs)
         print(f"{args.name}：" + "；".join(f"{k} → {v}" for k, v in pairs.items()))
