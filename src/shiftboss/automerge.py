@@ -52,7 +52,7 @@ def push(workspace: Path) -> None:
 
 def candidates(workspace: Path, allowed: list[str]):
     """→ (任务书名, 分支顶端提交)。条件见模块说明。"""
-    from shiftboss.merge import pending_lines
+    from shiftboss.merge import pending_lines, publish_later_lines
     from shiftboss.taskbook import Taskbook, category_of, execution_status
     for book in Taskbook.iter_active(workspace):
         meta = book.meta()
@@ -63,7 +63,7 @@ def candidates(workspace: Path, allowed: list[str]):
         if not tip or git(workspace, "merge-base", "--is-ancestor", tip, "origin/main", check=False).returncode == 0:
             continue
         delivery = git(workspace, "show", f"{tip}:{book.path.relative_to(workspace)}/delivery.md", check=False).stdout
-        if execution_status(delivery) != "完成" or pending_lines(delivery) or "待发布后补" in delivery:
+        if execution_status(delivery) != "完成" or pending_lines(delivery) or publish_later_lines(delivery):
             continue
         yield book.name, tip
 

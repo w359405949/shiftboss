@@ -683,6 +683,18 @@ def pending_lines(delivery: str) -> list[str]:
             and re.match(r"\s*(\||\d+[.、])", line)]
 
 
+def publish_later_lines(delivery: str) -> list[str]:
+    """交回中真正记为「待发布后补」的行：标题行与否定句（「无待发布后补」「未将……记作待发布后补」）不算。"""
+    lines = []
+    for line in delivery.splitlines():
+        if "待发布后补" not in line or line.lstrip().startswith("#"):
+            continue
+        if re.search(r"(无|未|不|没有)[^，。；|]{0,12}「?待发布后补", line):
+            continue
+        lines.append(line)
+    return lines
+
+
 def register_followups(name: str, delivery: str) -> None:
     """交回里写「待发布后补」的项，登记为以本次合并提交发布为条件的待办：合入后没人追就会丢。
 
@@ -693,12 +705,7 @@ def register_followups(name: str, delivery: str) -> None:
     merged = git("rev-parse", "HEAD").stdout.strip()
     remote = origin(REPO)
     labels = []
-    for line in delivery.splitlines():
-        if "待发布后补" not in line or line.lstrip().startswith("#"):
-            continue
-        # 「未将……记作待发布后补」「不作待发布后补」是说没有，不登记。
-        if re.search(r"(未|不|没有)[^，。；|]{0,12}「?待发布后补", line):
-            continue
+    for line in publish_later_lines(delivery):
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         label = cells[0] if len(cells) > 1 else line.strip()[:20]
         if label not in labels:
@@ -903,7 +910,7 @@ def performance_stale_reason(target: str) -> str | None:
         base = git("merge-base", "HEAD", target).stdout.strip()
         mine = {p for p in git("diff", "--name-only", base, target).stdout.split() if not p.startswith(PLANS_DIR + "/")}
         delivery = git("show", f"{target}:{PLANS_DIR}/{book.name}/delivery.md", check=False).stdout
-        if mine and "待发布后补" in delivery:
+        if mine and publish_later_lines(delivery):
             return (f"{book.name} 是性能线，交回把改前改后同机对照留到发布后；"
                     "不合并，续派让它在副本生成后测（README 3.2 第 9 条）")
     return None
