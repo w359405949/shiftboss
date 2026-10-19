@@ -441,11 +441,35 @@ def started_signs(copy: str, branch: str) -> str:
             return ""
     on_branch = bool(branch) and git_in("rev-parse", "--verify", "--quiet", branch)
     dirty = len([line for line in git_in("status", "--porcelain").splitlines() if line])
+    stale = stale_index_lock(copy)
     if not on_branch and not dirty:
-        return "**目标分支未建、工作树干净——多半没起来**"
+        return "**目标分支未建、工作树干净——多半没起来**" + (f"；{stale}" if stale else "")
     return "、".join(filter(None, [
         "目标分支已建" if on_branch else "目标分支未建",
-        f"{dirty} 个脏文件" if dirty else "工作树干净"]))
+        f"{dirty} 个脏文件" if dirty else "工作树干净", stale]))
+
+
+STALE_LOCK_MINUTES = 10
+
+
+def stale_index_lock(copy: str) -> str:
+    """副本里留了 git 的 index.lock 而没有 git 进程在跑：执行方此后的 git 操作全失败，会话看似在忙、实则卡死。
+
+    派活方确认后删锁，再按挂住处理（工作树有改动的用 `--done --unmerged` 存 stash 收线，或续派）。
+    """
+    import time
+    import psutil
+    lock = Path(copy) / ".git" / "index.lock"
+    if not lock.exists():
+        return ""
+    minutes = (time.time() - lock.stat().st_mtime) / 60
+    if minutes < STALE_LOCK_MINUTES:
+        return ""
+    root = str(Path(copy).resolve())
+    for proc in psutil.process_iter(["name", "cwd"]):
+        if proc.info.get("name") == "git" and (proc.info.get("cwd") or "").startswith(root):
+            return ""
+    return f"**残留 {lock}（{minutes:.0f} 分钟，无 git 进程）——执行方的 git 操作会全部失败**"
 
 
 def origin_has_main(git_dir: Path) -> bool:
