@@ -38,11 +38,16 @@ def git(workspace: Path, *args: str, check: bool = True) -> subprocess.Completed
     return subprocess.run(["git", *args], cwd=workspace, capture_output=True, text=True, check=check)
 
 
+PUSH_ATTEMPTS = 3
+
+
 def push(workspace: Path) -> None:
-    """main 在合并期间前进（派活方或常驻验证推送）时先并入再推。"""
-    if git(workspace, "push", "--quiet", "origin", "HEAD:main", check=False).returncode:
+    """main 在合并期间前进（派活方或常驻验证推送）时先并入再推；main 推得频繁时并入后可能又被抢先，重试几次。"""
+    for _ in range(PUSH_ATTEMPTS - 1):
+        if git(workspace, "push", "--quiet", "origin", "HEAD:main", check=False).returncode == 0:
+            return
         git(workspace, "pull", "--quiet", "--no-rebase", "--no-edit", "origin", "main")
-        git(workspace, "push", "--quiet", "origin", "HEAD:main")
+    git(workspace, "push", "--quiet", "origin", "HEAD:main")
 
 
 def candidates(workspace: Path, allowed: list[str]):
