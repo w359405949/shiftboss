@@ -39,11 +39,23 @@ def grew(now: dict[str, list[str]], before: dict[str, list[str]]) -> bool:
     return False
 
 
+def sync_main(repo) -> None:
+    """派活方工作树在 main 上且干净时先快进到 origin/main：自动合入在巡检副本里合并、推送、归档，
+    本地 main 不跟上时简报按旧任务书把已归档的线算成「可派」「待收尾」。不干净或不能快进就不动。"""
+    import subprocess
+    git = lambda *args: subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, timeout=60)
+    if git("symbolic-ref", "--short", "HEAD").stdout.strip() != "main" or git("status", "--porcelain").stdout.strip():
+        return
+    if git("fetch", "-q", "origin", "main").returncode == 0:
+        git("merge", "-q", "--ff-only", "FETCH_HEAD")
+
+
 def main() -> int:
     json.load(sys.stdin)
     from shiftboss import brief, config
     from shiftboss.paths import project_root
     from shiftboss.state import read_state, write_state
+    sync_main(project_root())
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         brief.main([])
