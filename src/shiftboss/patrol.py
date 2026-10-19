@@ -325,7 +325,7 @@ def perf_rows(remote: Path) -> list[dict]:
 def perf_lines(remote: Path, limit: int | None = None) -> list[str]:
     rows = perf_rows(remote)[:limit]
     return [f"- {row['route'].removeprefix('/?view=')}｜中位 {row['median']:.1f} 秒（{row['samples']} 次）｜最近 {row['last']} 秒"
-            f"｜负载 {row['load'] if row['load'] is not None else '—'}" + "".join(f"｜{key} {value}" for key, value in row["metrics"].items())
+            f"｜负载 {row['load'] if row['load'] is not None else '—'}" + "".join(f"｜{key} {round(value) if isinstance(value, float) else value}" for key, value in row["metrics"].items())
             for row in rows]
 
 
