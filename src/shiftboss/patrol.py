@@ -14,8 +14,9 @@
 
 可选 `periodic` 登记定时检查（如构建）：
 
-    "periodic": [{"name": "演示项目构建", "run": [...], "every_minutes": 10}]
+    "periodic": [{"name": "演示项目构建", "run": [...], "every_minutes": 10, "timeout_minutes": 30}]
 
+- `timeout_minutes` 省略时按单页上限；墙钟随机器负载伸缩的重活（如并行构建）按满载时的耗时登记；
 - 巡检在页与页之间、以及给常驻验证让路的等待期间，到点就在独立副本里检出 main 最新提交运行；
 - main 自上次运行未前进则跳过；退出码非 0 即红，转红时敲门铃。
 
@@ -163,15 +164,15 @@ class Patrol:
                 continue
             log = self.directory / "logs" / f"periodic-{re.sub(r'[\s/\\:]+', '_', name)}.log"
             env = os.environ.copy(); env["PYTHONIOENCODING"] = "utf-8"
-            started = time.time()
+            started, limit = time.time(), int(item.get("timeout_minutes", 0)) * 60 or CHECK_TIMEOUT
             with log.open("w", encoding="utf-8") as handle:
                 handle.write(f"{now()} {name} @ {sha}\n$ {subprocess.list2cmdline(item['run'])}\n")
                 handle.flush()
                 try:
                     code = subprocess.run(interpreter(item["run"]), cwd=workspace, stdout=handle, stderr=subprocess.STDOUT,
-                                          env=env, timeout=CHECK_TIMEOUT).returncode
+                                          env=env, timeout=limit).returncode
                 except subprocess.TimeoutExpired:
-                    handle.write(f"\n超过 {CHECK_TIMEOUT} 秒，按卡死记红\n")
+                    handle.write(f"\n超过 {limit} 秒，按卡死记红\n")
                     code = 124
             red = code != 0
             first = previous.get("first") if red and previous.get("code") else (now() if red else None)
