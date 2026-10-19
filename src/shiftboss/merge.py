@@ -696,6 +696,9 @@ def register_followups(name: str, delivery: str) -> None:
     for line in delivery.splitlines():
         if "待发布后补" not in line or line.lstrip().startswith("#"):
             continue
+        # 「未将……记作待发布后补」「不作待发布后补」是说没有，不登记。
+        if re.search(r"(未|不|没有)[^，。；|]{0,12}「?待发布后补", line):
+            continue
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         label = cells[0] if len(cells) > 1 else line.strip()[:20]
         if label not in labels:
