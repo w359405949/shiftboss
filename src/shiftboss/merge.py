@@ -715,7 +715,7 @@ def finish_line(name: str, superseded_by: str | None = None, unmerged: bool = Fa
     """`--done`：派活方核对认定这份任务书结束（做完，或已拆出新任务书），关会话并归档。
 
     只收已合进当前分支的线：分支上还有没合的提交就拒，免得把交付丢在分支上。
-    `unmerged`：派活方核对后决定不合（如性能线未达标），分支保留在远端，分支上的交回带进归档。
+    `unmerged`：派活方核对后决定不合（如性能线没有可合的改动），分支保留在远端，分支上的交回带进归档。
     """
     from shiftboss import dispatch
     from shiftboss.taskbook import Taskbook
@@ -882,16 +882,13 @@ def merge_dependency_reason(target: str) -> str | None:
 
 
 def performance_stale_reason(target: str) -> str | None:
-    """性能线的结果在它派出后被别线改过同一批文件时作废，不合并，重新评估后另派。
+    """性能线把耗时对照留到发布后的不合：没有改前改后同机对照就合入，明显退化要到别的线补测才暴露。
 
-    「被改过」按文件机械判定：自该线派出以来 main 第一父链上的提交，改到了该线也改的文件。
-    性能是最低类别，main 上的其他改动都在它之前（README 3.2 第 9 条）；任务书目录不算。
+    对照只为排除明显退化，不设耗时门槛（README 3.2 第 9 条）；main 在它派出后改过同一批文件不作废。
     """
     from shiftboss.taskbook import Taskbook, category_of
-    from shiftboss.dispatch import load_sessions
     if git("merge-base", "--is-ancestor", target, "HEAD", check=False).returncode == 0:
         return None
-    ledger = load_sessions()
     for book in Taskbook.iter_active(REPO):
         if category_of(book.meta()) != "性能":
             continue
@@ -900,21 +897,11 @@ def performance_stale_reason(target: str) -> str | None:
                     if git("rev-parse", "--verify", "--quiet", r, check=False).returncode == 0), None)
         if not ref or git("merge-base", "--is-ancestor", target, ref, check=False).returncode:
             continue
-        since = (ledger.get(book.name) or {}).get("dispatched_at")
-        if not since:
-            return f"{book.name} 是性能线，台账里没有派出时刻，判不了结果是否作废；先重新评估再派"
         base = git("merge-base", "HEAD", target).stdout.strip()
         mine = {p for p in git("diff", "--name-only", base, target).stdout.split() if not p.startswith(PLANS_DIR + "/")}
-        others = {p for p in git("log", "--first-parent", f"--since={since}", "--name-only", "--format=", "HEAD").stdout.split()
-                  if not p.startswith(PLANS_DIR + "/")}
-        if hit := sorted(mine & others):
-            listed = "、".join(hit[:10]) + (f" 等 {len(hit)} 个" if len(hit) > 10 else "")
-            return (f"{book.name} 是性能线，派出后 main 上又改过它改的文件：{listed}；"
-                    "结果作废，不合并，重新评估后另派（README 3.2 第 9 条）")
-        # 改了代码却把耗时判据留到发布后：没有改前改后同机对照就合入，退化要到别的线补测才暴露。
         delivery = git("show", f"{target}:{PLANS_DIR}/{book.name}/delivery.md", check=False).stdout
         if mine and "待发布后补" in delivery:
-            return (f"{book.name} 是性能线，交回把判据留到发布后，没有改前改后同机耗时对照；"
+            return (f"{book.name} 是性能线，交回把改前改后同机对照留到发布后；"
                     "不合并，续派让它在副本生成后测（README 3.2 第 9 条）")
     return None
 
