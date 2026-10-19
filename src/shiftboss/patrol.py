@@ -9,6 +9,8 @@
 
 - `list` 在工作区运行，标准输出某一行是 JSON 对象，其 `pages` 为 `[{"route": ...}, ...]`；
 - `check` 对一页运行，`{route}` 换成该页路由、`{index}` 换成序号；退出码非 0 即该页红，输出记进日志。
+  输出里带 `route` 与 `seconds` 的 JSON 行是该页的耗时，可另带 `metrics` 对象（如首次可见、交互反应）；
+  巡检把它们连同提交与负载记进性能记录，性能线据此挑对象，不另开测量（README 3.2 第 9 条）。
 
 可选 `periodic` 登记定时检查（如构建）：
 
@@ -22,6 +24,7 @@
     shiftboss patrol status     # 当前进度与红页
     shiftboss patrol stop       # 当前页核完后停
     shiftboss patrol claim <路由> <任务书名>   # 红页关联负责修它的线（在办或已归档）
+    shiftboss patrol perf       # 各页最近耗时与历次中位数，最慢的在前
 """
 from __future__ import annotations
 
@@ -198,7 +201,25 @@ class Patrol:
                 code = 124
         return code, log
 
+    def record_perf(self, route: str, log: Path, sha: str) -> None:
+        """从该页日志取耗时与指标，追加进性能记录；页面没给出耗时就不记。"""
+        result = None
+        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("{") and '"route"' in line and '"seconds"' in line:
+                result = json.loads(line)
+        if not result:
+            return
+        entry = {"at": now(), "pass": self.state["pass"], "route": route, "commit": sha,
+                 "load": round(os.getloadavg()[0], 1), "seconds": result.get("seconds"),
+                 "ok": not result.get("returncode")}
+        if isinstance(result.get("metrics"), dict):
+            entry["metrics"] = result["metrics"]
+        with perf_path(self.remote).open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
     def record(self, route: str, code: int, log: Path, sha: str) -> None:
+        self.record_perf(route, log, sha)
         red = self.state["red"]
         if code == 0:
             if red.pop(route, None):
@@ -268,6 +289,44 @@ class Patrol:
             raise
         finally:
             lock.unlink(missing_ok=True)
+
+
+def perf_path(remote: Path) -> Path:
+    return state_dir(remote) / "perf.jsonl"
+
+
+PERF_HISTORY = 5   # 每页取最近几次通过的耗时算中位数
+PERF_SHOWN = 3   # 状态摘要列出最慢的几页
+
+
+def perf_rows(remote: Path) -> list[dict]:
+    """每页最近一次耗时、最近 PERF_HISTORY 次通过的中位数与当时负载，按中位数从慢到快。"""
+    import statistics
+    path = perf_path(remote)
+    if not path.exists():
+        return []
+    history: dict[str, list[dict]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            entry = json.loads(line)
+            history.setdefault(entry["route"], []).append(entry)
+    rows = []
+    for route, entries in history.items():
+        passed = [e for e in entries if e.get("ok") and isinstance(e.get("seconds"), (int, float))][-PERF_HISTORY:]
+        if not passed:
+            continue
+        last = entries[-1]
+        rows.append({"route": route, "median": statistics.median(e["seconds"] for e in passed), "samples": len(passed),
+                     "last": last.get("seconds"), "load": last.get("load"), "commit": last.get("commit", "")[:12],
+                     "metrics": last.get("metrics") or {}})
+    return sorted(rows, key=lambda row: -row["median"])
+
+
+def perf_lines(remote: Path, limit: int | None = None) -> list[str]:
+    rows = perf_rows(remote)[:limit]
+    return [f"- {row['route'].removeprefix('/?view=')}｜中位 {row['median']:.1f} 秒（{row['samples']} 次）｜最近 {row['last']} 秒"
+            f"｜负载 {row['load'] if row['load'] is not None else '—'}" + "".join(f"｜{key} {value}" for key, value in row["metrics"].items())
+            for row in rows]
 
 
 def owner(remote: Path, taskbook: str) -> dict | None:
@@ -358,6 +417,10 @@ def status_lines(remote: Path, detail: bool = False) -> list[str]:
         names = [route.removeprefix("/?view=") for route in routes]
         lines.append(f"- 红 {len(routes)}｜{word}" + (f"｜{taskbook}" if taskbook else "") + "｜" + "、".join(names[:shown])
                      + (f" 等 {len(names)} 条" if len(names) > shown else ""))
+    slowest = perf_lines(remote, PERF_SHOWN)
+    if slowest:
+        lines.append(f"- 最慢 {len(slowest)} 页（全部见 `shiftboss patrol perf`）")
+        lines += ["  " + line.removeprefix("- ") for line in slowest]
     if detail:
         for route, item in reds:
             lines.append(f"  {route}｜首见 {item['first'][5:16].replace('T', ' ')}｜{item['log']}")
@@ -400,7 +463,7 @@ def start(repo: Path, workspace: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["watch", "start", "status", "stop", "claim"])
+    parser.add_argument("command", choices=["watch", "start", "status", "stop", "claim", "perf"])
     parser.add_argument("route", nargs="?", help="claim：红页路由，照 `status` 所列")
     parser.add_argument("taskbook", nargs="?", help="claim：负责修它的任务书名")
     parser.add_argument("--repo", type=Path, default=None)
@@ -410,6 +473,8 @@ def main(argv: list[str] | None = None) -> int:
     repo = (args.repo or project_root()).resolve()
     remote = origin(repo)
     workspace = args.workspace or config.copies_dir(remote) / NAME
+    if args.command == "perf":
+        print("\n".join(perf_lines(remote)) or "尚无性能记录"); return 0
     if args.command == "status":
         print("\n".join(status_lines(remote, detail=True))); return 0
     if args.command == "claim":
