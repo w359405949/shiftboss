@@ -12,6 +12,7 @@ from __future__ import annotations
 from shiftboss.paths import PLANS_DIR, project_root
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -741,6 +742,37 @@ def finish_line(name: str, superseded_by: str | None = None, unmerged: bool = Fa
     copy = (entry or {}).get("copy") or book.meta().get("你的工作副本")
     prune_line_evidence(name, copy)
     stash_copy_leftovers(name, copy, branch)
+    kill_copy_leftovers(copy, branch)
+
+
+def kill_copy_leftovers(copy: str | None, branch: str) -> None:
+    """归档即结束副本里残留的进程（执行方起的浏览器、服务器等）：会话关了它们还在，白占机器。
+
+    **副本已切到别的分支就不动**，理由同 `stash_copy_leftovers`。只认命令行或工作目录落在副本下的进程，不碰本进程。
+    """
+    import os
+    import psutil
+    if not copy or not Path(copy).is_dir():
+        return
+    current = subprocess.run(["git", "-C", copy, "branch", "--show-current"],
+                             capture_output=True, text=True).stdout.strip()
+    if current != branch:
+        return
+    root = str(Path(copy).resolve()) + os.sep
+    mine = {os.getpid(), *(proc.pid for proc in psutil.Process().parents())}
+    leftovers = []
+    for proc in psutil.process_iter(["pid", "cmdline", "cwd"]):
+        info = proc.info
+        if info["pid"] in mine:
+            continue
+        cwd = (info.get("cwd") or "") + os.sep
+        if cwd.startswith(root) or any(root in arg or arg == root.rstrip(os.sep) for arg in info.get("cmdline") or []):
+            leftovers.append(proc)
+    for proc in leftovers:
+        with contextlib.suppress(psutil.Error):
+            proc.kill()
+    if leftovers:
+        print(f"  已结束副本 {copy} 里残留的 {len(leftovers)} 个进程", flush=True)
 
 
 def stash_copy_leftovers(name: str, copy: str | None, branch: str) -> None:
