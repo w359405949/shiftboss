@@ -86,17 +86,26 @@ def run(remote: Path, workspace: Path, ring) -> None:
         if merged.returncode:
             git(workspace, "merge", "--abort", check=False)
             git(workspace, "reset", "--quiet", "--hard", "origin/main")
-            state["refused"][name] = {"tip": tip, "at": time.time(), "reason": (merged.stdout + merged.stderr)[-600:]}
-            write_state(store(remote), state)
+            record(remote, "refused", name, {"tip": tip, "at": time.time(), "reason": (merged.stdout + merged.stderr)[-600:]})
             ring(remote, f"automerge refused {name} @ {tip[:12]}; run shiftboss automerge --list")
             continue
         push(workspace)
         subprocess.run([*py, "--done", name], cwd=workspace, capture_output=True, text=True)
         push(workspace)
-        state["merged"][name] = {"tip": tip, "at": time.time(), "acked": False}
-        state["refused"].pop(name, None)
-        write_state(store(remote), state)
+        record(remote, "merged", name, {"tip": tip, "at": time.time(), "acked": False})
+        record(remote, "refused", name, None)
         ring(remote, f"automerged {name} @ {tip[:12]}; review its delivery, then shiftboss automerge --ack {name}")
+
+
+def record(remote: Path, section: str, name: str, value: dict | None) -> None:
+    """只改一条记录：写回前重读整份状态，不覆盖运行期间别的进程（如 `--ack`）写入的记录。"""
+    state = read_state(store(remote)) or {"merged": {}, "refused": {}}
+    bucket = state.setdefault(section, {})
+    if value is None:
+        bucket.pop(name, None)
+    else:
+        bucket[name] = value
+    write_state(store(remote), state)
 
 
 def unreviewed(remote: Path) -> list[str]:
