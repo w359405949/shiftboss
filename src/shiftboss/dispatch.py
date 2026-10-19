@@ -180,25 +180,6 @@ def launch_tui(copy_win: str, prompt: str, title: str, *,
     return False
 
 
-def launch_output(title: str, attempt: int) -> Path | None:
-    """启动失败时抓取以任务书命名的终端窗口的屏幕输出，存进控制目录；没有 tmux 或窗口时返回 None。"""
-    import shutil
-    from shiftboss.config import control_dir
-    if not shutil.which("tmux"):
-        return None
-    windows = subprocess.run(["tmux", "list-windows", "-a", "-F", "#{window_id} #{window_name}"],
-                             capture_output=True, text=True).stdout.splitlines()
-    ids = [line.split(" ", 1)[0] for line in windows if line.split(" ", 1)[-1] == title]
-    if not ids:
-        return None
-    text = subprocess.run(["tmux", "capture-pane", "-p", "-S", "-200", "-t", ids[-1]],
-                          capture_output=True, text=True).stdout
-    path = control_dir(origin_bare()) / "launch-failures" / f"{title}-{time.strftime('%m%d-%H%M%S')}-{attempt}.log"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    return path
-
-
 def origin_bare() -> Path:
     from shiftboss.inbox import origin_git_dir
     return origin_git_dir(REPO)
@@ -1242,10 +1223,9 @@ def main(argv: list[str] | None = None) -> int:
                 time.sleep(LAUNCH_SETTLE)
                 if process_identities(copy_win):
                     break
-            saved = launch_output(args.taskbook, attempt)
             close_session(copy_win)
             if attempt < LAUNCH_ATTEMPTS:
-                print(f"  执行方没起来或随即退出（第 {attempt} 次），重试" + (f"；屏幕输出 {saved}" if saved else ""), flush=True)
+                print(f"  执行方没起来或随即退出（第 {attempt} 次），重试", flush=True)
         else:
             print(f"派活失败：执行方进程连续 {LAUNCH_ATTEMPTS} 次没起来（多为网络问题）；台账不记，这一轮的交代已推送，查明后重派。")
             return 2
