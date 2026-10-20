@@ -51,6 +51,7 @@ NAME = "patrol"
 CHECK_TIMEOUT = 900   # 单页上限：页面闸自身有 120 秒会话期限与两次启动重试，超过即视为卡死
 AUTOMERGE_INTERVAL = 120   # 自动合入至多每两分钟查一次
 YIELD_POLL = 30   # 让路时每隔多少秒再看一次常驻验证的阶段
+PUBLISH_LAG = 3600   # main 上未发布的产品改动最早一条超过此秒数即算发布落后，巡检暂停
 MIN_FREE_BYTES = 5 * 2**30   # 磁盘剩余低于此值即停：逐页证据会累积，写满会拖垮全部执行方与常驻验证
 
 
@@ -72,6 +73,7 @@ class Patrol:
         self.repo = repo.resolve()
         self.remote = origin(self.repo)
         self.workspace = workspace.resolve()
+        self.pass_release = None
         if self.workspace in (self.repo, self.remote):
             raise ValueError("巡检副本必须独立")
         self.directory = state_dir(self.remote)
@@ -106,6 +108,8 @@ class Patrol:
         release = (verify.index_of(self.remote) or {}).get("last_consistent") if published else None
         if release and git(workspace, "merge-base", "--is-ancestor", release, sha, check=False).returncode == 0:
             sha = release
+        if published:
+            self.pass_release = sha if sha == release else None
         git(workspace, "checkout", "--quiet", "--force", "--detach", sha)
         git(workspace, "clean", "-fdq", "-e", "out/")
         # 本机路径配置不进 git，clean 会删掉它；每遍检出后从项目根重拷。
@@ -254,14 +258,28 @@ class Patrol:
         pid = index.get("pid")
         return stage.startswith("pages") and isinstance(pid, int) and psutil.pid_exists(pid)
 
+    def publication_lag(self) -> bool:
+        """发布落后：已合入 main 的产品改动迟迟未发布。页面读已发布的派生物，此时整遍只会重报已修的红，
+        巡检暂停到发布追上；合入照常（用户裁定 D28）。"""
+        published = (verify.index_of(self.remote) or {}).get("last_consistent")
+        if not published:
+            return False
+        times = git(self.remote, "log", "--first-parent", "--format=%ct", f"{published}..main", "--", "engine/",
+                    check=False).stdout.split()
+        return bool(times) and time.time() - int(times[-1]) > PUBLISH_LAG
+
+    def wait_reason(self) -> str | None:
+        return "常驻验证在跑页面" if self.verify_browsing() else "发布落后" if self.publication_lag() else None
+
     def yield_to_verify(self, stop: Path) -> None:
-        if not self.verify_browsing():
+        if not self.wait_reason():
             return
         self.state["yielding"] = now(); self.save()
-        while self.verify_browsing() and not stop.exists():
+        while (reason := self.wait_reason()) and not stop.exists():
+            self.state["yield_reason"] = reason; self.save()
             self.run_periodic()
             time.sleep(YIELD_POLL)
-        self.state.pop("yielding", None); self.save()
+        self.state.pop("yielding", None); self.state.pop("yield_reason", None); self.save()
 
     def watch(self) -> None:
         lock = self.directory / "worker.lock"
@@ -292,6 +310,8 @@ class Patrol:
                     self.yield_to_verify(stop)
                     if stop.exists():
                         break
+                    if self.pass_release and (verify.index_of(self.remote) or {}).get("last_consistent") != self.pass_release:
+                        break   # 发布已前进：从头扫新发布，已扫的旧发布结果不再有意义
                     self.state.update(position=index + 1, route=route); self.save()
                     code, log = self.check(policy["check"], route, index)
                     self.record(route, code, log, sha)
@@ -408,7 +428,7 @@ def status_lines(remote: Path, detail: bool = False) -> list[str]:
     alive = pid.isdigit() and psutil.pid_exists(int(pid))
     if not state:
         return [f"- 进度｜{'在跑' if alive else '没在跑'}｜尚无记录"]
-    running = ("让路（常驻验证在跑页面）" if state.get("yielding") else "在跑") if alive else "没在跑"
+    running = (f"让路（{state.get('yield_reason') or '常驻验证在跑页面'}）" if state.get("yielding") else "在跑") if alive else "没在跑"
     head = (f"- 进度｜{running}｜第 {state.get('pass', 0)} 遍 "
             f"{state.get('position', 0)}/{state.get('total', '?')}｜main@{(state.get('commit') or '')[:12]}")
     lines = [head]
