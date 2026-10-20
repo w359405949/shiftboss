@@ -75,10 +75,24 @@ def install_entry(repo: Path, check: bool) -> bool:
     return True
 
 
+def _matches_upstream(repo: Path, name: str) -> bool:
+    """origin/main 上该文件已与包内一致。"""
+    import subprocess
+    data = wanted(repo).get(repo / name)
+    shown = subprocess.run(["git", "-C", str(repo), "show", f"origin/main:{name}"], capture_output=True)
+    return data is not None and shown.returncode == 0 and shown.stdout == data
+
+
 def install(repo: Path, check: bool) -> bool:
     stale = drift(repo)
     for name in extra(repo):
         print(f"文档目录里多出（包内已无，原样保留）：{name}")
+    if check:
+        # 派活方改包内文档并同步推送后，进行中的执行方副本尚未合入 main：这不是副本的错，合入即同步。
+        behind = [name for name in stale if _matches_upstream(repo, name)]
+        for name in behind:
+            print(f"工作流文档 {name} 落后 origin/main（包内已更新并已推送），合入 origin/main 即同步")
+        stale = [name for name in stale if name not in behind]
     if not stale:
         return True
     if check:
