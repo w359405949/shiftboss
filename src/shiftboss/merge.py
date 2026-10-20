@@ -834,7 +834,13 @@ def prune_line_evidence(name: str, copy: str | None) -> None:
     for target in [*local, *temp]:
         if target.is_dir():
             size = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
-            shutil.rmtree(target)
+            copy_root = next((path for path in copies if target.is_relative_to(path)), None)
+            if copy_root and subprocess.run(["git", "-C", str(copy_root), "ls-files", "--", str(target)],
+                                            capture_output=True, text=True).stdout.strip():
+                # 仓库也跟踪着同名目录（如 out/review-code-core）：只清未跟踪的，已跟踪的删了会被当成改动提交。
+                subprocess.run(["git", "-C", str(copy_root), "clean", "-fdxq", "--", str(target)], check=False)
+            else:
+                shutil.rmtree(target)
             print(f"  已删证据 {target}（{size / 2**30:.2f} GiB）", flush=True)
 
 
