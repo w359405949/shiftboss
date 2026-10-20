@@ -12,6 +12,11 @@
 状态摘要单列「待你补充」，与要用户取舍的「待你定」分开：
     shiftboss need "要补充什么、用来做什么" [--line 任务书名]
     shiftboss need --resolve <编号> "用户补充的内容"
+
+派活方卡住、反复失败或拿不准原因的事用 `shiftboss puzzle` 登记，编号以 P 开头，状态摘要单列「我的困惑」：
+不等用户答复、不挡收尾，只让用户看见派活方在哪件事上兜圈子，必要时插手；解决后 `--resolve` 写明原因与处理。
+    shiftboss puzzle "卡在哪、试过什么、现在怎么处理" [--line 任务书名]
+    shiftboss puzzle --resolve <编号> "查明的原因与处理"
 """
 from __future__ import annotations
 
@@ -40,7 +45,9 @@ def save(items: list[dict], repo: Path | None = None) -> None:
     path.write_text(json.dumps(items, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-KINDS = {"decide": "D", "need": "E"}
+KINDS = {"decide": "D", "need": "E", "puzzle": "P"}
+PROG = {"decide": "ask", "need": "need", "puzzle": "puzzle"}
+EMPTY = {"decide": "没有待你定的事项", "need": "没有待你补充的事项", "puzzle": "没有困惑"}
 
 
 def pending(repo: Path | None = None, kind: str = "decide") -> list[dict]:
@@ -65,8 +72,12 @@ def need_main(argv: list[str] | None = None) -> int:
     return main(argv, kind="need")
 
 
+def puzzle_main(argv: list[str] | None = None) -> int:
+    return main(argv, kind="puzzle")
+
+
 def main(argv: list[str] | None = None, kind: str = "decide") -> int:
-    parser = argparse.ArgumentParser(prog="shiftboss " + ("need" if kind == "need" else "ask"), description=__doc__,
+    parser = argparse.ArgumentParser(prog="shiftboss " + PROG[kind], description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("question", nargs="?", help="要用户定夺的问题；与 --resolve 连用时为用户的答复")
     parser.add_argument("--option", action="append", default=[], help="一个选项，可重复")
@@ -79,7 +90,7 @@ def main(argv: list[str] | None = None, kind: str = "decide") -> int:
     if args.resolve:
         item = next((item for item in items if item["id"] == args.resolve), None)
         if item is None:
-            raise SystemExit(f"没有待定事项 {args.resolve}")
+            raise SystemExit(f"没有事项 {args.resolve}")
         if not args.question:
             raise SystemExit("--resolve 须给出用户的答复原文")
         item["answer"] = args.question
@@ -89,7 +100,7 @@ def main(argv: list[str] | None = None, kind: str = "decide") -> int:
         return 0
     if args.list or not args.question:
         lines = summary_lines(pending(kind=kind))
-        print("\n".join(lines) if lines else ("没有待你补充的事项" if kind == "need" else "没有待你定的事项"))
+        print("\n".join(lines) if lines else EMPTY[kind])
         return 0
     if args.recommend is not None and not 1 <= args.recommend <= len(args.option):
         raise SystemExit("--recommend 须是已给选项的序号")

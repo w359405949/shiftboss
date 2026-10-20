@@ -1084,7 +1084,7 @@ def main(argv: list[str] | None = None) -> int:
         steps = worker.step_count(old_id)
         if not launch_tui(copy_win, RECOVER_PROMPT, args.taskbook, resume_id=old_id,
                           executor=executor):
-            print("恢复失败：执行方进程没起来（多为网络问题）；台账不改。")
+            print("恢复失败：执行方进程没起来；台账不改。原因的查法同派活失败。")
             return 2
         # 恢复出来的会话是活的，**要重新计进额度**，否则它不占位、下一份就能挤进来。
         entry.pop("closed", None)
@@ -1247,7 +1247,10 @@ def main(argv: list[str] | None = None) -> int:
             if attempt < LAUNCH_ATTEMPTS:
                 print(f"  执行方没起来或随即退出（第 {attempt} 次），重试" + (f"；屏幕输出 {saved}" if saved else ""), flush=True)
         else:
-            print(f"派活失败：执行方进程连续 {LAUNCH_ATTEMPTS} 次没起来（多为网络问题）；台账不记，这一轮的交代已推送，稍后重派即可，不必查原因。")
+            tail = [line for line in (saved.read_text(encoding="utf-8").splitlines() if saved else []) if line.strip()][-3:]
+            print(f"派活失败：执行方进程连续 {LAUNCH_ATTEMPTS} 次没起来；台账不记，这一轮的交代已推送。"
+                  + ("最后一次退出前的输出：\n    " + "\n    ".join(tail) if tail else "没抓到屏幕输出。")
+                  + "\n先据此分清是任务书、副本这边的问题（要修）还是执行方自身的问题（隔段时间重派，不深究）。")
             return 2
         # 恢复不一定新建会话记录；找不到新的就还是原会话。
         new_id = new_id or (None if fresh else old_id)

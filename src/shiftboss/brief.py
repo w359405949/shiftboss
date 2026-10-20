@@ -1,4 +1,4 @@
-"""派活方每次汇报末尾原样附上的状态摘要：该你处理、待你定、待你补充、在跑、待核对、已合并、排队、派活方待办、门铃、机器、常驻验证、常驻巡检。
+"""派活方每次汇报末尾原样附上的状态摘要：该你处理、待你定、待你补充、我的困惑、在跑、待核对、已合并、排队、派活方待办、门铃、机器、常驻验证、常驻巡检。
 
 Stop 钩子（`shiftboss.hooks.show_brief`）在每次回复结束时现算并显示给用户。
 """
@@ -155,6 +155,10 @@ def main(argv: list[str] | None = None) -> int:
     needs = decisions.pending(repo, kind="need")
     out.append(f"【待你补充】{len(needs)}" if needs else "【待你补充】：无")
     out += decisions.summary_lines(needs)
+    # 困惑不等答复、不计入「该你处理」：只让用户看见派活方卡在哪。
+    puzzles = decisions.pending(repo, kind="puzzle")
+    out.append(f"【我的困惑】{len(puzzles)}" if puzzles else "【我的困惑】：无")
+    out += decisions.summary_lines(puzzles)
     from shiftboss.dispatch import read_quota
     from shiftboss.taskbook import DEPENDENCY_KEYS, Taskbook, unmet_dependencies
     from shiftboss.taskbook import execution_status

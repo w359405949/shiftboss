@@ -15,6 +15,7 @@ COMMANDS = {
     "ask": "decisions",     # 待用户定夺的事项：登记、列出、记下答复
     "automerge": "automerge",  # 自动合入的线：列出待复核、复核完确认
     "need": "need",         # 待用户补充的数据或证据：登记、列出、记下补充
+    "puzzle": "puzzle",     # 派活方的困惑：卡住或反复失败的事，状态摘要列出，不挡收尾
     "taskbook": "taskbook",
     "dispatch": "dispatch",
     "merge": "merge",
