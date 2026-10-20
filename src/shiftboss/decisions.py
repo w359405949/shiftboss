@@ -15,7 +15,7 @@
 
 派活方卡住、反复失败或拿不准原因的事用 `shiftboss puzzle` 登记，编号以 P 开头，状态摘要单列「我的困惑」：
 不等用户答复、不挡收尾，只让用户看见派活方在哪件事上兜圈子，必要时插手；解决后 `--resolve` 写明原因与处理。
-    shiftboss puzzle "卡在哪、试过什么、现在怎么处理" [--line 任务书名,任务书名]
+    shiftboss puzzle "卡在哪、试过什么、现在怎么处理；命令失败附复现命令与报错首行" [--line 任务书名,任务书名]
 `--line` 列出的线在简报里改为「等 困惑 P…」，不再算可派；隔段重试另登记 `shiftboss todo --when after:30m`。
     shiftboss puzzle --resolve <编号> "查明的原因与处理"
 """
