@@ -90,8 +90,8 @@ class Patrol:
             git(self.repo, "clone", "--no-checkout", str(self.remote), str(self.workspace))
             marker.write_text(str(self.remote), encoding="utf-8")
 
-    def policy(self) -> dict:
-        plan = json.loads((self.workspace / config.plan_file(self.repo)).read_text(encoding="utf-8"))
+    def policy(self, workspace: Path | None = None) -> dict:
+        plan = json.loads(((workspace or self.workspace) / config.plan_file(self.repo)).read_text(encoding="utf-8"))
         patrol = (plan.get("verification") or {}).get("patrol")
         if not patrol or not patrol.get("list") or not patrol.get("check"):
             raise ValueError(f"{config.plan_file(self.repo)} 的 verification.patrol 缺 list 或 check")
@@ -162,6 +162,9 @@ class Patrol:
         elif not marker.is_file() or marker.read_text(encoding="utf-8") != str(self.remote):
             raise ValueError("拒绝接管不是巡检创建的定时检查副本")
         sha = self.checkout_tip(workspace)
+        # 定时项跑 main 最新，配置也取同一提交：巡检副本检出的是发布提交，可能缺新登记的上限。
+        current = {entry["name"]: entry for entry in self.policy(workspace).get("periodic") or []}
+        due = [current.get(item["name"], item) for item in due]
         for item in due:
             name, previous = item["name"], results.get(item["name"]) or {}
             if previous.get("commit") == sha:
