@@ -170,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
         # 等用户答复只挡派活，不挡核对已交回的分支。
         waits = dependency_waits + tuple(f"用户答 {item['id']}" for item in asks if item.get("line") == name)
         waits += tuple(f"用户补充 {item['id']}" for item in needs if item.get("line") == name)
+        waits += tuple(f"困惑 {item['id']}" for item in puzzles if name in (item.get("line") or "").split(","))
         wait = f"｜等 {'、'.join(waits)}" if waits else ""
         unreviewed = pushed.startswith("可核对") or state.startswith("做完了没推")
         if state.startswith("在干活"):

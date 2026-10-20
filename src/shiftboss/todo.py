@@ -6,6 +6,7 @@
     publish:<提交>    常驻验证的最近一次发布已包含该提交
     archived:<任务书>  该任务书已归档
     answered:<编号>    用户已答复该待定事项（D）或已补充（E）
+    after:<时长>       登记后过了这么久（如 30m、2h），用于隔段时间重试
     省略              立即可做
 
 用法：
@@ -43,8 +44,10 @@ def save(remote: Path, items: list[dict], last: int | None = None) -> None:
 
 
 def add(remote: Path, text: str, when: str | None = None) -> str:
-    if when and not re.fullmatch(r"(publish|archived|answered):\S+", when):
-        raise ValueError("条件写成 publish:<提交>、archived:<任务书> 或 answered:<编号>")
+    if when and (match := re.fullmatch(r"after:(\d+)([mh])", when)):
+        when = f"at:{int(time.time()) + int(match[1]) * (60 if match[2] == 'm' else 3600)}"
+    elif when and not re.fullmatch(r"(publish|archived|answered):\S+", when):
+        raise ValueError("条件写成 publish:<提交>、archived:<任务书>、answered:<编号> 或 after:<分钟m|小时h>")
     items = load(remote)
     number = max([(read_state(store(remote)) or {}).get("last", 0),
                   *(int(item["id"][1:]) for item in items)]) + 1
@@ -80,6 +83,8 @@ def condition(remote: Path, repo: Path, when: str | None) -> tuple[bool, str]:
         from shiftboss.taskbook import Taskbook
         book = Taskbook.find(repo, value)
         return bool(book and book.archived), f"等 {value} 归档"
+    if kind == "at":
+        return time.time() >= int(value), f"等到 {time.strftime('%H:%M', time.localtime(int(value)))}"
     if kind == "answered":
         from shiftboss import decisions
         open_ids = {item.get("id") for item in decisions.load(repo) if item.get("answer") is None}
