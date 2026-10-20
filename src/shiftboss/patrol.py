@@ -461,7 +461,7 @@ def status_lines(remote: Path, detail: bool = False) -> list[str]:
     return lines
 
 
-def stop_now(remote: Path) -> int:
+def stop_now(remote: Path, workspace: Path) -> int:
     import psutil
     lock = state_dir(remote) / "worker.lock"
     pid = lock.read_text(encoding="utf-8").strip() if lock.exists() else ""
@@ -478,6 +478,9 @@ def stop_now(remote: Path) -> int:
     else:
         print("常驻巡检没在跑")
     lock.unlink(missing_ok=True)
+    # 进程树已杀尽，副本里残留的 git 锁必是被打断的检出留下的；不清掉下次拉起即报错退出。
+    for copy in (workspace, *(workspace.with_name(workspace.name + suffix) for suffix in ("-periodic", "-automerge"))):
+        (copy / ".git" / "index.lock").unlink(missing_ok=True)
     return 0
 
 
@@ -517,7 +520,7 @@ def main(argv: list[str] | None = None) -> int:
         claim(remote, args.route, args.taskbook); return 0
     if args.command == "stop":
         if args.now:
-            return stop_now(remote)
+            return stop_now(remote, workspace)
         state_dir(remote).mkdir(parents=True, exist_ok=True)
         (state_dir(remote) / "stop").touch(); print("已请求在当前页核完后停止"); return 0
     if args.command == "start":
