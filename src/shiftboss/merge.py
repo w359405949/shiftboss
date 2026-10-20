@@ -826,8 +826,11 @@ def prune_line_evidence(name: str, copy: str | None) -> None:
     if users:
         print(f"  保留证据 {Path(copy) / 'out' / name if copy else 'out/' + name}：在办任务书 {'、'.join(users)} 引用", flush=True)
         copy = None
-    out = Path(copy) / "out" if copy else None
-    local = [out / name, *out.glob(f"*/{name}")] if out else []
+    # 一条线换过副本（关掉重开、续派到别的副本）时，旧副本里也留着它的证据：所有执行副本都按名删。
+    from shiftboss.config import copies_dir
+    from shiftboss.inbox import origin_git_dir
+    copies = sorted(path for path in copies_dir(origin_git_dir(REPO)).iterdir() if (path / "out").is_dir()) if copy else []
+    local = [target for path in copies for target in (path / "out" / name, *(path / "out").glob(f"*/{name}"))]
     for target in [*local, *temp]:
         if target.is_dir():
             size = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
