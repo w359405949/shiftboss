@@ -22,7 +22,7 @@
 **跑什么**：`regen.json` 的 `verification.test_directories` 声明全量测试目录，
 文件由每次运行现发现；每个 `test_*.py` 都载入，**导入异常也变成失败记录**，
 不中断后续文件；跳过的测试单列，不冒充已执行。
-先生成，再跑全部测试、未被全量套件覆盖的原闸、`verification.build` 打包命令，最后跑 `verification.pages` 页面闸（按环境变量 `SHIFTBOSS_VERIFY_BASE`／`SHIFTBOSS_VERIFY_HEAD` 给出的本批范围只核改到的页面，不计入预算）；
+先生成并当即补 main（发布不看测试结果，不等后续阶段），再跑全部测试、未被全量套件覆盖的原闸、`verification.build` 打包命令，最后跑 `verification.pages` 页面闸（按环境变量 `SHIFTBOSS_VERIFY_BASE`／`SHIFTBOSS_VERIFY_HEAD` 给出的本批范围只核改到的页面，不计入预算）；
 **普通测试红不阻止其余阶段**。生成失败同样报告，已有结果不冒充新生成结果。
 生成输入自上次派生物一致的提交以来没有改动时跳过生成（判法见 `generation_needed`）。
 验证用固定源提交；测试驱动按内容哈希快照，避免控制副本更新时中途换驱动。
@@ -438,6 +438,24 @@ class Verifier:
         git(self.workspace,'fetch','--quiet','origin','main')
         return git(self.workspace,'rev-parse','FETCH_HEAD').stdout.strip()
 
+    def publish_generated(self, sha: str, report: dict, failures: list) -> None:
+        generated=report['generated_commit']
+        if generated == sha: report['publication']='该源提交的派生物已一致'
+        elif not self.publish: report['publication']='仅报告模式；生成提交保存在验证副本'
+        elif (tip:=self.current()) != sha:
+            report['publication']=self.publish_onto(tip, generated)
+        else:
+            pushed=git(self.workspace,'push','origin',f'{generated}:refs/heads/main',check=False)
+            if pushed.returncode:
+                report['publication']='推送被拒绝，未覆盖 main'
+                if self.current()==sha: failures.append({'id':'stage:publish','detail':pushed.stderr})
+            else: report['publication']='已快进补齐 main'
+        if report['publication'] in ('已快进补齐 main','该源提交的派生物已一致'):
+            self.index['last_consistent']=generated
+        elif report['publication'].startswith('main 已前进，生成提交已三方合并后推送'):
+            self.index['last_consistent']=generated
+        self.save()
+
     def publish_onto(self, tip: str, generated: str) -> str:
         """main 在生成期间前进时，把生成提交三方合并到最新 main 再推。
 
@@ -537,6 +555,9 @@ class Verifier:
             if generation_ok and not skip:
                 commit_generated(self.workspace,sha,old_files,plan_commands(plan))
                 report['generated_commit']=git(self.workspace,'rev-parse','HEAD').stdout.strip()
+            if generation_ok:
+                # 发布不看测试与页面闸结果，生成完即推：闸与页面闸要四五十分钟，执行方与巡检的浏览器判据都在等发布物。
+                self.publish_generated(sha, report, failures)
             if directories:
                 # Every selected file is loaded, including import failures.
                 test_report=self.workspace/'out/workflow-full-tests.json'
@@ -576,20 +597,7 @@ class Verifier:
                 # 列出改动的路径：只说「被改动」的票据无从归因。
                 lines=changed.splitlines()
                 more=f'\n（另有 {len(lines)-40} 条）' if len(lines)>40 else ''
-                failures.append({'id':'stage:workspace-changed','detail':'验证期间工作树被改动，不发布生成提交：\n'+'\n'.join(lines[:40])+more})
-                generation_ok=False
-            if generation_ok:
-                generated=report['generated_commit']
-                if generated == sha: report['publication']='该源提交的派生物已一致'
-                elif not self.publish: report['publication']='仅报告模式；生成提交保存在验证副本'
-                elif (tip:=self.current()) != sha:
-                    report['publication']=self.publish_onto(tip, generated)
-                else:
-                    pushed=git(self.workspace,'push','origin',f'{generated}:refs/heads/main',check=False)
-                    if pushed.returncode:
-                        report['publication']='推送被拒绝，未覆盖 main'
-                        if self.current()==sha: failures.append({'id':'stage:publish','detail':pushed.stderr})
-                    else: report['publication']='已快进补齐 main'
+                failures.append({'id':'stage:workspace-changed','detail':'验证期间工作树被改动：\n'+'\n'.join(lines[:40])+more})
         except Exception as exc:
             failures.append({'id':'stage:infrastructure','detail':str(exc)})
         # 产出 1 MB 的项目，一轮生成＋闸超过预算就是生成或测试膨胀了：报红，先查膨胀。
