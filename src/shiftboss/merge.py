@@ -88,6 +88,10 @@ def preflight() -> None:
     status = git("status", "--porcelain=v1", "--untracked-files=all").stdout
     if status:
         raise MergeError(f"工作树不干净，尚未开始合并：\n{status.rstrip()}")
+    # 本地 main 落后已取回的 origin/main 时，写入范围按旧基准比，会把 main 自己的生成提交算到该线头上。
+    upstream = git("rev-parse", "--verify", "--quiet", "@{upstream}", check=False).stdout.strip()
+    if upstream and git("merge-base", "--is-ancestor", upstream, "HEAD", check=False).returncode:
+        raise MergeError("本地分支落后已取回的上游：先 `git pull --no-rebase` 再合并")
     generation_plan()
 
 
