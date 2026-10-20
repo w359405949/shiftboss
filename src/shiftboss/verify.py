@@ -261,6 +261,7 @@ def show_report(remote: Path) -> str:
     failures=report['failures']; claims=read_state(state_dir(remote)/'claims.json')
     trend = f"较上次验证 {report['delta']:+d}" if report['delta'] is not None else '起始基线，无可比前序'
     lines.append(f"  最近 {latest[:12]}：红 {len(failures)} 条，{trend}；测试文件 {len(report.get('test_files', []))}，测试 {report.get('tests', 0)}，跳过 {len(report.get('skipped', []))}。")
+    if report.get('over_budget'): lines.append(f"  耗时：{report['over_budget']}")
     lines.append(f"  生成提交：{report.get('generated_commit') or '未完成'}；补齐：{report.get('publication','未补齐')}")
     for item in failures:
         claim=claims.get(item['ticket'])
@@ -484,7 +485,7 @@ class Verifier:
         cmd=[sys.executable,*command[1:]] if command[0]=='python' else command
         log=self.directory/'logs'/f'{sha}-{label}.log'
         start=time.monotonic()
-        # 卡死才结束：上限取整轮预算的两倍。超出预算本身照报 stage:budget；并行负载下按预算就杀会让生成发布不了。
+        # 卡死才结束：上限取整轮预算的两倍。超出预算本身只记提示；并行负载下按预算就杀会让生成发布不了。
         # 页面闸不计预算，耗时随本批改到的页面数变（全量约半小时），不套这个上限；单页卡死由页面闸自己的会话期限兜。
         budget=config.verify_budget_minutes(self.workspace)
         limit=budget*60*2 if budget and not label.startswith('pages-') else None
@@ -600,14 +601,15 @@ class Verifier:
                 failures.append({'id':'stage:workspace-changed','detail':'验证期间工作树被改动：\n'+'\n'.join(lines[:40])+more})
         except Exception as exc:
             failures.append({'id':'stage:infrastructure','detail':str(exc)})
-        # 产出 1 MB 的项目，一轮生成＋闸超过预算就是生成或测试膨胀了：报红，先查膨胀。
+        # 超过预算只记一行提示，不报红：锁屏降频与并行负载能让同一份代码慢数倍，耗时不作硬门槛；
+        # 派活方看到提示再对照改动路径数与各阶段比例判断是否膨胀。
         budget=config.verify_budget_minutes(self.workspace)
         # 页面闸按本批改到的页面开浏览器，耗时随改动量变，不计入生成与闸的预算。
         spent=sum(stage.get('seconds') or 0 for name,stage in report['stages'].items() if not name.startswith('pages-'))
         if budget and spent>budget*60:
             slow=sorted(((stage.get('seconds') or 0,name) for name,stage in report['stages'].items() if not name.startswith('pages-')),reverse=True)[:5]
-            failures.append({'id':'stage:budget','detail':f'生成与闸合计 {spent/60:.1f} 分钟，超过预算 {budget} 分钟；先查生成与测试是否膨胀。最慢：'
-                             +'；'.join(f'{name} {seconds/60:.1f} 分钟' for seconds,name in slow)})
+            report['over_budget']=(f'生成与闸合计 {spent/60:.1f} 分钟，超过预算 {budget} 分钟（只作参考）。最慢：'
+                                   +'；'.join(f'{name} {seconds/60:.1f} 分钟' for seconds,name in slow))
         observed=time.time()
         unique={f['id']:f for f in failures}
         baseline=self.index.get('last')
