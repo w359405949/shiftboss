@@ -64,19 +64,21 @@ def running_lines(repo: Path) -> list[tuple[str, str]]:
     return out
 
 
-def restart_verifier(check: bool) -> None:
-    """旧锁在、进程没了＝重启前在跑、被中断；没有锁的不起（那是有意停的）。"""
+def restart_resident(check: bool) -> None:
+    """常驻验证与常驻巡检：旧锁在、进程没了＝重启前在跑、被中断；没有锁的不起（那是有意停的）。"""
     import psutil
-    from shiftboss.verify import origin, state_dir
-    lock = state_dir(origin(REPO)) / "worker.lock"
-    if not lock.exists():
-        return
-    holder = lock.read_text(encoding="utf-8").strip()
-    if holder.isdigit() and psutil.pid_exists(int(holder)):
-        return
-    print(f"常驻验证 PID {holder or '无'} 已不在{'（只检查）' if check else '，重起'}")
-    if not check:
-        subprocess.run([sys.executable, "-B", "-m", "shiftboss.verify", "start", "--publish"], cwd=REPO)
+    from shiftboss import patrol, verify
+    for title, lock, argv in (
+            ("常驻验证", verify.state_dir(verify.origin(REPO)) / "worker.lock", ["shiftboss.verify", "start", "--publish"]),
+            ("常驻巡检", patrol.state_dir(verify.origin(REPO)) / "worker.lock", ["shiftboss.patrol", "start"])):
+        if not lock.exists():
+            continue
+        holder = lock.read_text(encoding="utf-8").strip()
+        if holder.isdigit() and psutil.pid_exists(int(holder)):
+            continue
+        print(f"{title} PID {holder or '无'} 已不在{'（只检查）' if check else '，重起'}")
+        if not check:
+            subprocess.run([sys.executable, "-B", "-m", *argv], cwd=REPO)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -86,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--check", action="store_true", help="只报告，不动手")
     args = ap.parse_args(argv)
 
-    restart_verifier(args.check)
+    restart_resident(args.check)
     lines = running_lines(REPO)
     if not lines:
         print(f"shiftboss recover：{REPO.parent} 没有该在执行而进程没了的线。")
