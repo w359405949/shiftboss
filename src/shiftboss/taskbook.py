@@ -578,6 +578,16 @@ def main(argv=None) -> int:
             pairs["你的工作副本"] = copy_path(repo, pairs["你的工作副本"])
         if SCOPE_KEY in pairs:
             pairs[SCOPE_KEY] = dependency_list(pairs[SCOPE_KEY])
+            # 推送守卫只认显式写出的受保护目录：父目录（如 engine/）不授予其下的受保护目录写权，
+            # 写成父目录的线做完才在推送时被拒（派活方两次因此让执行方白做一轮）。
+            from shiftboss.config import load
+            protected = load(repo).get("guard", {}).get("protected", [])
+            implied = [p for p in protected if p not in pairs[SCOPE_KEY]
+                       and any(p.startswith(s) and p != s for s in pairs[SCOPE_KEY])]
+            if implied:
+                print(f"写入范围的父目录不授予受保护目录写权（推送守卫只认显式写出的）：要改就把 "
+                      f"{'、'.join(implied)} 也写进去；不改则从父目录换成具体子目录")
+                return 2
         for key in DEPENDENCY_KEYS:
             if key in pairs:
                 pairs[key] = dependency_list(pairs[key])
