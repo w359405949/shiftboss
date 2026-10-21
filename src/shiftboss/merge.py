@@ -1117,6 +1117,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="与 --done 同用：余下的活已由该任务书接手，执行状态为「进展」也收")
     ap.add_argument("--outputs-unchanged", action="store_true",
                     help="生成器改动经核对不改变产物（如逐字节对照），免两段合入")
+    ap.add_argument("--producer-phase", action="store_true",
+                    help="合交回写明的生成器提交（两段合入的第一段）：其中的编辑器文件是生成器的输入；读取方仍须等发布后合")
     ap.add_argument("--unmerged", action="store_true",
                     help="与 --done 同用：核对后决定不合入，分支保留，分支上的交回带进归档")
     args = ap.parse_args(argv)
@@ -1172,7 +1174,7 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(stale)
         if outside := merge_scope_reason(target):
             raise MergeError(outside)
-        if producer := producer_first_reason(target, args.outputs_unchanged):
+        if producer := producer_first_reason(target, args.outputs_unchanged or args.producer_phase):
             raise MergeError(producer)
         if ignored := merge_ignored_reason(target):
             raise MergeError(ignored)
