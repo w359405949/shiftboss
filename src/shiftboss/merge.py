@@ -875,6 +875,37 @@ def producer_first_reason(target: str, outputs_unchanged: bool) -> str | None:
     return None
 
 
+def guarded_check_paths() -> list[str]:
+    """检查本身：快速检查运行的脚本、经用户同意登记的测试项、测试目录与基线文件。"""
+    from shiftboss import config
+    paths = {arg for item in config.fast_commands() for arg in item.get("run", [])
+             if re.search(r"\.(mjs|js|py)$", arg) and "/" in arg}
+    paths |= {entry.split("::", 1)[0] for entry in config.approved_tests() if "/" in entry}
+    paths |= {d.rstrip("/") + "/" for d in config.assertion_dirs()}
+    return sorted(paths)
+
+
+def check_change_reason(target: str, reviewed: bool) -> str | None:
+    """分支改了检查本身时拒绝，派活方核对后以 --checks-reviewed 合入。
+
+    合并时跑的是合并后的检查，被改松的检查会用改松的逻辑放行自己；写入范围授予 engine/tools/ 的线
+    （生成器治理诸线）在规则上能改检查脚本与基线，只靠派活方读交回发现不了。
+    """
+    if reviewed:
+        return None
+    base = git("merge-base", "HEAD", target).stdout.strip()
+    changed = [line for line in git("diff", "--name-only", "--no-renames", f"{base}...{target}").stdout.splitlines() if line]
+    guarded = guarded_check_paths()
+    hits = [path for path in changed
+            if any(path == g or (g.endswith("/") and path.startswith(g)) for g in guarded)
+            or re.search(r"(^|/)[^/]*baseline[^/]*\.json$", path)]
+    if not hits:
+        return None
+    stat = git("diff", "--stat", f"{base}...{target}", "--", *hits).stdout.rstrip()
+    return (f"{target[:12]} 改了检查本身（检查脚本、测试或基线）：\n{stat}\n"
+            "核对这些改动是任务书要求的、没有放松既有断言后，加 --checks-reviewed 合入")
+
+
 def merge_scope_reason(target: str) -> str | None:
     """要合的提交属于声明了写入范围的在办线时，列出它自分叉以来写到范围外的路径并拒绝。"""
     from shiftboss.taskbook import Taskbook, out_of_scope
@@ -1120,6 +1151,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="生成器改动经核对不改变产物（如逐字节对照），免两段合入")
     ap.add_argument("--producer-phase", action="store_true",
                     help="合交回写明的生成器提交（两段合入的第一段）：其中的编辑器文件是生成器的输入；读取方仍须等发布后合")
+    ap.add_argument("--checks-reviewed", action="store_true",
+                    help="分支改了检查脚本、测试或基线，派活方已逐项核对：任务书要求、未放松既有断言")
     ap.add_argument("--unmerged", action="store_true",
                     help="与 --done 同用：核对后决定不合入，分支保留，分支上的交回带进归档")
     args = ap.parse_args(argv)
@@ -1177,6 +1210,8 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(outside)
         if producer := producer_first_reason(target, args.outputs_unchanged or args.producer_phase):
             raise MergeError(producer)
+        if checks := check_change_reason(target, args.checks_reviewed):
+            raise MergeError(checks)
         if ignored := merge_ignored_reason(target):
             raise MergeError(ignored)
         print(f"合并 {args.ref} ({target[:12]})：", flush=True)
