@@ -693,6 +693,14 @@ def copies_by_preference(executor: str) -> list[Path]:
     return inside + [p for p in existing if p not in inside]
 
 
+def granted_protected(book) -> list[str]:
+    """写入范围里落在受保护目录（`shiftboss.toml` `[guard]`）下的项。"""
+    from shiftboss.config import load
+    protected = load(REPO).get("guard", {}).get("protected", [])
+    scope = book.meta().get("写入范围") or []
+    return [s for s in scope if any(s == p or s.startswith(p) for p in protected)]
+
+
 def write_note(book, message: str, executor: str = "codex") -> None:
     """把这一轮的交代写进轮次记录。**布局的事全归 `shiftboss.taskbook`。**"""
     level = book.round_level()
@@ -713,11 +721,7 @@ def write_note(book, message: str, executor: str = "codex") -> None:
             "字节表、地址、发布数据的形状是事实，用 ```text 或不带标签的围栏照写不误。")
     # 写入范围含受保护目录即授予测试与构建线写权（DONE.md 第 2 节首段）。执行方曾多次把自己读成
     # 不许写检查的开发线而停下，所以由派活在交代末尾写明，不靠它自己对照 [guard]。
-    from shiftboss.config import load
-    protected = load(REPO).get("guard", {}).get("protected", [])
-    scope = book.meta().get("写入范围") or []
-    granted = [s for s in scope if any(s == p or s.startswith(p) for p in protected)]
-    if granted:
+    if granted := granted_protected(book):
         message = (message.rstrip() + "\n\n" if message.strip() else "") + (
             f"写入范围含受保护路径 {'、'.join(f'`{p}`' for p in granted)}：按 DONE.md 第 2 节首段，"
             "本线对这些路径持测试与构建线写权，可按合同修改。")
@@ -774,7 +778,8 @@ def publish_note(book, message: str, executor: str = "codex", copy: str = "") ->
 
 def publish_locked(book, message: str, executor: str, copy: str) -> None:
     base = publication_base()
-    if message:
+    # 首轮不带交代时也要写一条：写权说明只经轮次记录送达，缺了执行方会把自己读成不许改检查与生成器的开发线。
+    if message or granted_protected(book):
         write_note(book, message, executor)
     if copy:
         book.set_meta(你的工作副本=copy)
