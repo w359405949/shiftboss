@@ -9,6 +9,7 @@
 """
 
 import subprocess
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -102,6 +103,38 @@ def scope_trespass(name: str, new: str) -> list[str]:
     return out_of_scope(name, json.loads(shown.stdout), sorted({line for line in done.stdout.splitlines() if line}))
 
 
+CHECKS_KEY = "改检查"
+
+
+def check_paths(settings: dict) -> list[str]:
+    """检查本身：快速检查运行的脚本、经用户同意登记的测试项、测试目录；基线文件另按文件名认定。"""
+    merge = settings.get("merge", {})
+    paths = {arg for item in merge.get("fast_commands", []) for arg in item.get("run", [])
+             if re.search(r"\.(mjs|js|py)$", arg) and "/" in arg}
+    paths |= {entry.split("::", 1)[0] for entry in settings.get("verify", {}).get("approved_tests", []) if "/" in entry}
+    paths |= {d.rstrip("/") + "/" for d in merge.get("assertion_dirs", [])}
+    return sorted(paths)
+
+
+def check_trespass(name: str, new: str, settings: dict) -> list[str]:
+    """表头未声明「改检查：是」的线改到的检查本身（检查脚本、测试与基线）。
+
+    写入范围常以目录授权（如生成器线授予 engine/tools/），目录里也放着检查脚本与基线；
+    派活时就分清本线是否改检查，改错了在推送时拒收，不等合并（用户提议）。
+    """
+    import json
+    shown = git("show", f"refs/heads/main:{PLANS_DIR}/{name}/meta.json")
+    if shown.returncode or json.loads(shown.stdout).get(CHECKS_KEY) == "是":
+        return []
+    done = git("diff", "--name-only", "--no-renames", "refs/heads/main..." + new)
+    if done.returncode:
+        return []
+    guarded = check_paths(settings)
+    return [path for path in done.stdout.splitlines() if path and (
+        any(path == g or (g.endswith("/") and path.startswith(g)) for g in guarded)
+        or re.search(r"(^|/)[^/]*baseline[^/]*\.json$", path))]
+
+
 def ignored_additions(new: str) -> list[str]:
     """分支自与 main 分叉以来新增的、被根 `.gitignore` 忽略的路径（强行提交的一次性产物）。"""
     from shiftboss.taskbook import ignored_paths
@@ -156,6 +189,13 @@ def main() -> int:
         if outside := scope_trespass(name, new):
             print(f"拒收 {ref}：写到了任务书表头「写入范围」之外，撤回这些改动或请派活方调整范围：", file=sys.stderr)
             for path in outside[:40]:
+                print(f"  {path}", file=sys.stderr)
+            trespassed = True
+            continue
+        if touched := check_trespass(name, new, settings):
+            print(f"拒收 {ref}：改动了检查本身（检查脚本、测试或基线），任务书表头未声明「改检查：是」；"
+                  "撤回这些改动，确需改检查的写进交回由派活方定：", file=sys.stderr)
+            for path in touched[:40]:
                 print(f"  {path}", file=sys.stderr)
             trespassed = True
             continue
