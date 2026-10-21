@@ -868,7 +868,8 @@ def producer_first_reason(target: str, outputs_unchanged: bool) -> str | None:
                 "生成器改动不影响产物时加 --outputs-unchanged")
     from shiftboss.verify import index_of, origin
     consistent = (index_of(origin(REPO)) or {}).get("last_consistent")
-    if not consistent or git("diff", "--quiet", consistent, "HEAD", "--", *producers, check=False).returncode:
+    # 只看本分支改过的生成器文件：别的线随后合入的生成器改动与本线读取方无关。
+    if not consistent or git("diff", "--quiet", consistent, "HEAD", "--", *produced, check=False).returncode:
         return (f"{target[:12]} 的生成器部分已在 main，但派生物尚未据它重新生成（最近一致的生成提交 "
                 f"{(consistent or '无')[:12]}）；等常驻验证发布越过后再合读取方")
     return None
