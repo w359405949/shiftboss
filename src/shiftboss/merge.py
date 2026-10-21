@@ -844,6 +844,36 @@ def prune_line_evidence(name: str, copy: str | None) -> None:
             print(f"  已删证据 {target}（{size / 2**30:.2f} GiB）", flush=True)
 
 
+def producer_first_reason(target: str, outputs_unchanged: bool) -> str | None:
+    """同时改了生成器与读取方的线须两段合入：先合生成器部分，待常驻验证据它重新生成并发布后再合读取方。
+
+    合并不生成，派生物由常驻验证在后台补齐；一次合入两边时，main 上读取方已要读新字段而派生物仍是旧的，
+    在补齐前启动即崩（页面尺寸 bake 一线曾使编辑器无法打开）。生成器改动不影响产物时用 --outputs-unchanged。
+    """
+    from shiftboss import config
+    producers, consumers = config.producer_paths(), config.consumer_paths()
+    if not producers or not consumers or outputs_unchanged:
+        return None
+    base = git("merge-base", "HEAD", target).stdout.strip()
+    changed = [line for line in git("diff", "--name-only", "--no-renames", f"{base}...{target}").stdout.splitlines() if line]
+    if not any(path.startswith(tuple(consumers)) for path in changed):
+        return None
+    produced = [path for path in changed if path.startswith(tuple(producers))]
+    if not produced:
+        return None
+    pending = [line for line in git("diff", "--name-only", "HEAD", target, "--", *produced).stdout.splitlines() if line]
+    if pending:
+        return (f"{target[:12]} 同时改了生成器（{len(pending)} 个路径未合，如 {'、'.join(pending[:3])}）与读取方；"
+                "先让执行方把生成器改动单独提交成一个只含生成器的提交并合入该提交，待发布越过它再合其余部分；"
+                "生成器改动不影响产物时加 --outputs-unchanged")
+    from shiftboss.verify import index_of, origin
+    consistent = (index_of(origin(REPO)) or {}).get("last_consistent")
+    if not consistent or git("diff", "--quiet", consistent, "HEAD", "--", *producers, check=False).returncode:
+        return (f"{target[:12]} 的生成器部分已在 main，但派生物尚未据它重新生成（最近一致的生成提交 "
+                f"{(consistent or '无')[:12]}）；等常驻验证发布越过后再合读取方")
+    return None
+
+
 def merge_scope_reason(target: str) -> str | None:
     """要合的提交属于声明了写入范围的在办线时，列出它自分叉以来写到范围外的路径并拒绝。"""
     from shiftboss.taskbook import Taskbook, out_of_scope
@@ -1085,6 +1115,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="核对认定该任务书结束（做完或已拆分）：关会话并归档；不合并")
     ap.add_argument("--superseded-by", metavar="TASKBOOK",
                     help="与 --done 同用：余下的活已由该任务书接手，执行状态为「进展」也收")
+    ap.add_argument("--outputs-unchanged", action="store_true",
+                    help="生成器改动经核对不改变产物（如逐字节对照），免两段合入")
     ap.add_argument("--unmerged", action="store_true",
                     help="与 --done 同用：核对后决定不合入，分支保留，分支上的交回带进归档")
     args = ap.parse_args(argv)
@@ -1140,6 +1172,8 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(stale)
         if outside := merge_scope_reason(target):
             raise MergeError(outside)
+        if producer := producer_first_reason(target, args.outputs_unchanged):
+            raise MergeError(producer)
         if ignored := merge_ignored_reason(target):
             raise MergeError(ignored)
         print(f"合并 {args.ref} ({target[:12]})：", flush=True)

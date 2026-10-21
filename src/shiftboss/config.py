@@ -70,6 +70,16 @@ def js_module_prefixes(root: Path | None = None) -> list[str]:
     return list(_get("merge", "js_module_prefixes", [], root))
 
 
+def producer_paths(root: Path | None = None) -> list[str]:
+    """生成器代码的路径前缀：改了它又改了读取方的线须两段合入（见 `merge.producer_first_reason`）。"""
+    return list(_get("merge", "producer_paths", [], root))
+
+
+def consumer_paths(root: Path | None = None) -> list[str]:
+    """读取派生物的代码路径前缀。"""
+    return list(_get("merge", "consumer_paths", [], root))
+
+
 def js_parser(root: Path | None = None) -> str | None:
     """合并时检查对象重复键所用的 acorn ES 模块路径（相对项目根）；不配则跳过该项。"""
     return _get("merge", "js_parser", None, root)
