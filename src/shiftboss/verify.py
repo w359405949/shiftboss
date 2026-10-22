@@ -385,6 +385,9 @@ def conflict_leftovers(workspace: Path) -> list[str]:
     return sorted(hits)
 
 
+IDLE_KILL=20*60  # 常驻验证命令无输出多久判卡死
+
+
 class Verifier:
     def __init__(self, repo: Path, workspace: Path, publish=False):
         self.repo=repo.resolve(); self.remote=origin(self.repo)
@@ -485,22 +488,26 @@ class Verifier:
         cmd=[sys.executable,*command[1:]] if command[0]=='python' else command
         log=self.directory/'logs'/f'{sha}-{label}.log'
         start=time.monotonic()
-        # 卡死才结束：上限取整轮预算的两倍。超出预算本身只记提示；并行负载下按预算就杀会让生成发布不了。
-        # 页面闸不计预算，耗时随本批改到的页面数变（全量约半小时），不套这个上限；单页卡死由页面闸自己的会话期限兜。
-        budget=config.verify_budget_minutes(self.workspace)
-        limit=budget*60*2 if budget and not label.startswith('pages-') else None
+        # 卡死才结束：按进展判断，日志连续 IDLE_KILL 秒没有新输出才算卡死；总耗时不设上限（用户要求耗时不设硬门槛，
+        # 主机负载高时生成可远超预算，按总时长杀会让派生物发布不了）。页面闸照旧由自己的单页会话期限兜。
+        idle_limit=None if label.startswith('pages-') else IDLE_KILL
         with log.open('w',encoding='utf-8') as output:
             env=os.environ.copy();env['PYTHONIOENCODING']='utf-8'
             base,head=getattr(self,'batch',('',sha))
             env['SHIFTBOSS_VERIFY_BASE']=base;env['SHIFTBOSS_VERIFY_HEAD']=head
             try:
                 process=subprocess.Popen(cmd,cwd=self.workspace,stdout=output,stderr=subprocess.STDOUT,env=env,start_new_session=True)
-                try:
-                    code=process.wait(timeout=limit)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid,9); process.wait()
-                    output.write(f'\n超过预算两倍（{budget*2} 分钟）仍未结束，已结束该命令及其子进程。\n')
-                    code=124
+                last_size,last_change=-1,time.monotonic()
+                while True:
+                    try:
+                        code=process.wait(timeout=30); break
+                    except subprocess.TimeoutExpired:
+                        output.flush(); size=log.stat().st_size
+                        if size!=last_size: last_size,last_change=size,time.monotonic()
+                        elif idle_limit and time.monotonic()-last_change>idle_limit:
+                            os.killpg(process.pid,9); process.wait()
+                            output.write(f'\n连续 {idle_limit//60} 分钟没有新输出，判为卡死，已结束该命令及其子进程。\n')
+                            code=124; break
             except OSError as exc:
                 output.write(str(exc)+'\n');code=127
         return {'command':command,'returncode':code,'seconds':time.monotonic()-start,'log':str(log)}
