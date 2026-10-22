@@ -941,9 +941,10 @@ AUTOMERGE_ENV = "SHIFTBOSS_AUTOMERGE"
 def automerge_pending_reason(target: str, manual: bool) -> str | None:
     """派活方手动合一条满足自动合入条件的线时拒绝：巡检会在独立副本里合，两边同时合会撞车。
 
-    巡检对该提交拒合过的照合；巡检停摆时用 `--manual`。
+    巡检对该提交拒合过的照合；巡检停摆时用 `--manual`。巡检的自动合入副本以其属主标记认出，
+    不只靠环境变量：改动本函数前启动的巡检进程不会设该变量。
     """
-    if manual or os.environ.get(AUTOMERGE_ENV):
+    if manual or os.environ.get(AUTOMERGE_ENV) or (REPO / ".git/shiftboss-patrol-owned").is_file():
         return None
     from shiftboss import automerge
     from shiftboss.inbox import origin_git_dir
