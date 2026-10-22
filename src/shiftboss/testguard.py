@@ -55,9 +55,13 @@ def find(git: Callable[..., str], before: str, after: str | None, dirs: list[str
             found.append(f"测试目录外的测试框架导入 {path}")
     old, new = plans
     if old is not None and new is not None:
-        before_tokens = {token for gate in json.loads(old).get("gates", []) for token in gate}
-        after_tokens = {token for gate in json.loads(new).get("gates", []) for token in gate}
-        found += [f"闸里新出现 {token}" for token in sorted(after_tokens - before_tokens) if token not in approved]
+        # 按整条闸核对：调用的脚本已登记的闸放行，参数（如规则名）不单独登记。
+        before_gates = {tuple(gate) for gate in json.loads(old).get("gates", [])}
+        before_tokens = {token for gate in before_gates for token in gate}
+        for gate in json.loads(new).get("gates", []):
+            if tuple(gate) in before_gates or any(token in approved for token in gate if token.endswith(SOURCE)):
+                continue
+            found += [f"闸里新出现 {token}" for token in gate if token not in before_tokens and token not in approved]
     return found
 
 
