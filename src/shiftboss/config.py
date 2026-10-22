@@ -80,6 +80,11 @@ def generation_check_skip(root: Path | None = None) -> list[str]:
     return list(_get("merge", "generation_check_skip", [], root))
 
 
+def baseline_recompute(root: Path | None = None) -> dict:
+    """合并时只在这些基线路径上冲突即自动重算：`{paths: [前缀], run: [命令]}`；命令按合入后源码只减不增地写回基线。"""
+    return dict(_get("merge", "baseline_recompute", {}, root))
+
+
 def consumer_paths(root: Path | None = None) -> list[str]:
     """读取派生物的代码路径前缀。"""
     return list(_get("merge", "consumer_paths", [], root))

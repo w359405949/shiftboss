@@ -964,6 +964,29 @@ def generation_input_reason(target: str, reviewed: bool = False) -> str | None:
             f"执行方在副本提交后跑 `shiftboss regen --branch-check` 通过再推送；交回已附同等的全新检出生成回显并经派活方核对的，加 --generation-reviewed。")
 
 
+def baseline_conflicts() -> list[str]:
+    """落在项目登记的基线路径（`[merge] baseline_recompute.paths`）上的合并冲突。"""
+    prefixes = config.baseline_recompute().get("paths", [])
+    paths = sorted({line.split("\t", 1)[1] for line in git("ls-files", "--unmerged").stdout.splitlines() if "\t" in line})
+    return [path for path in paths if any(path == p or (p.endswith("/") and path.startswith(p)) for p in prefixes)]
+
+
+def recompute_baselines() -> str | None:
+    """按合入后源码重算登记的基线（只减不增）；拒写或失败时返回原因。
+
+    并行清理线各自收紧其他领域的计数，基线冲突是常态；打回执行方重算只是多跑一轮同一条命令。
+    """
+    spec = config.baseline_recompute()
+    command = list(spec.get("run", []))
+    if command and command[0] == "python":
+        command = [sys.executable, *command[1:]]
+    done = subprocess.run(command, cwd=REPO, capture_output=True, text=True)
+    if done.returncode:
+        return (done.stdout + done.stderr).strip()[-1500:] or f"退出码 {done.returncode}"
+    git("add", "-A", "--", *spec.get("paths", []))
+    return None
+
+
 AUTOMERGE_ENV = "SHIFTBOSS_AUTOMERGE"
 
 
@@ -1289,6 +1312,10 @@ def main(argv: list[str] | None = None) -> int:
         show(merged)
         if merged.returncode and not git("ls-files", "--unmerged").stdout:
             raise MergeError(f"git merge 失败（退出码 {merged.returncode}）")
+        # 基线冲突先取 main 一侧并标为已解决，其余冲突照常处理，树上无冲突后再按合入后源码重算。
+        if recompute := baseline_conflicts() if config.baseline_recompute().get("run") else []:
+            git("checkout", "--ours", "--", *recompute)
+            git("add", "--", *recompute)
         try:
             resolve_derived(files, before)
         except MergeError:
@@ -1310,6 +1337,12 @@ def main(argv: list[str] | None = None) -> int:
                 f"\n下一步：打回该线重新合并——在 shiftboss/plans/{name}/rounds.md 追加本轮交代"
                 "（合入 origin/main、解决上列冲突、受影响的判据在合入后重跑），"
                 f"提交推送后 `shiftboss dispatch {name} -m ...`；冲突不算返工，不用 --rejected 与 --rework。") from None
+        if recompute:
+            if why := recompute_baselines():
+                git("merge", "--abort")
+                raise MergeError(f"基线冲突 {len(recompute)} 个，重算拒写或失败，已撤回：\n{why}\n"
+                                 "下一步：打回该线合入 origin/main 后重交。")
+            print(f"基线冲突 {len(recompute)} 个：已取 main 一侧并按合入后源码重算。", flush=True)
         if git("rev-parse", "--verify", "--quiet", "MERGE_HEAD", check=False).returncode:
             print("目标已合入；未生成、未跑测试。", flush=True)
             close_merged_sessions(target)
