@@ -935,6 +935,35 @@ def merge_scope_reason(target: str) -> str | None:
     return None
 
 
+def generation_input_reason(target: str, reviewed: bool = False) -> str | None:
+    """分支改到生成输入（生成计划阶段输入与代码闭包，含共用层）时，须有 `shiftboss regen --branch-check` 的通过记录（用户定 D43）。
+
+    记录的提交在分支上、且本分支改到的生成输入在记录提交与要合的提交之间未再变动，即认；之后合进来的 main 改动不作废记录。
+    `reviewed`：派活方已读过交回里同等的全新检出生成回显（派活方自己不跑生成）。
+    """
+    if reviewed:
+        return None
+    from shiftboss import regen
+    stages = regen.validate_stages(regen.load_plan())
+    if not stages:
+        return None
+    base = git("merge-base", "HEAD", target, check=False).stdout.strip()
+    paths = sorted(filter(None, git("diff", "--name-only", "--no-renames", base, target, check=False).stdout.splitlines()))
+    chosen = regen.affected_stages(regen.closure_stages(stages), paths)
+    if not chosen:
+        return None
+    inputs = sorted({p for p in paths if any(regen.matches_prefix(p, prefix) for s in chosen for prefix in s["inputs"])})
+    on_branch = set(git("rev-list", f"{base}..{target}", check=False).stdout.split())
+    for record in sorted(regen.checks_dir().glob("*.json")):
+        if record.name.startswith("closure-") or record.stem not in on_branch:
+            continue
+        if json.loads(record.read_text(encoding="utf-8")).get("ok") and not git(
+                "diff", "--name-only", record.stem, target, "--", *inputs, check=False).stdout.strip():
+            return None
+    return (f"分支改到生成输入（受影响阶段：{', '.join(s['name'] for s in chosen)}），缺全新检出的生成核对。"
+            f"执行方在副本提交后跑 `shiftboss regen --branch-check` 通过再推送；交回已附同等的全新检出生成回显并经派活方核对的，加 --generation-reviewed。")
+
+
 AUTOMERGE_ENV = "SHIFTBOSS_AUTOMERGE"
 
 
@@ -1185,6 +1214,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="合交回写明的生成器提交（两段合入的第一段）：其中的编辑器文件是生成器的输入；读取方仍须等发布后合")
     ap.add_argument("--checks-reviewed", action="store_true",
                     help="分支改了检查脚本、测试或基线，派活方已逐项核对：任务书要求、未放松既有断言")
+    ap.add_argument("--generation-reviewed", action="store_true",
+                    help="分支改到生成输入，交回附有全新检出跑受影响阶段通过的回显，派活方已核对")
     ap.add_argument("--manual", action="store_true",
                     help="巡检停摆时手动合满足自动合入条件的线")
     ap.add_argument("--unmerged", action="store_true",
@@ -1246,6 +1277,8 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(producer)
         if checks := check_change_reason(target, args.checks_reviewed):
             raise MergeError(checks)
+        if generation := generation_input_reason(target, args.generation_reviewed):
+            raise MergeError(generation)
         if ignored := merge_ignored_reason(target):
             raise MergeError(ignored)
         if queued := automerge_pending_reason(target, args.manual):

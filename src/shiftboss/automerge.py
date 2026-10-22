@@ -136,7 +136,10 @@ def main(argv: list[str] | None = None) -> int:
     for name in unreviewed(remote):
         print(f"待复核 {name} @ {state['merged'][name]['tip'][:12]}")
     for name, item in (state.get("refused") or {}).items():
-        print(f"拒合 {name} @ {item['tip'][:12]}：{item['reason'].strip().splitlines()[-1] if item['reason'].strip() else ''}")
+        # 原因取「[合并失败]」那一行：末行总是现场状态，看不出为什么拒。
+        lines = item["reason"].strip().splitlines()
+        why = next((line for line in lines if line.startswith("[合并失败]")), lines[-1] if lines else "")
+        print(f"拒合 {name} @ {item['tip'][:12]}：{why}")
     return 0
 
 

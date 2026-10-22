@@ -75,6 +75,11 @@ def producer_paths(root: Path | None = None) -> list[str]:
     return list(_get("merge", "producer_paths", [], root))
 
 
+def generation_check_skip(root: Path | None = None) -> list[str]:
+    """不触发分支生成核对的生成输入：几乎所有阶段都读、核对即等于全量生成的宽输入，由项目登记并写明原因。"""
+    return list(_get("merge", "generation_check_skip", [], root))
+
+
 def consumer_paths(root: Path | None = None) -> list[str]:
     """读取派生物的代码路径前缀。"""
     return list(_get("merge", "consumer_paths", [], root))

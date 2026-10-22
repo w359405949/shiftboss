@@ -373,6 +373,84 @@ def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
     return ok
 
 
+CHECKS_DIR = "generation-checks"
+
+
+def checks_dir() -> Path:
+    from shiftboss import config
+    from shiftboss.verify import origin
+    return config.control_dir(origin(REPO)) / CHECKS_DIR
+
+
+def closure_stages(stages: list[dict]) -> list[dict]:
+    """`with_closure` 按当前代码树缓存：闭包命令要十几秒，合入时每次重算太重。"""
+    tree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=REPO, capture_output=True, text=True).stdout.strip()
+    cache = checks_dir() / f"closure-{tree}.json"
+    if tree and cache.is_file():
+        return json.loads(cache.read_text(encoding="utf-8"))
+    closed = with_closure(stages)
+    if tree:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(closed, ensure_ascii=False), encoding="utf-8")
+    return closed
+
+
+def affected_stages(stages: list[dict], paths: list[str]) -> list[dict]:
+    """改动路径命中输入（含代码闭包）的阶段及其下游；不把「从未生成过」的阶段算进来，项目登记的宽输入不计。"""
+    from shiftboss import config
+    skip = config.generation_check_skip(REPO)
+    paths = [p for p in paths if not any(matches_prefix(p, prefix) for prefix in skip)]
+    return select_stages(stages, paths, [], {stage["name"] for stage in stages}) if paths else []
+
+
+def branch_check(ref: str) -> int:
+    """分支改到生成输入时，在全新检出里只跑受影响的阶段（用户定 D43：只测受影响的这一块）。
+
+    在独立 worktree 里跑，不碰副本工作树，产物不提交；结果按提交号记进控制目录，`shiftboss merge` 据此放行。
+    """
+    from shiftboss import config
+    def git(*args, cwd=REPO):
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    head = git("rev-parse", "--verify", f"{ref}^{{commit}}").stdout.strip()
+    base = git("merge-base", head, "origin/main").stdout.strip() if head else ""
+    if not head or not base:
+        print(f"认不出 {ref} 或它与 origin/main 的共同祖先；先 git fetch origin")
+        return 1
+    paths = sorted(filter(None, git("diff", "--name-only", "--no-renames", base, head).stdout.splitlines()))
+    stages = validate_stages(load_plan())
+    chosen = affected_stages(closure_stages(stages), paths) if stages else []
+    if not chosen:
+        print(f"{head[:12]} 相对 origin/main 没有改到生成输入，不用核对。")
+        return 0
+    print(f"{head[:12]} 改到生成输入；受影响阶段（{len(chosen)}/{len(stages)}）：{', '.join(s['name'] for s in chosen)}", flush=True)
+    started = time.time()
+    worktree = Path(tempfile.mkdtemp(prefix="branch-check-", dir=REPO / "out"))
+    worktree.rmdir()
+    try:
+        added = git("worktree", "add", "--detach", "--quiet", str(worktree), head)
+        if added.returncode:
+            print(f"建全新检出失败：{added.stderr.strip()}")
+            return 1
+        name = config.local_config_file(REPO)
+        if name and (REPO / name).is_file():
+            (worktree / name).write_bytes((REPO / name).read_bytes())
+        done = subprocess.run([sys.executable, "-B", "-m", "shiftboss.regen", "--steps", "--base", base],
+                              cwd=worktree, capture_output=True, text=True, encoding="utf-8")
+        output = done.stdout + done.stderr
+        print("\n".join(output.rstrip().splitlines()[-25:]), flush=True)
+    finally:
+        git("worktree", "remove", "--force", str(worktree))
+    ok = done.returncode == 0
+    record = {"head": head, "base": base, "ok": ok, "stages": [s["name"] for s in chosen],
+              "inputs": sorted({p for p in paths if any(matches_prefix(p, prefix) for s in chosen for prefix in s["inputs"])}),
+              "seconds": round(time.time() - started, 1), "at": time.time()}
+    target = checks_dir() / f"{head}.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\n{'通过' if ok else '失败'}：{len(chosen)} 个阶段，{record['seconds']}s；已记 {target}")
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -385,7 +463,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--list", action="store_true", help="只显示实际选层与生成计划")
     ap.add_argument("--full", action="store_true", help="完整生成：按顺序跑全部阶段")
     ap.add_argument("--stage", action="append", default=[], help="点名阶段，可重复；连同下游")
+    ap.add_argument("--branch-check", nargs="?", const="HEAD", metavar="REF",
+                    help="在全新检出里只跑该提交（默认 HEAD）相对 origin/main 改到的生成阶段，结果记进控制目录供合入核对")
     args = ap.parse_args(argv)
+    if args.branch_check:
+        return branch_check(args.branch_check)
     if args.full and args.stage:
         ap.error("--full 与 --stage 不能一起使用")
     if args.check and args.steps:
