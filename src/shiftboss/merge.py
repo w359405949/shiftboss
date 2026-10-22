@@ -948,7 +948,7 @@ def generation_input_reason(target: str, reviewed: bool = False) -> str | None:
     if not stages:
         return None
     base = git("merge-base", "HEAD", target, check=False).stdout.strip()
-    paths = sorted(filter(None, git("diff", "--name-only", "--no-renames", base, target, check=False).stdout.splitlines()))
+    paths = regen.generation_paths(sorted(filter(None, git("diff", "--name-only", "--no-renames", base, target, check=False).stdout.splitlines())), base, target)
     chosen = regen.affected_stages(regen.closure_stages(stages), paths)
     if not chosen:
         return None

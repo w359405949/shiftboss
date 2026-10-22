@@ -395,6 +395,19 @@ def closure_stages(stages: list[dict]) -> list[dict]:
     return closed
 
 
+def generation_paths(paths: list[str], base: str, head: str) -> list[str]:
+    """`shiftboss.toml` 只有 `[regen]` 一节被生成器读（经 `shiftboss.outputs`）；其余各节是工作流配置，变了不算生成输入。"""
+    import tomllib
+    if "shiftboss.toml" not in paths:
+        return paths
+    def regen_table(ref: str) -> dict:
+        shown = subprocess.run(["git", "show", f"{ref}:shiftboss.toml"], cwd=REPO, capture_output=True, text=True)
+        return tomllib.loads(shown.stdout).get("regen", {}) if shown.returncode == 0 else {}
+    if regen_table(base) == regen_table(head):
+        return [p for p in paths if p != "shiftboss.toml"]
+    return paths
+
+
 def affected_stages(stages: list[dict], paths: list[str]) -> list[dict]:
     """改动路径命中输入（含代码闭包）的阶段及其下游；不把「从未生成过」的阶段算进来，项目登记的宽输入不计。"""
     from shiftboss import config
@@ -416,7 +429,7 @@ def branch_check(ref: str) -> int:
     if not head or not base:
         print(f"认不出 {ref} 或它与 origin/main 的共同祖先；先 git fetch origin")
         return 1
-    paths = sorted(filter(None, git("diff", "--name-only", "--no-renames", base, head).stdout.splitlines()))
+    paths = generation_paths(sorted(filter(None, git("diff", "--name-only", "--no-renames", base, head).stdout.splitlines())), base, head)
     stages = validate_stages(load_plan())
     chosen = affected_stages(closure_stages(stages), paths) if stages else []
     if not chosen:
