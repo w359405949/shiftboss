@@ -753,6 +753,11 @@ def finish_line(name: str, superseded_by: str | None = None, unmerged: bool = Fa
     if entry and not entry.get("closed"):
         dispatch.close_line(name, entry["copy"], ledger)
     archive_after_merge(name, book, unmerged_branch=branch if unmerged else None)
+    # 归档的线不再是自动合入候选，留着拒合记录只会让「该你处理」一直挂着它。
+    from shiftboss import automerge
+    from shiftboss.verify import origin
+    with contextlib.suppress(Exception):
+        automerge.record(origin(REPO), "refused", name, None)
     copy = (entry or {}).get("copy") or book.meta().get("你的工作副本")
     prune_line_evidence(name, copy)
     stash_copy_leftovers(name, copy, branch)
