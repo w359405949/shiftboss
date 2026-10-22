@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -82,7 +83,9 @@ def run(remote: Path, workspace: Path, ring) -> None:
         if state["refused"].get(name, {}).get("tip") == tip:
             continue
         py = [sys.executable, "-B", "-m", "shiftboss.merge"]
-        merged = subprocess.run([*py, tip], cwd=workspace, capture_output=True, text=True)
+        from shiftboss.merge import AUTOMERGE_ENV
+        merged = subprocess.run([*py, tip], cwd=workspace, capture_output=True, text=True,
+                                env={**os.environ, AUTOMERGE_ENV: "1"})
         if merged.returncode:
             git(workspace, "merge", "--abort", check=False)
             git(workspace, "reset", "--quiet", "--hard", "origin/main")

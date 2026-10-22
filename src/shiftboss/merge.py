@@ -930,6 +930,32 @@ def merge_scope_reason(target: str) -> str | None:
     return None
 
 
+AUTOMERGE_ENV = "SHIFTBOSS_AUTOMERGE"
+
+
+def automerge_pending_reason(target: str, manual: bool) -> str | None:
+    """派活方手动合一条满足自动合入条件的线时拒绝：巡检会在独立副本里合，两边同时合会撞车。
+
+    巡检对该提交拒合过的照合；巡检停摆时用 `--manual`。
+    """
+    if manual or os.environ.get(AUTOMERGE_ENV):
+        return None
+    from shiftboss import automerge
+    from shiftboss.inbox import origin_git_dir
+    from shiftboss.state import read_state
+    try:
+        allowed = automerge.subtypes(REPO)
+        names = [name for name, tip in automerge.candidates(REPO, allowed) if tip == target] if allowed else []
+        refused = (read_state(automerge.store(origin_git_dir(REPO))) or {}).get("refused", {})
+    except SystemExit:
+        return None
+    names = [name for name in names if refused.get(name, {}).get("tip") != target]
+    if not names:
+        return None
+    return (f"{names[0]} 满足自动合入条件，巡检会自动合；等门铃报 automerged 后复核并 `shiftboss automerge --ack {names[0]}`。"
+            "巡检停摆时加 --manual。")
+
+
 def merge_ignored_reason(target: str) -> str | None:
     """要合的提交新增了被根 `.gitignore` 忽略的路径时拒绝：一次性产物（交回证据等）不进仓库。"""
     from shiftboss.taskbook import ignored_paths
@@ -1153,6 +1179,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="合交回写明的生成器提交（两段合入的第一段）：其中的编辑器文件是生成器的输入；读取方仍须等发布后合")
     ap.add_argument("--checks-reviewed", action="store_true",
                     help="分支改了检查脚本、测试或基线，派活方已逐项核对：任务书要求、未放松既有断言")
+    ap.add_argument("--manual", action="store_true",
+                    help="巡检停摆时手动合满足自动合入条件的线")
     ap.add_argument("--unmerged", action="store_true",
                     help="与 --done 同用：核对后决定不合入，分支保留，分支上的交回带进归档")
     args = ap.parse_args(argv)
@@ -1214,6 +1242,8 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(checks)
         if ignored := merge_ignored_reason(target):
             raise MergeError(ignored)
+        if queued := automerge_pending_reason(target, args.manual):
+            raise MergeError(queued)
         print(f"合并 {args.ref} ({target[:12]})：", flush=True)
         merged = git("-c", "rerere.enabled=false", "-c", "merge.autoStash=false",
                      "merge", "--no-ff", "--no-commit", "--no-edit", target, check=False)
