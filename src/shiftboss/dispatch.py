@@ -172,7 +172,12 @@ def launch_tui(copy_win: str, prompt: str, title: str, *,
     （起不来多是网络问题，重拉无益）。
     """
     worker = WORKERS[executor or default_worker()]
-    native.launch(worker.tui_command(copy_win, prompt, resume_id=resume_id), copy_win, title)
+    from shiftboss.taskbook import EFFORT_KEY, Taskbook
+    book = Taskbook.find(REPO, title)
+    effort = book.meta().get(EFFORT_KEY) if book and hasattr(worker, "EFFORTS") else None
+    command = (worker.tui_command(copy_win, prompt, resume_id=resume_id, effort=effort) if effort
+               else worker.tui_command(copy_win, prompt, resume_id=resume_id))
+    native.launch(command, copy_win, title)
     for _ in range(LAUNCH_WAIT):
         if tui_alive(copy_win):
             return True

@@ -81,7 +81,11 @@ def step_count(session_id: str | None) -> int | None:
     return None
 
 
-def tui_command(copy_win: str, prompt: str, *, resume_id: str | None = None) -> list[str]:
+# 推理强度由派活方按任务表现调整（用户授权）：max、ultra 会触发 codex 自身的 plan 模式，不在可选范围。
+EFFORTS = ("low", "medium", "high", "xhigh")
+
+
+def tui_command(copy_win: str, prompt: str, *, resume_id: str | None = None, effort: str | None = None) -> list[str]:
     """新派、续开、恢复共用：信任只传给这一次 TUI，不读写共享配置。
 
     新派、续开和恢复 TUI 都用 `-c` 逐次传入副本信任；准备和派活代码不读写
@@ -90,8 +94,11 @@ def tui_command(copy_win: str, prompt: str, *, resume_id: str | None = None) -> 
     # 路径是 TOML 表的带引号键，整个表是一个配置值，避免路径里的点被当成层级。
     project = json.dumps(str(Path(copy_win).resolve()), ensure_ascii=False)
     trust = "projects={" + project + '={trust_level="trusted"}}'
+    if effort is not None and effort not in EFFORTS:
+        raise ValueError(f"推理强度只能是 {'、'.join(EFFORTS)}：{effort}")
     return ([str(resolve_codex()), "-C", copy_win, "-c", trust, "--search",
              "-s", "danger-full-access", "-a", "never"]
+            + (["-c", f'model_reasoning_effort="{effort}"'] if effort else [])
             + (["resume", resume_id] if resume_id else []) + [prompt])
 
 

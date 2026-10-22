@@ -69,6 +69,7 @@ def dependency_list(value) -> list[str]:
 
 
 SCOPE_KEY = "写入范围"
+EFFORT_KEY = "推理强度"
 
 
 def out_of_scope(name: str, meta: dict, paths: list[str]) -> list[str]:
@@ -576,6 +577,11 @@ def main(argv=None) -> int:
             return 2
         if pairs.get("你的工作副本"):
             pairs["你的工作副本"] = copy_path(repo, pairs["你的工作副本"])
+        if pairs.get(EFFORT_KEY):
+            from shiftboss.workers.codex import EFFORTS
+            if pairs[EFFORT_KEY] not in EFFORTS:
+                print(f"{EFFORT_KEY}只能是 {'、'.join(EFFORTS)}（max、ultra 会触发执行方自身的 plan 模式）：{pairs[EFFORT_KEY]}")
+                return 2
         if SCOPE_KEY in pairs:
             pairs[SCOPE_KEY] = dependency_list(pairs[SCOPE_KEY])
             # 推送守卫只认显式写出的受保护目录：父目录（如 engine/）不授予其下的受保护目录写权，
