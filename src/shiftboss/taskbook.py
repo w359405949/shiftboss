@@ -582,7 +582,8 @@ def main(argv=None) -> int:
             # 写成父目录的线做完才在推送时被拒（派活方两次因此让执行方白做一轮）。
             from shiftboss.config import load
             protected = load(repo).get("guard", {}).get("protected", [])
-            implied = [p for p in protected if p not in pairs[SCOPE_KEY]
+            # 只查受保护目录：冻结的单个文件位于父目录下是常态，父目录范围即「除冻结文件外」，推送守卫照拦冻结文件。
+            implied = [p for p in protected if p.endswith("/") and p not in pairs[SCOPE_KEY]
                        and any(p.startswith(s) and p != s for s in pairs[SCOPE_KEY])]
             if implied:
                 print(f"写入范围的父目录不授予受保护目录写权（推送守卫只认显式写出的）：要改就把 "
