@@ -1314,8 +1314,14 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(f"git merge 失败（退出码 {merged.returncode}）")
         # 基线冲突先取 main 一侧并标为已解决，其余冲突照常处理，树上无冲突后再按合入后源码重算。
         if recompute := baseline_conflicts() if config.baseline_recompute().get("run") else []:
-            git("checkout", "--ours", "--", *recompute)
-            git("add", "--", *recompute)
+            # main 已删的领域文件（该领域已清零）照删；其余取 main 一侧，随后按合入后源码重算。
+            gone = [p for p in recompute if git("cat-file", "-e", f"HEAD:{p}", check=False).returncode]
+            kept = [p for p in recompute if p not in gone]
+            if gone:
+                git("rm", "-q", "--", *gone)
+            if kept:
+                git("checkout", "--ours", "--", *kept)
+                git("add", "--", *kept)
         try:
             resolve_derived(files, before)
         except MergeError:
