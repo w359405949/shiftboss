@@ -558,14 +558,10 @@ def main(argv=None) -> int:
         if not args.kind:
             print(f"new 要 --kind {'|'.join(KINDS)}：选哪种见 shiftboss/TEMPLATE.md 开头那张表")
             return 2
-        pairs = dict(f.split("=", 1) for f in args.field if "=" in f)
-        if pairs.get("你的工作副本"):
-            pairs["你的工作副本"] = copy_path(repo, pairs["你的工作副本"])
         print(new(repo, args.name, copy=args.copy, kind=args.kind, branch=args.branch))
-        if pairs:
-            Taskbook.find(repo, args.name).set_meta(**pairs)
-            print("表头：" + "；".join(f"{k} → {v}" for k, v in pairs.items()))
-        return 0
+        # 表头格经 set 写入：校验与写入范围拆分只在 set 一处。
+        fields = [f"--field={f}" for f in args.field]
+        return main(["set", args.name, *fields]) if fields else 0
     if args.command == "set":
         book = Taskbook.find(repo, args.name)
         if book is None:
