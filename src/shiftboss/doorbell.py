@@ -280,6 +280,24 @@ def say_stalled() -> None:
     say("    试派被拒（判为还在做本轮）的，多是执行方报错中断却没停在等输入，用 `shiftboss dispatch <名字> --recover` 投「继续」接回。")
 
 
+def say_puzzles() -> None:
+    """门铃响一次，就把未结的困惑报一次，派活方当即试一下（用户定）。
+
+    困惑多是网络波动、偶发失败这类隔一会儿就可能好的事；等定时待办才重试会白等。
+    读不到登记时静默跳过，不拦门铃。
+    """
+    try:
+        from shiftboss import decisions
+        puzzles = decisions.pending(project_root(), kind="puzzle")
+    except Exception:
+        return
+    if not puzzles:
+        return
+    say(f"困惑未结 {len(puzzles)} 条（门铃响一次报一次）：逐条当即试一下，好了 `shiftboss puzzle --resolve <编号> <原因与处理>`")
+    for line in decisions.summary_lines(puzzles):
+        say(f"    {line}")
+
+
 def _event_time(line: str) -> float | None:
     """门铃一行开头的时刻（epoch 秒）。hook 写 UTC 带 `Z`，`ring()` 与心跳写本地无时区。"""
     try:
@@ -379,6 +397,7 @@ def watch(path: Path, heartbeat_minutes: int, fallback: Path, once: bool = False
             write_mark(path, offset)
             if rang:
                 say_stalled()
+                say_puzzles()
                 if once:
                     return 0
             elif heartbeat_minutes > 0 and \
@@ -399,6 +418,7 @@ def watch(path: Path, heartbeat_minutes: int, fallback: Path, once: bool = False
                 say(f"心跳 {stamp} 把整个收件箱过一遍："
                     f"shiftboss inbox list（不是只看某一条线）")
                 say_stalled()
+                say_puzzles()
                 if once:
                     return 0
             time.sleep(POLL_SECONDS)
