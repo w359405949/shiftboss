@@ -10,7 +10,7 @@
     省略              立即可做
 
 用法：
-    shiftboss todo add "要做的事" [--when publish:abc123]
+    shiftboss todo add "要做的事" [--when publish:abc123] [--line 任务书名]
     shiftboss todo done <编号>
     shiftboss todo list
 """
@@ -43,7 +43,7 @@ def save(remote: Path, items: list[dict], last: int | None = None) -> None:
     write_state(store(remote), {"items": items, "last": max([previous, last or 0, *numbers])})
 
 
-def add(remote: Path, text: str, when: str | None = None) -> str:
+def add(remote: Path, text: str, when: str | None = None, line: str | None = None) -> str:
     if when and (match := re.fullmatch(r"after:(\d+)([mh])", when)):
         when = f"at:{int(time.time()) + int(match[1]) * (60 if match[2] == 'm' else 3600)}"
     elif when and not re.fullmatch(r"(publish|archived|answered):\S+", when):
@@ -52,6 +52,8 @@ def add(remote: Path, text: str, when: str | None = None) -> str:
     number = max([(read_state(store(remote)) or {}).get("last", 0),
                   *(int(item["id"][1:]) for item in items)]) + 1
     item = {"id": f"T{number}", "text": text, "when": when, "created": time.time(), "notified": False}
+    if line:
+        item["line"] = line
     items.append(item)
     save(remote, items, number)
     return item["id"]
@@ -92,6 +94,17 @@ def condition(remote: Path, repo: Path, when: str | None) -> tuple[bool, str]:
     return False, f"条件不认识：{when}"
 
 
+def line_waits(repo: Path, remote: Path, name: str) -> list[str]:
+    """关联到该线、条件未满足的待办：状态摘要据此把线列入排队，不算待核对（如读取方等生成器段发布）。"""
+    waits = []
+    for item in load(remote):
+        if item.get("line") == name:
+            ok, wait = condition(remote, repo, item.get("when"))
+            if not ok:
+                waits.append(f"{item['id']} {wait}")
+    return waits
+
+
 def summary_lines(repo: Path, remote: Path) -> list[str]:
     lines = []
     for item in load(remote):
@@ -117,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=["add", "done", "list"])
     parser.add_argument("value", nargs="?", help="add：要做的事；done：编号")
     parser.add_argument("--when", help="触发条件，见上")
+    parser.add_argument("--line", help="关联的任务书名：条件未满足时状态摘要把该线列入排队")
     args = parser.parse_args(argv)
     from shiftboss.verify import origin
     repo = project_root()
@@ -124,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "add":
         if not args.value:
             parser.error("add 需要要做的事")
-        print(f"已登记 {add(remote, args.value, args.when)}")
+        print(f"已登记 {add(remote, args.value, args.when, args.line)}")
     elif args.command == "done":
         if not args.value:
             parser.error("done 需要编号")

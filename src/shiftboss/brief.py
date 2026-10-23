@@ -172,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, _scheduled, copy, state, pushed, _model in sorted(rows):
         book = Taskbook.find(repo, name)
         dependency_waits = tuple(w for key in DEPENDENCY_KEYS if book for w in unmet_dependencies(repo, book, key))
+        dependency_waits += tuple(todo.line_waits(repo, git_dir, name))
         # 等用户答复只挡派活，不挡核对已交回的分支。
         waits = dependency_waits + tuple(f"用户答 {item['id']}" for item in asks if item.get("line") == name)
         waits += tuple(f"用户补充 {item['id']}" for item in needs if item.get("line") == name)
