@@ -1,7 +1,8 @@
 """自动合入：满足条件的交回由常驻巡检在独立副本里合并、推送、归档，派活方事后复核。
 
 适用的子类型由项目在 `shiftboss.toml` 的 `[automerge] subtypes` 登记（不登记即不启用）。条件：
-交回执行状态「完成」、无待议、无「待发布后补」、非性能类、破坏性为「否」；合并本身仍走 `shiftboss merge`
+交回执行状态「完成」、无待议、无「待发布后补」、非性能类、破坏性为「否」、未改到 `[automerge] review_paths`
+登记的路径（全站共用层等须派活方按影响面核对的位置）；合并本身仍走 `shiftboss merge`
 （快速检查、写入范围、合入前置照常拦）。拒合的记下原因、同一提交不再重试，留给派活方。
 自动合入的线在状态摘要「该你处理」列为「复核自动合入」，派活方读完交回后 `--ack`。
 
@@ -35,6 +36,15 @@ def subtypes(workspace: Path) -> list[str]:
         return list(tomllib.load(handle).get("automerge", {}).get("subtypes", []))
 
 
+def review_paths(workspace: Path) -> list[str]:
+    """改到这些路径的线不自动合：共用层的改动影响面广，须派活方按影响面核对页面代表后手动合。"""
+    path = workspace / config.CONFIG_NAME
+    if not path.exists():
+        return []
+    with path.open("rb") as handle:
+        return list(tomllib.load(handle).get("automerge", {}).get("review_paths", []))
+
+
 def git(workspace: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=workspace, capture_output=True, text=True, check=check)
 
@@ -63,6 +73,10 @@ def candidates(workspace: Path, allowed: list[str]):
         tip = git(workspace, "rev-parse", "--verify", "--quiet", ref, check=False).stdout.strip()
         if not tip or git(workspace, "merge-base", "--is-ancestor", tip, "origin/main", check=False).returncode == 0:
             continue
+        if reviewed := review_paths(workspace):
+            changed = git(workspace, "diff", "--name-only", "--no-renames", f"origin/main...{tip}", check=False).stdout.splitlines()
+            if any(path == p or (p.endswith("/") and path.startswith(p)) for path in changed for p in reviewed):
+                continue
         delivery = git(workspace, "show", f"{tip}:{book.path.relative_to(workspace)}/delivery.md", check=False).stdout
         if execution_status(delivery) != "完成" or pending_lines(delivery) or publish_later_lines(delivery):
             continue
