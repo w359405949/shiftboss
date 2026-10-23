@@ -93,6 +93,10 @@ STANDING_PROMPT = "开始新任务：按工作流读 {taskbook}。"
 # 等它交回再作为新一轮；严重影响本轮的，先 `--close` 停下，再重开会话或 `--fresh`。
 NEW_ROUND_PROMPT = "新一轮：按工作流读 {taskbook}。"
 
+# 中途关掉的会话换新会话续做时自动写进本轮交代，派活方不必每次手打（用户要求写进脚本）。
+WIP_NOTE = ("上一会话已关闭，本轮为新会话。工作树里未提交的改动与 `out/{name}/` 下的证据是本线此前的进展："
+            "先读 `git diff`、分支提交与这些证据，在此基础上继续，不推倒重来。")
+
 # **交付模式不进提示词。** 曾经有过「连做 N 个 pass」和「自走：没有上限……」两句变体，
 # 结果是模式同时活在表头与提示词两处：表头改成自走了，提示词还在说连做 15，
 # 执行方做满就停。**表头是唯一一处**，执行方按第 4 节去读它。
@@ -849,7 +853,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("taskbook", nargs="?", help="任务书名，不带 .md")
     ap.add_argument("-m", "--message", default="",
-                    help="这一轮独有的交代。**会写进任务书轮次记录小节并提交推送**，不进提示词。"
+                    help="这一轮独有的交代（可省；固定要求写在任务书与 DONE.md，中途关掉后换新会话的接续说明自动写入）。"
+                         "**会写进任务书轮次记录小节并提交推送**，不进提示词。"
                          "**带反引号或反斜杠的内容不要走这里，用 -F**")
     ap.add_argument("-F", "--message-file", type=Path, default=None,
                     help="从文件读这一轮的交代。**内容里有反引号、反斜杠或 $ 就必须用它**")
@@ -1201,6 +1206,8 @@ def main(argv: list[str] | None = None) -> int:
         print("\n--dry-run，没有派出。")
         return 0
 
+    if fresh and own_wip:
+        args.message = WIP_NOTE.format(name=args.taskbook) + (f"\n\n{args.message}" if args.message else "")
     if args.message or new_copy:
         try:
             publish_note(book, args.message, executor, new_copy)
