@@ -104,6 +104,26 @@ def scope_trespass(name: str, new: str) -> list[str]:
 
 
 CHECKS_KEY = "改检查"
+LAYOUT_KEY = "改布局"
+
+
+def layout_trespass(name: str, new: str, settings: dict) -> list[str]:
+    """表头未声明「改布局：是」的线改到的页面布局基线（`[guard] layout_paths`）。
+
+    布局退化靠几何指纹基线拦：只有明确改页面布局的线才能更新基线（用户定 D45），其余线改基线即拒收。
+    """
+    import json
+    paths = settings.get("guard", {}).get("layout_paths", [])
+    if not paths:
+        return []
+    shown = git("show", f"refs/heads/main:{PLANS_DIR}/{name}/meta.json")
+    if shown.returncode or json.loads(shown.stdout).get(LAYOUT_KEY) == "是":
+        return []
+    done = git("diff", "--name-only", "--no-renames", "refs/heads/main..." + new)
+    if done.returncode:
+        return []
+    return [path for path in done.stdout.splitlines()
+            if path and any(path == p or (p.endswith("/") and path.startswith(p)) for p in paths)]
 
 
 def check_paths(settings: dict) -> list[str]:
@@ -130,7 +150,9 @@ def check_trespass(name: str, new: str, settings: dict) -> list[str]:
     if done.returncode:
         return []
     guarded = check_paths(settings)
-    return [path for path in done.stdout.splitlines() if path and (
+    layout = settings.get("guard", {}).get("layout_paths", [])
+    return [path for path in done.stdout.splitlines() if path
+            and not any(path == p or (p.endswith("/") and path.startswith(p)) for p in layout) and (
         any(path == g or (g.endswith("/") and path.startswith(g)) for g in guarded)
         or re.search(r"(^|/)[^/]*baseline[^/]*\.json$", path))]
 
@@ -189,6 +211,13 @@ def main() -> int:
         if outside := scope_trespass(name, new):
             print(f"拒收 {ref}：写到了任务书表头「写入范围」之外，撤回这些改动或请派活方调整范围：", file=sys.stderr)
             for path in outside[:40]:
+                print(f"  {path}", file=sys.stderr)
+            trespassed = True
+            continue
+        if layout := layout_trespass(name, new, settings):
+            print(f"拒收 {ref}：改动了页面布局基线，任务书表头未声明「改布局：是」；"
+                  "布局指纹不符即退化，修正页面而非改基线；确为布局改动的写进交回由派活方定：", file=sys.stderr)
+            for path in layout[:40]:
                 print(f"  {path}", file=sys.stderr)
             trespassed = True
             continue

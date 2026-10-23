@@ -577,6 +577,9 @@ def main(argv=None) -> int:
             return 2
         if pairs.get("你的工作副本"):
             pairs["你的工作副本"] = copy_path(repo, pairs["你的工作副本"])
+        if pairs.get("改布局") not in (None, "", "是", "否"):
+            print(f"改布局只能写「是」或「否」：{pairs['改布局']}")
+            return 2
         if pairs.get(EFFORT_KEY):
             from shiftboss.workers.codex import EFFORTS
             if pairs[EFFORT_KEY] not in EFFORTS:
