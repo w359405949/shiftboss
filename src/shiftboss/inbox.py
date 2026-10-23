@@ -69,8 +69,12 @@ def meta_of(repo: Path, name: str) -> dict:
     return book.meta() if book else {}
 
 
+# 状态行写一个状态词（执行方直接改词，不找勾选符号）；旧格式的勾选框照认。
+STATUS_WORDS = {"完成": "done", "done": "done", "待议": "pending", "做不到": "pending", "pending": "pending"}
+
+
 def read_status(text: str) -> tuple[int, int, int]:
-    """→ (状态格总数, 打了勾的, 标了待议的)。空表示这一条还没做。"""
+    """→ (状态行总数, 完成的, 标了待议的)。空表示这一条还没做。"""
     total = ticked = pending = 0
     for line in text.splitlines():
         m = STATUS_LINE.match(line)
@@ -78,6 +82,11 @@ def read_status(text: str) -> tuple[int, int, int]:
             continue
         body = m.group(1)
         total += 1
+        if not any(box in body for box in ("☐", *TICKED)):
+            word = STATUS_WORDS.get(body.strip().split()[0].lower() if body.strip() else "")
+            ticked += word == "done"
+            pending += word == "pending"
+            continue
         if any(t in body for t in TICKED):
             ticked += 1
             # 「☒ 待议」「☒ 未做」都不算完成，单独记出来
