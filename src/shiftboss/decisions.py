@@ -99,7 +99,8 @@ def main(argv: list[str] | None = None, kind: str = "decide") -> int:
         save(items)
         print(f"已记下 {item['id']} 的答复")
         return 0
-    if args.list or not args.question:
+    # 裸词 list 与 todo 的子命令同形，按 --list 处理，不登记成事项。
+    if args.list or not args.question or args.question == "list":
         lines = summary_lines(pending(kind=kind))
         print("\n".join(lines) if lines else EMPTY[kind])
         return 0
