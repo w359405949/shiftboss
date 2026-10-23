@@ -265,7 +265,7 @@ def observed_writes(before: dict[str, str], after: dict[str, str]) -> set[str]:
 
 
 def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
-            outputs: list[dict] | None = None, parallel: bool = False,
+            outputs: list[dict] | None = None, parallel: bool = False, on_output=None,
             names: list[str] | None = None, after: list[list[str]] | None = None) -> bool:
     """`after` 给出各命令的上游阶段名：失败只跳过其下游，其余分支照跑，一轮报出全部独立失败。
 
@@ -314,6 +314,8 @@ def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
                 if names:
                     entry = {"stage": names[number - 1], **entry}
                 outputs.append(entry)
+                if on_output:
+                    on_output(outputs)
         except OSError as exc:
             proc = subprocess.CompletedProcess(cmd, 1, "", str(exc))
         except (ValueError, KeyError, TypeError) as exc:
@@ -563,14 +565,21 @@ def _run(args) -> int:
         else:
             chosen = stage_selection(stages, args)
             print(f"生成阶段（{len(chosen)}/{len(stages)}）：{', '.join(s['name'] for s in chosen) or '无'}", flush=True)
-            ok = run_all("生成", [s["command"] for s in chosen], outputs=producers,
+            previous = previous_catalog()
+
+            # 每个阶段报告后即写回产物报告：后续阶段（如运行包清单）按本轮已重跑阶段的新声明与未重跑阶段的旧声明取精确产物，
+            # 新增产物当轮即可收录，退役产物当轮即被拒收，不等全部阶段结束。
+            def publish_partial(done: list[dict]) -> None:
+                (REPO / CATALOG).write_text(json.dumps(merge_catalog(previous, stages, done), ensure_ascii=False, indent=2) + "\n",
+                                            encoding="utf-8", newline="\n")
+            ok = run_all("生成", [s["command"] for s in chosen], outputs=producers, on_output=publish_partial,
                          names=[s["name"] for s in chosen], after=[s.get("after", []) for s in chosen])
         if not ok:
             print("\n生成这一步就红了，闸不跑了——上面列出了全部失败阶段（✘）与因此跳过的下游（⤼），各自修。")
             return 1
         try:
             catalog = (catalog_document(producers) if stages is None
-                       else merge_catalog(previous_catalog(), stages, producers))
+                       else merge_catalog(previous, stages, producers))
         except ValueError as exc:
             print(f"产物报告不成立：{exc}")
             return 1
