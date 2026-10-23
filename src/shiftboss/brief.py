@@ -164,6 +164,11 @@ def main(argv: list[str] | None = None) -> int:
     from shiftboss.taskbook import execution_status
     from shiftboss import todo
     running, review, merged, ready, waiting = [], [], [], [], []
+    from shiftboss import automerge
+    try:
+        awaiting = automerge.awaiting(repo, git_dir)
+    except SystemExit:
+        awaiting = {}
     for name, _scheduled, copy, state, pushed, _model in sorted(rows):
         book = Taskbook.find(repo, name)
         dependency_waits = tuple(w for key in DEPENDENCY_KEYS if book for w in unmet_dependencies(repo, book, key))
@@ -175,6 +180,8 @@ def main(argv: list[str] | None = None) -> int:
         unreviewed = pushed.startswith("可核对") or state.startswith("做完了没推")
         if state.startswith("在干活"):
             running.append(f"{name}｜{Path(copy).name if copy and copy != '—' else '—'}｜{state.removeprefix('在干活').strip('（）')}")
+        elif unreviewed and name in awaiting:
+            waiting.append(f"{name}｜等巡检自动合入")
         elif unreviewed and not dependency_waits:
             review.append(f"{name}｜{pushed.removeprefix('可核对').strip('（）') if pushed.startswith('可核对') else state}")
         elif book and not unreviewed and branch_merged(git_dir, book.meta()):
@@ -200,7 +207,6 @@ def main(argv: list[str] | None = None) -> int:
     from shiftboss import patrol
     patrol_lines = patrol.status_lines(git_dir)
     out += ["【巡检】", *patrol_lines]
-    from shiftboss import automerge
     automerged = automerge.unreviewed(git_dir)
     items = actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged)
     print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")

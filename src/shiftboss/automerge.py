@@ -69,6 +69,15 @@ def candidates(workspace: Path, allowed: list[str]):
         yield book.name, tip
 
 
+def awaiting(repo: Path, remote: Path) -> dict[str, str]:
+    """→ {任务书名: 分支顶端提交}：满足条件、巡检尚未合也未拒合的线。派活方不手动合，也不算待核对。"""
+    allowed = subtypes(repo)
+    if not allowed:
+        return {}
+    refused = (read_state(store(remote)) or {}).get("refused", {})
+    return {name: tip for name, tip in candidates(repo, allowed) if refused.get(name, {}).get("tip") != tip}
+
+
 def run(remote: Path, workspace: Path, ring) -> None:
     """巡检每轮调用一次。独立副本只用于合并与推送，每次从 origin/main 重置。"""
     git(workspace, "fetch", "--quiet", "origin")

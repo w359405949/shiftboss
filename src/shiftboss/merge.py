@@ -1000,14 +1000,10 @@ def automerge_pending_reason(target: str, manual: bool) -> str | None:
         return None
     from shiftboss import automerge
     from shiftboss.inbox import origin_git_dir
-    from shiftboss.state import read_state
     try:
-        allowed = automerge.subtypes(REPO)
-        names = [name for name, tip in automerge.candidates(REPO, allowed) if tip == target] if allowed else []
-        refused = (read_state(automerge.store(origin_git_dir(REPO))) or {}).get("refused", {})
+        names = [name for name, tip in automerge.awaiting(REPO, origin_git_dir(REPO)).items() if tip == target]
     except SystemExit:
         return None
-    names = [name for name in names if refused.get(name, {}).get("tip") != target]
     if not names:
         return None
     return (f"{names[0]} 满足自动合入条件，巡检会自动合；等门铃报 automerged 后复核并 `shiftboss automerge --ack {names[0]}`。"
