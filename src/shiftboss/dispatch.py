@@ -51,7 +51,7 @@ import time
 from pathlib import Path
 
 from shiftboss import native
-from shiftboss.paths import PLANS_DIR, same_dir
+from shiftboss.paths import PLANS_DIR, PROJECT_DIR, same_dir
 from shiftboss.workers import WORKERS, default as default_worker
 
 EXECUTORS = tuple(WORKERS)
@@ -78,7 +78,10 @@ SUBTYPE_SIGNALS = (("perf", ("五组成对", "CPU 剖面", "首次可见完成")
 # **为什么**：写在提示词里的话不进 git——追溯不到，换个会话就没了，
 # 而且每加一句都在和 `README.md` 第 4 节争「哪一份才是规矩」。
 # 核对位置、同步 `main`、先同步再读、已交的不许丢、卡住标待议、连做的四条停止条件，
-# 全部在第 4 节；`AGENTS.md` 已经把执行方指过去了。**这里再说一遍只会让两处漂移。**
+# 全部在第 4 节；提示词只指到那两节，不复述。**这里再说一遍只会让两处漂移。**
+#
+# **流程指引只在提示词里**：执行方每轮都从这里开始，项目入口文档（`AGENTS.md`）不为它写流程，
+# 不跑 shiftboss 的会话也就不用读（用户定）。
 #
 # 这条不是新发明：`RECOVER_PROMPT` 早就是一个「继续」，用户 2026-09-05 定死的，
 # 理由一样——它自己看得见现场，复述只会把它推去重做已经做完的那半。
@@ -86,12 +89,13 @@ SUBTYPE_SIGNALS = (("perf", ("五组成对", "CPU 剖面", "首次可见完成")
 # **这一轮的交代走 `-m` / `-F`**：写进任务书的轮次记录小节并提交推送，
 # 执行方从任务书里读到。第 4 节已经写明「轮次记录小节末尾有交代就照读」，
 # 所以这里也不需要提示它去看。
-STANDING_PROMPT = "开始新任务：按工作流读 {taskbook}。"
+WORKFLOW = f"按 {PROJECT_DIR}/README.md 第 2、4 节"
+STANDING_PROMPT = f"开始新任务：{WORKFLOW}读 {{taskbook}}。"
 
 # **新一轮，不是「继续」。** 只在执行方交回停下之后才派：它带着历史回来开新的一轮，
 # 按第 4.1 节同步并读轮次记录末条。执行方还在做本轮时一律拒派——追加的要求只进任务书，
 # 等它交回再作为新一轮；严重影响本轮的，先 `--close` 停下，再重开会话或 `--fresh`。
-NEW_ROUND_PROMPT = "新一轮：按工作流读 {taskbook}。"
+NEW_ROUND_PROMPT = f"新一轮：{WORKFLOW}读 {{taskbook}}。"
 
 # 中途关掉的会话换新会话续做时自动写进本轮交代，派活方不必每次手打（用户要求写进脚本）。
 WIP_NOTE = ("上一会话已关闭，本轮为新会话。工作树里未提交的改动与 `out/{name}/` 下的证据是本线此前的进展："

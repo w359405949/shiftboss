@@ -495,7 +495,7 @@ class ForeignSessionAcceptance(unittest.TestCase):
                 text = output.getvalue()
                 prompt = next((line for line in text.splitlines() if line.startswith('提示词')), '')
                 self.assertEqual(result, 0, text)
-                self.assertIn('开始新任务：按工作流读', prompt, text)
+                self.assertIn('开始新任务：按 shiftboss/README.md 第 2、4 节读', prompt, text)
                 for word in ('连做', '自走', '单轮', 'pass'):
                     self.assertNotIn(word, prompt, text)
                 launch.assert_not_called()
