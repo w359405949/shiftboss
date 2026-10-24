@@ -100,6 +100,11 @@ def assertion_dirs(root: Path | None = None) -> list[str]:
     return list(_get("merge", "assertion_dirs", [], root))
 
 
+def ratchet_dirs(root: Path | None = None) -> list[str]:
+    """`[brief] ratchets`：按领域分文件的棘轮基线目录，简报逐目录列余量。"""
+    return list(_get("brief", "ratchets", [], root))
+
+
 def approved_tests(root: Path | None = None) -> list[str]:
     """经用户同意新增的测试项：测试文件路径、`路径::用例名`，或闸命令里新出现的参数。"""
     return list(_get("verify", "approved_tests", [], root))

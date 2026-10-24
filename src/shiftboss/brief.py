@@ -12,7 +12,7 @@ from pathlib import Path
 
 import psutil
 
-from shiftboss import decisions, doorbell, inbox
+from shiftboss import config, decisions, doorbell, inbox
 from shiftboss.paths import project_root
 
 
@@ -79,6 +79,21 @@ def machine_lines(git_dir) -> list[str]:
     load = "／".join(f"{value:.1f}" for value in os.getloadavg())
     stage = ((verify.index_of(git_dir) or {}).get("active") or {}).get("stage") or "空闲"
     return [f"- 负载｜{load}（{os.cpu_count()} 核）｜验证阶段 {stage}"]
+
+
+def ratchet_lines(repo) -> list[str]:
+    """棘轮基线余量（`[brief] ratchets`）：迁移进度看这一行，不逐次手算。"""
+    import json
+    lines = []
+    for rel in config.ratchet_dirs(repo):
+        counts = {}
+        for path in sorted((repo / rel).glob("*.json")):
+            entries = json.loads(path.read_text(encoding="utf-8"))
+            counts[path.stem] = sum(e.get("count", 1) for e in entries) if isinstance(entries, list) else 0
+        left = sorted(((n, c) for n, c in counts.items() if c), key=lambda item: -item[1])
+        detail = "、".join(f"{n} {c}" for n, c in left) or "清零"
+        lines.append(f"- {Path(rel).name}｜{sum(counts.values())}｜{detail}")
+    return lines
 
 
 def verify_lines(repo) -> list[str]:
@@ -203,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
     out += todos
     bell = bell_lines()
     out += ["【门铃】", *bell, "【机器】", *machine_lines(git_dir)]
+    if ratchets := ratchet_lines(repo):
+        out += ["【棘轮余量】", *ratchets]
     verify = verify_lines(repo)
     out += ["【验证】", *verify]
     from shiftboss import patrol
