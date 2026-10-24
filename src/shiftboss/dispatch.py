@@ -1015,6 +1015,15 @@ def main(argv: list[str] | None = None) -> int:
                   f"（TEMPLATE.md 子类型表），开发线不能做；改：shiftboss taskbook set {args.taskbook} --field 子类型={kind}")
             return 2
 
+    # 性能判据只写要消除的不合理写法、算法或架构，不写耗时门槛（TEMPLATE 第 15 条）：
+    # 机器负载与主机降频都会让绝对秒数失真，门槛只会把执行方推去硬扣耗时或误判回归。
+    if not args.close and cells.get("子类型") == "perf":
+        contract = book.contract_text() if book else ""
+        if found := re.findall(r"(?:不超过|不高于|低于|少于|小于|≤|<=?)\s*\d+(?:\.\d+)?\s*(?:秒|毫秒|ms|s)\b", contract):
+            print(f"性能合同含耗时门槛「{'、'.join(found)}」（TEMPLATE 第 15 条）：判据改写为要消除的不合理写法、算法或架构，"
+                  "耗时只作同机改前改后对照")
+            return 2
+
     ledger = load_sessions()
     entry = ledger.get(args.taskbook) or {}
     if args.close:
