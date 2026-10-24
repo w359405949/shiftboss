@@ -990,17 +990,15 @@ def main(argv: list[str] | None = None) -> int:
               f"也是下一个人第一眼看到的东西。")
         return 2
 
-    # 执行方按这一格去 DONE.md 查段内能做什么；缺了它就只能自己推断，所以拦在派活前。
-    if not args.close and cells.get("完成标准") not in DONE_LEVELS:
-        print(f"表头「完成标准」是 `{cells.get('完成标准', '（缺）')}`，"
-              f"须为 {'／'.join(DONE_LEVELS)} 之一（见 shiftboss/DONE.md）；"
-              f"改：shiftboss taskbook set {args.taskbook} --field 完成标准=<列名>")
-        return 2
-
-    # 破坏性由派活方派活前判定：「否」时执行方不得减少既有能力，「是」时合同逐条列出允许失去的能力。
-    if not args.close and cells.get("破坏性") not in ("否", "是"):
-        print(f"表头「破坏性」是 `{cells.get('破坏性', '（缺）')}`，须为 否／是（见 shiftboss/TEMPLATE.md）；"
-              f"改：shiftboss taskbook set {args.taskbook} --field 破坏性=<否|是>")
+    # 执行方按「完成标准」去 DONE.md 查段内能做什么；「破坏性」由派活方派活前判定：
+    # 「否」时执行方不得减少既有能力，「是」时合同逐条列出允许失去的能力。缺了就拦，一次列全。
+    header_rules = (("完成标准", DONE_LEVELS, "shiftboss/DONE.md"), ("破坏性", ("否", "是"), "shiftboss/TEMPLATE.md"))
+    bad = [(key, allowed, doc) for key, allowed, doc in header_rules if cells.get(key) not in allowed]
+    if not args.close and bad:
+        for key, allowed, doc in bad:
+            print(f"表头「{key}」是 `{cells.get(key, '（缺）')}`，须为 {'／'.join(allowed)} 之一（见 {doc}）")
+        fields = " ".join(f"--field {key}=<{'|'.join(allowed)}>" for key, allowed, _ in bad)
+        print(f"改：shiftboss taskbook set {args.taskbook} {fields}")
         return 2
 
     # 子类型决定执行方能做什么（DONE.md 第 2 节）：开发线不开页面遍历、不做测量，判据却要求时执行方只能停下。
