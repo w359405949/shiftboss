@@ -7,6 +7,7 @@
     archived:<任务书>  该任务书已归档
     answered:<编号>    用户已答复该待定事项（D）或已补充（E）
     after:<时长>       登记后过了这么久（如 30m、2h），用于隔段时间重试
+    load:<上限>        本机 5 分钟平均负载低于上限（如 load:12），用于等低负载实测
     省略              立即可做
 
 用法：
@@ -17,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -46,8 +48,8 @@ def save(remote: Path, items: list[dict], last: int | None = None) -> None:
 def add(remote: Path, text: str, when: str | None = None, line: str | None = None) -> str:
     if when and (match := re.fullmatch(r"after:(\d+)([mh])", when)):
         when = f"at:{int(time.time()) + int(match[1]) * (60 if match[2] == 'm' else 3600)}"
-    elif when and not re.fullmatch(r"(publish|archived|answered):\S+", when):
-        raise ValueError("条件写成 publish:<提交>、archived:<任务书>、answered:<编号> 或 after:<分钟m|小时h>")
+    elif when and not re.fullmatch(r"(publish|archived|answered):\S+|load:\d+(\.\d+)?", when):
+        raise ValueError("条件写成 publish:<提交>、archived:<任务书>、answered:<编号>、after:<分钟m|小时h> 或 load:<上限>")
     items = load(remote)
     number = max([(read_state(store(remote)) or {}).get("last", 0),
                   *(int(item["id"][1:]) for item in items)]) + 1
@@ -87,6 +89,9 @@ def condition(remote: Path, repo: Path, when: str | None) -> tuple[bool, str]:
         return bool(book and book.archived), f"等 {value} 归档"
     if kind == "at":
         return time.time() >= int(value), f"等到 {time.strftime('%H:%M', time.localtime(int(value)))}"
+    if kind == "load":
+        current = os.getloadavg()[1]
+        return current < float(value), f"等负载低于 {value}（现 {current:.1f}）"
     if kind == "answered":
         from shiftboss import decisions
         open_ids = {item.get("id") for item in decisions.load(repo) if item.get("answer") is None}
