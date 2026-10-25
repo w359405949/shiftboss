@@ -1015,11 +1015,12 @@ def main(argv: list[str] | None = None) -> int:
                   f"（TEMPLATE.md 子类型表），开发线不能做；改：shiftboss taskbook set {args.taskbook} --field 子类型={kind}")
             return 2
 
-    # 「改检查」为是却不授予任何检查脚本的写权，执行方只能停下交回（派活方两次漏改范围）。
+    # 「改检查」为是却不授予任何检查脚本或基线的写权，执行方只能停下交回（派活方两次漏改范围）。
     if not args.close and cells.get("改检查") == "是":
         from shiftboss.merge import guarded_check_paths
         scope = [s.rstrip("/") + "/" if not Path(s).suffix else s for s in book.meta().get("写入范围", [])] if book else []
-        if not any(g == s or g.startswith(s) or s.startswith(g) for g in guarded_check_paths() for s in scope):
+        if not any("baseline" in s for s in scope) and not any(
+                g == s or g.startswith(s) or s.startswith(g) for g in guarded_check_paths() for s in scope):
             print(f"表头「改检查」为是，但写入范围 {scope} 不含任何检查脚本（{'、'.join(guarded_check_paths())}）；"
                   f"改：shiftboss taskbook set {args.taskbook} --field 写入范围=<含检查脚本所在目录>")
             return 2
