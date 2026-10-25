@@ -22,7 +22,9 @@
 **跑什么**：`regen.json` 的 `verification.test_directories` 声明全量测试目录，
 文件由每次运行现发现；每个 `test_*.py` 都载入，**导入异常也变成失败记录**，
 不中断后续文件；跳过的测试单列，不冒充已执行。
-先生成并当即补 main（发布不看测试结果，不等后续阶段），再跑全部测试、未被全量套件覆盖的原闸、`verification.build` 打包命令，最后跑 `verification.pages` 页面闸（按环境变量 `SHIFTBOSS_VERIFY_BASE`／`SHIFTBOSS_VERIFY_HEAD` 给出的本批范围只核改到的页面，不计入预算）；
+先生成并当即补 main（发布不看测试结果，不等后续阶段），再跑全部测试、未被全量套件覆盖的原闸、`verification.build` 打包命令。
+本进程是三条支线中的工具闸支线（用户定 D53），不开浏览器：页面归页面支线、定时重活归定时支线（`shiftboss.patrol`），
+`start` 一并拉起这两条；`verification.pages` 仍登记时照跑，新项目不再登记。
 **普通测试红不阻止其余阶段**。生成失败同样报告，已有结果不冒充新生成结果。
 生成输入自上次派生物一致的提交以来没有改动时跳过生成（判法见 `generation_needed`）。
 验证用固定源提交；测试驱动按内容哈希快照，避免控制副本更新时中途换驱动。
@@ -808,7 +810,11 @@ def start(repo: Path, workspace: Path, publish: bool) -> int:
         print(f'锁 {lock} 记的 PID {pid or "无"} 已结束，删锁后再起');lock.unlink()
     argv=[sys.executable,'-B','-m','shiftboss.verify','watch','--repo',str(repo),
           '--workspace',str(workspace.resolve())]+(['--publish'] if publish else [])
-    print(f'常驻验证已起：PID {native.spawn(argv,str(repo))}');return 0
+    print(f'常驻验证已起：PID {native.spawn(argv,str(repo))}')
+    # 三条支线一个入口（D53）：工具闸支线之外，页面与定时两条支线一并拉起，已在跑的照旧。
+    from shiftboss import patrol
+    patrol.start(repo, config.copies_dir(origin(repo))/patrol.NAME)
+    return 0
 
 
 def rerun_tip(remote: Path) -> int:
@@ -851,10 +857,13 @@ def main(argv=None):
         if not args.ticket or not args.taskbook: parser.error('claim 需要 ticket taskbook')
         claim(remote,args.ticket,args.taskbook);return 0
     if args.command=='rerun': return rerun_tip(remote)
-    if args.command=='stop' and args.now: return stop_now(remote,args.workspace or config.copies_dir(remote)/'verify')
     if args.command=='stop':
+        # 三条支线一并停（D53）；单停浏览器支线用 `shiftboss patrol stop`。
+        from shiftboss import patrol
+        patrol.main(['stop',*(['--now'] if args.now else []),'--repo',str(args.repo.resolve())])
+        if args.now: return stop_now(remote,args.workspace or config.copies_dir(remote)/'verify')
         state_dir(remote).mkdir(parents=True,exist_ok=True)
-        (state_dir(remote)/'stop').touch();print('已请求在当前提交验证结束后停止');return 0
+        (state_dir(remote)/'stop').touch();print('已请求工具闸支线在当前提交验证结束后停止');return 0
     # 验证工作区缺省放在副本目录下的 verify/，与执行方副本同处一地。
     args.workspace=args.workspace or config.copies_dir(remote)/'verify'
     if args.interval<=0: parser.error('interval 必须为正数')

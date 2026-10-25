@@ -1,7 +1,11 @@
-"""常驻巡检：按项目登记的页面清单挨个核对最近一次发布的提交（页面读已发布的派生物），查到一页红就敲一次门铃。
+"""常驻巡检：常驻验证的两条浏览器支线（用户定 D53：验证与巡检是一个调度下并行的三条支线）。
 
-与常驻验证并行、分工不同：常驻验证只核本批改到的页面，快；巡检不看改动，一遍遍从头扫全部页面，
-兜住改动之外受牵连的页面。逐页串行，一次只占一个浏览器。
+- 工具闸支线（A）：`shiftboss.verify`，按提交生成、发布、跑测试与闸，不开浏览器；
+- 页面支线（B，本模块 `watch`）：按项目登记的页面清单挨个核对最近一次发布的提交（页面读已发布的派生物），
+  发布前进时先核本批改到的页面，再接着从头扫全部页面；逐页串行，一次只占一个浏览器；
+- 定时支线（C，本模块 `periodic`）：定时重活（如构建与 ROM 冒烟）与自动合入，独立进程、独立副本。
+
+三条各自推进、各自记红，互不让路。查到一页红就敲一次门铃。
 
 项目在生成计划（`regen.json`）的 `verification.patrol` 登记两条命令：
 
@@ -16,12 +20,12 @@
 
     "periodic": [{"name": "演示项目构建", "run": [...], "every_minutes": 10, "timeout_minutes": 30}]
 
-- `timeout_minutes` 省略时按单页上限；墙钟随机器负载伸缩的重活（如并行构建）按满载时的耗时登记；
-- 巡检在页与页之间、以及给常驻验证让路的等待期间，到点就在独立副本里检出 main 最新提交运行；
+- 不设总时长，连续 `IDLE_KILL` 秒没有输出才判卡死（用户定 D54：以输出是否持续区分慢与卡死）；
+- 定时支线到点就在独立副本里检出 main 最新提交运行；
 - main 自上次运行未前进则跳过；退出码非 0 即红，转红时敲门铃。
 
 用法：
-    shiftboss patrol start      # 起后台进程
+    shiftboss patrol start      # 起页面与定时两条支线（`shiftboss verify start` 会一并拉起）
     shiftboss patrol status     # 当前进度与红页
     shiftboss patrol stop       # 当前页核完后停
     shiftboss patrol claim <路由> <任务书名>   # 红页关联负责修它的线（在办或已归档）
@@ -48,9 +52,9 @@ from shiftboss.verify import git, origin
 from shiftboss import verify
 
 NAME = "patrol"
-CHECK_TIMEOUT = 900   # 单页上限：页面闸自身有 120 秒会话期限与两次启动重试，超过即视为卡死
+IDLE_KILL = 10 * 60   # 单页或定时项连续无输出多久判卡死；不设总时长（D54）
 AUTOMERGE_INTERVAL = 120   # 自动合入至多每两分钟查一次
-YIELD_POLL = 30   # 让路时每隔多少秒再看一次常驻验证的阶段
+YIELD_POLL = 30   # 发布落后时每隔多少秒再看一次；定时支线的轮询间隔
 PUBLISH_LAG = 3600   # main 上未发布的产品改动最早一条超过此秒数即算发布落后，巡检暂停
 MIN_FREE_BYTES = 5 * 2**30   # 磁盘剩余低于此值即停：逐页证据会累积，写满会拖垮全部执行方与常驻验证
 
@@ -68,8 +72,27 @@ def now() -> str:
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def run_until_idle(argv: list[str], cwd: Path, handle, env: dict) -> int:
+    """跑到结束，输出写进 `handle`；连续 IDLE_KILL 秒没有新输出才结束整个进程组并返回 124。"""
+    process = subprocess.Popen(argv, cwd=cwd, stdout=handle, stderr=subprocess.STDOUT, env=env, start_new_session=True)
+    last_size, last_change = -1, time.monotonic()
+    while True:
+        try:
+            return process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            handle.flush()
+            size = os.fstat(handle.fileno()).st_size
+            if size != last_size:
+                last_size, last_change = size, time.monotonic()
+            elif time.monotonic() - last_change > IDLE_KILL:
+                os.killpg(process.pid, 9)
+                process.wait()
+                handle.write(f"\n连续 {IDLE_KILL // 60} 分钟没有新输出，判为卡死\n")
+                return 124
+
+
 class Patrol:
-    def __init__(self, repo: Path, workspace: Path):
+    def __init__(self, repo: Path, workspace: Path, state_file: str = "state.json"):
         self.repo = repo.resolve()
         self.remote = origin(self.repo)
         self.workspace = workspace.resolve()
@@ -78,10 +101,12 @@ class Patrol:
             raise ValueError("巡检副本必须独立")
         self.directory = state_dir(self.remote)
         (self.directory / "logs").mkdir(parents=True, exist_ok=True)
-        self.state = read_state(self.directory / "state.json") or {"pass": 0, "red": {}}
+        # 页面支线与定时支线是两个进程，各写各的状态文件，免得整份覆盖吃掉对方的字段。
+        self.state_file = self.directory / state_file
+        self.state = read_state(self.state_file) or {"pass": 0, "red": {}}
 
     def save(self) -> None:
-        write_state(self.directory / "state.json", self.state)
+        write_state(self.state_file, self.state)
 
     def prepare(self) -> None:
         marker = self.workspace / ".git/shiftboss-patrol-owned"
@@ -176,16 +201,11 @@ class Patrol:
                 continue
             log = self.directory / "logs" / f"periodic-{re.sub(r'[\s/\\:]+', '_', name)}.log"
             env = os.environ.copy(); env["PYTHONIOENCODING"] = "utf-8"
-            started, limit = time.time(), int(item.get("timeout_minutes", 0)) * 60 or CHECK_TIMEOUT
+            started = time.time()
             with log.open("w", encoding="utf-8") as handle:
                 handle.write(f"{now()} {name} @ {sha}\n$ {subprocess.list2cmdline(item['run'])}\n")
                 handle.flush()
-                try:
-                    code = subprocess.run(interpreter(item["run"]), cwd=workspace, stdout=handle, stderr=subprocess.STDOUT,
-                                          env=env, timeout=limit).returncode
-                except subprocess.TimeoutExpired:
-                    handle.write(f"\n超过 {limit} 秒，按卡死记红\n")
-                    code = 124
+                code = run_until_idle(interpreter(item["run"]), workspace, handle, env)
             red = code != 0
             first = previous.get("first") if red and previous.get("code") else (now() if red else None)
             results[name] = {"commit": sha, "at": now(), "tried": time.time(), "code": code,
@@ -194,8 +214,14 @@ class Patrol:
             if red and not previous.get("code"):
                 ring(self.remote, f"patrol periodic red {name} @ {sha[:12]}; run shiftboss patrol status")
 
-    def routes(self, command: list[str]) -> list[str]:
-        p = subprocess.run(interpreter(command), cwd=self.workspace, capture_output=True, text=True, encoding="utf-8")
+    def routes(self, command: list[str], base: str | None = None, head: str | None = None) -> list[str]:
+        """全部页面；给出 `base`／`head` 时去掉 `--all`，按本批范围只列改到的页面（项目的清单命令据环境变量选页）。"""
+        env = os.environ.copy()
+        if base:
+            command = [part for part in command if part != "--all"]
+            env.update(SHIFTBOSS_VERIFY_BASE=base, SHIFTBOSS_VERIFY_HEAD=head or "HEAD")
+        p = subprocess.run(interpreter(command), cwd=self.workspace, capture_output=True, text=True, encoding="utf-8",
+                           env=env)
         for line in p.stdout.splitlines():
             line = line.strip()
             if line.startswith("{"):
@@ -211,12 +237,7 @@ class Patrol:
         with log.open("w", encoding="utf-8") as handle:
             handle.write(f"{now()} {route}\n$ {subprocess.list2cmdline(argv)}\n")
             handle.flush()
-            try:
-                code = subprocess.run(argv, cwd=self.workspace, stdout=handle, stderr=subprocess.STDOUT,
-                                      env=env, timeout=CHECK_TIMEOUT).returncode
-            except subprocess.TimeoutExpired:
-                handle.write(f"\n超过 {CHECK_TIMEOUT} 秒，按卡死记红\n")
-                code = 124
+            code = run_until_idle(argv, self.workspace, handle, env)
         return code, log
 
     def record_perf(self, route: str, log: Path, sha: str) -> None:
@@ -250,14 +271,6 @@ class Patrol:
         if not known:
             ring(self.remote, f"patrol red {route}; run shiftboss patrol status")
 
-    def verify_browsing(self) -> bool:
-        """常驻验证正在跑页面阶段：两边同时开浏览器会把机器压满，页面闸大面积超时成假红。"""
-        import psutil
-        index = verify.index_of(self.remote) or {}
-        stage = str((index.get("active") or {}).get("stage") or "")
-        pid = index.get("pid")
-        return stage.startswith("pages") and isinstance(pid, int) and psutil.pid_exists(pid)
-
     def publication_lag(self) -> bool:
         """发布落后：已合入 main 的产品改动迟迟未发布。页面读已发布的派生物，此时整遍只会重报已修的红，
         巡检暂停到发布追上；合入照常（用户裁定 D28）。"""
@@ -269,7 +282,7 @@ class Patrol:
         return bool(times) and time.time() - int(times[-1]) > PUBLISH_LAG
 
     def wait_reason(self) -> str | None:
-        return "常驻验证在跑页面" if self.verify_browsing() else "发布落后" if self.publication_lag() else None
+        return "发布落后" if self.publication_lag() else None
 
     def yield_to_verify(self, stop: Path) -> None:
         if not self.wait_reason():
@@ -277,7 +290,6 @@ class Patrol:
         self.state["yielding"] = now(); self.save()
         while (reason := self.wait_reason()) and not stop.exists():
             self.state["yield_reason"] = reason; self.save()
-            self.run_periodic()
             time.sleep(YIELD_POLL)
         self.state.pop("yielding", None); self.state.pop("yield_reason", None); self.save()
 
@@ -294,9 +306,16 @@ class Patrol:
         try:
             self.prepare()
             while not stop.exists():
+                previous = self.state.get("swept_release")
                 sha = self.checkout_tip(published=True)
                 policy = self.policy()
                 routes = self.routes(policy["list"])
+                # 发布前进：本批改到的页面排在最前，改动的牵连最先报出，其余照常从头扫。
+                if previous and self.pass_release and previous != self.pass_release:
+                    affected = self.routes(policy["list"], previous, self.pass_release)
+                    routes = [*dict.fromkeys([*[r for r in affected if r in routes], *routes])]
+                if self.pass_release:
+                    self.state["swept_release"] = self.pass_release
                 self.state["pass"] += 1
                 self.state.update(commit=sha, total=len(routes), position=0, started=now(), error=None)
                 self.save()
@@ -306,7 +325,6 @@ class Patrol:
                     free = shutil.disk_usage(self.workspace).free
                     if free < MIN_FREE_BYTES:
                         raise RuntimeError(f"磁盘剩余 {free / 2**30:.1f} GiB，低于 {MIN_FREE_BYTES / 2**30:.0f} GiB，巡检停下")
-                    self.run_periodic()
                     self.yield_to_verify(stop)
                     if stop.exists():
                         break
@@ -323,6 +341,25 @@ class Patrol:
             raise
         finally:
             lock.unlink(missing_ok=True)
+
+
+def periodic_loop(patrol: "Patrol") -> None:
+    """定时支线：定时重活与自动合入，独立于页面支线，构建再久也不挡逐页检查。"""
+    lock = patrol.directory / "periodic.lock"
+    try:
+        handle = lock.open("x", encoding="utf-8")
+    except FileExistsError:
+        raise ValueError(f"已有定时支线进程锁 {lock}；确认其 PID 已结束后才能删除")
+    with handle:
+        handle.write(str(os.getpid()))
+    stop = patrol.directory / "periodic-stop"
+    stop.unlink(missing_ok=True)
+    try:
+        while not stop.exists():
+            patrol.run_periodic()
+            time.sleep(YIELD_POLL)
+    finally:
+        lock.unlink(missing_ok=True)
 
 
 def perf_path(remote: Path) -> Path:
@@ -428,13 +465,16 @@ def status_lines(remote: Path, detail: bool = False) -> list[str]:
     alive = pid.isdigit() and psutil.pid_exists(int(pid))
     if not state:
         return [f"- 进度｜{'在跑' if alive else '没在跑'}｜尚无记录"]
-    running = (f"让路（{state.get('yield_reason') or '常驻验证在跑页面'}）" if state.get("yielding") else "在跑") if alive else "没在跑"
+    running = (f"暂停（{state.get('yield_reason') or '发布落后'}）" if state.get("yielding") else "在跑") if alive else "没在跑"
     head = (f"- 进度｜{running}｜第 {state.get('pass', 0)} 遍 "
             f"{state.get('position', 0)}/{state.get('total', '?')}｜main@{(state.get('commit') or '')[:12]}")
     lines = [head]
+    if not lane_pid(remote, "periodic.lock"):
+        lines.append("- 定时支线｜没在跑")
     if state.get("error"):
         lines.append(f"- 出错｜{state['error'][:120]}")
-    for name, item in (state.get("periodic") or {}).items():
+    periodic = read_state(directory / "periodic.json") or {}
+    for name, item in (periodic.get("periodic") or state.get("periodic") or {}).items():
         if "code" not in item:
             continue
         word = f"红（首见 {item['first'][5:16].replace('T', ' ')}）" if item["code"] else "绿"
@@ -461,23 +501,32 @@ def status_lines(remote: Path, detail: bool = False) -> list[str]:
     return lines
 
 
+LANES = (("worker.lock", "页面支线", "watch"), ("periodic.lock", "定时支线", "periodic"))
+
+
+def lane_pid(remote: Path, lock_name: str) -> int | None:
+    import psutil
+    lock = state_dir(remote) / lock_name
+    pid = lock.read_text(encoding="utf-8").strip() if lock.exists() else ""
+    return int(pid) if pid.isdigit() and psutil.pid_exists(int(pid)) else None
+
+
 def stop_now(remote: Path, workspace: Path) -> int:
     import psutil
-    lock = state_dir(remote) / "worker.lock"
-    pid = lock.read_text(encoding="utf-8").strip() if lock.exists() else ""
-    if pid.isdigit() and psutil.pid_exists(int(pid)):
-        root = psutil.Process(int(pid))
-        tree = root.children(recursive=True) + [root]
-        for proc in tree:
-            try:
-                proc.kill()
-            except psutil.NoSuchProcess:
-                pass
-        psutil.wait_procs(tree, timeout=10)
-        print(f"已结束常驻巡检 PID {pid} 及其 {len(tree) - 1} 个子进程")
-    else:
-        print("常驻巡检没在跑")
-    lock.unlink(missing_ok=True)
+    for lock_name, label, _ in LANES:
+        if pid := lane_pid(remote, lock_name):
+            root = psutil.Process(pid)
+            tree = root.children(recursive=True) + [root]
+            for proc in tree:
+                try:
+                    proc.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            psutil.wait_procs(tree, timeout=10)
+            print(f"已结束{label} PID {pid} 及其 {len(tree) - 1} 个子进程")
+        else:
+            print(f"{label}没在跑")
+        (state_dir(remote) / lock_name).unlink(missing_ok=True)
     # 进程树已杀尽，副本里残留的 git 锁必是被打断的检出留下的；不清掉下次拉起即报错退出。
     for copy in (workspace, *(workspace.with_name(workspace.name + suffix) for suffix in ("-periodic", "-automerge"))):
         (copy / ".git" / "index.lock").unlink(missing_ok=True)
@@ -485,22 +534,23 @@ def stop_now(remote: Path, workspace: Path) -> int:
 
 
 def start(repo: Path, workspace: Path) -> int:
-    import psutil
+    """拉起页面与定时两条支线；已在跑的照旧，只起没在跑的。"""
     from shiftboss import native
-    lock = state_dir(origin(repo)) / "worker.lock"
-    if lock.exists():
-        pid = lock.read_text(encoding="utf-8").strip()
-        if pid.isdigit() and psutil.pid_exists(int(pid)):
-            print(f"常驻巡检已在跑：PID {pid}"); return 1
-        lock.unlink()
-    argv = [sys.executable, "-B", "-m", "shiftboss.patrol", "watch", "--repo", str(repo),
-            "--workspace", str(workspace.resolve())]
-    print(f"常驻巡检已起：PID {native.spawn(argv, str(repo))}"); return 0
+    remote = origin(repo)
+    for lock_name, label, command in LANES:
+        if pid := lane_pid(remote, lock_name):
+            print(f"{label}已在跑：PID {pid}")
+            continue
+        (state_dir(remote) / lock_name).unlink(missing_ok=True)
+        argv = [sys.executable, "-B", "-m", "shiftboss.patrol", command, "--repo", str(repo),
+                "--workspace", str(workspace.resolve())]
+        print(f"{label}已起：PID {native.spawn(argv, str(repo))}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["watch", "start", "status", "stop", "claim", "perf"])
+    parser.add_argument("command", choices=["watch", "periodic", "start", "status", "stop", "claim", "perf"])
     parser.add_argument("route", nargs="?", help="claim：红页路由，照 `status` 所列")
     parser.add_argument("taskbook", nargs="?", help="claim：负责修它的任务书名")
     parser.add_argument("--repo", type=Path, default=None)
@@ -522,9 +572,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.now:
             return stop_now(remote, workspace)
         state_dir(remote).mkdir(parents=True, exist_ok=True)
-        (state_dir(remote) / "stop").touch(); print("已请求在当前页核完后停止"); return 0
+        (state_dir(remote) / "stop").touch(); (state_dir(remote) / "periodic-stop").touch()
+        print("已请求页面支线在当前页核完后停、定时支线在当前项跑完后停"); return 0
     if args.command == "start":
         return start(repo, workspace)
+    if args.command == "periodic":
+        periodic_loop(Patrol(repo, workspace, "periodic.json"))
+        return 0
     Patrol(repo, workspace).watch()
     return 0
 
