@@ -73,12 +73,10 @@ def red_owner(git_dir, owner: str) -> str:
 
 
 def machine_lines(git_dir) -> list[str]:
-    """负载、常驻验证阶段与巡检状态：页面闸会不会因负载出假红，先看这一行。"""
+    """本机负载：性能数据可不可比，先看这一行。"""
     import os
-    from shiftboss import verify
     load = "／".join(f"{value:.1f}" for value in os.getloadavg())
-    stage = ((verify.index_of(git_dir) or {}).get("active") or {}).get("stage") or "空闲"
-    return [f"- 负载｜{load}（{os.cpu_count()} 核）｜验证阶段 {stage}"]
+    return [f"- 负载｜{load}（{os.cpu_count()} 核）"]
 
 
 def ratchet_lines(repo) -> list[str]:
@@ -114,15 +112,20 @@ def verify_lines(repo) -> list[str]:
         return ["- 报告｜无"]
     head = report[0].removeprefix("后台验证：")
     ref, _, state = head.partition(" ")
-    lines = [f"- 当前｜{ref}｜{state.split('（')[0]}"]
+    git_dir = inbox.origin_git_dir(repo)
+    stage = ((verify.index_of(git_dir) or {}).get("active") or {}).get("stage") or "空闲"
+    lock = verify.state_dir(git_dir) / "worker.lock"
+    pid = lock.read_text(encoding="utf-8").strip() if lock.exists() else ""
+    alive = "在跑" if pid.isdigit() and psutil.pid_exists(int(pid)) else "没在跑"
+    lines = [f"- 工具闸｜{alive}｜阶段 {stage}｜{ref} {state.split('（')[0]}"]
     lines += publication_lines(inbox.origin_git_dir(repo))
     for line in report[1:]:
         text = line.strip()
         if match := re.match(r"最近 (\S+)：(红 \d+ 条)，(较上次验证 [+-]?\d+)", text):
-            lines.append(f"- 最近｜{match[1][:12]}｜{match[2]}｜{match[3]}")
+            lines.append(f"- 工具闸最近｜{match[1][:12]}｜{match[2]}｜{match[3]}")
         elif match := re.match(r"\[(\w+)\] ([^；]+)；.*负责：(.+)$", text):
             owner = match[3].split(' / ')[0]
-            lines.append(f"- 红｜{match[2]}｜{red_owner(inbox.origin_git_dir(repo), owner)}｜{match[1]}")
+            lines.append(f"- 工具闸红｜{match[2]}｜{red_owner(inbox.origin_git_dir(repo), owner)}｜{match[1]}")
     return lines
 
 
@@ -157,13 +160,13 @@ def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automer
         items.append("待办 " + "、".join(ripe))
     # 待办正文写明了票据号的红已由派活方带条件跟进（如「下一轮仍红再开线」），不再计入。
     followed = " ".join(todos)
-    reds = [line for line in verify if line.startswith("- 红｜") and ("无人负责" in line or "修复无效" in line)
+    reds = [line for line in verify if line.startswith("- 工具闸红｜") and ("无人负责" in line or "修复无效" in line)
             and line.rsplit("｜", 1)[-1] not in followed]
     if reds:
-        items.append(f"验证红无主或修复无效 {len(reds)}")
-    patrol_reds = [line for line in patrol_lines if line.startswith("- 红 ") and ("｜无人负责" in line or "｜修复无效" in line)]
+        items.append(f"工具闸红无主或修复无效 {len(reds)}")
+    patrol_reds = [line for line in patrol_lines if line.startswith("- 页面红 ") and ("｜无人负责" in line or "｜修复无效" in line)]
     if patrol_reds:
-        items.append(f"巡检红无主或修复无效 {len(patrol_reds)} 组")
+        items.append(f"页面红无主或修复无效 {len(patrol_reds)} 组")
     if any("不在" in line for line in bell):
         items.append("门铃不在")
     return items
@@ -228,15 +231,17 @@ def main(argv: list[str] | None = None) -> int:
     todos = todo_lines(repo, git_dir)
     out.append(f"【派活方待办】{len(todos)}" + ("" if todos else "：无"))
     out += todos
-    bell = bell_lines()
-    out += ["【门铃】", *bell, "【机器】", *machine_lines(git_dir)]
+    # 常驻验证的三条并行支线（D53）：工具闸、页面、定时。
+    from shiftboss import patrol
+    verify = verify_lines(repo)
+    patrol_lines = patrol.page_lines(git_dir)
+    out += ["【常驻验证】", *verify, *patrol_lines, *patrol.periodic_lines(git_dir)]
     if ratchets := ratchet_lines(repo):
         out += ["【棘轮余量】", *ratchets]
-    verify = verify_lines(repo)
-    out += ["【验证】", *verify]
-    from shiftboss import patrol
-    patrol_lines = patrol.status_lines(git_dir)
-    out += ["【巡检】", *patrol_lines]
+    if slowest := patrol.slowest_lines(git_dir):
+        out += ["【性能】", *slowest]
+    bell = bell_lines()
+    out += ["【门铃】", *bell, "【机器】", *machine_lines(git_dir)]
     automerged = automerge.unreviewed(git_dir)
     items = actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged)
     print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")

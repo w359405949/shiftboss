@@ -455,31 +455,18 @@ def red_state(remote: Path, item: dict, claimed: dict | None) -> tuple[str, str]
     return ("修复无效" if ancestor(published, item["commit"]) else "待复扫"), taskbook
 
 
-def status_lines(remote: Path, detail: bool = False) -> list[str]:
-    """进度一行；红页按（状态，负责线）合并成行。`detail` 再逐页列首见、所在遍与日志（`status` 用）。"""
-    import psutil
+def page_lines(remote: Path, detail: bool = False) -> list[str]:
+    """页面支线：进度一行；红页按（状态，负责线）合并成行。`detail` 再逐页列首见与日志（`status` 用）。"""
     directory = state_dir(remote)
     state = read_state(directory / "state.json")
-    lock = directory / "worker.lock"
-    pid = lock.read_text(encoding="utf-8").strip() if lock.exists() else ""
-    alive = pid.isdigit() and psutil.pid_exists(int(pid))
+    alive = lane_pid(remote, "worker.lock")
     if not state:
-        return [f"- 进度｜{'在跑' if alive else '没在跑'}｜尚无记录"]
+        return [f"- 页面｜{'在跑' if alive else '没在跑'}｜尚无记录"]
     running = (f"暂停（{state.get('yield_reason') or '发布落后'}）" if state.get("yielding") else "在跑") if alive else "没在跑"
-    head = (f"- 进度｜{running}｜第 {state.get('pass', 0)} 遍 "
-            f"{state.get('position', 0)}/{state.get('total', '?')}｜main@{(state.get('commit') or '')[:12]}")
-    lines = [head]
-    if not lane_pid(remote, "periodic.lock"):
-        lines.append("- 定时支线｜没在跑")
+    lines = [f"- 页面｜{running}｜第 {state.get('pass', 0)} 遍 "
+             f"{state.get('position', 0)}/{state.get('total', '?')}｜main@{(state.get('commit') or '')[:12]}"]
     if state.get("error"):
-        lines.append(f"- 出错｜{state['error'][:120]}")
-    periodic = read_state(directory / "periodic.json") or {}
-    for name, item in (periodic.get("periodic") or state.get("periodic") or {}).items():
-        if "code" not in item:
-            continue
-        word = f"红（首见 {item['first'][5:16].replace('T', ' ')}）" if item["code"] else "绿"
-        lines.append(f"- {name}｜{word}｜main@{item['commit'][:12]}｜{item['at'][11:16]}｜{item.get('seconds', '?')} 秒"
-                     + (f"｜{item['log']}" if item["code"] else ""))
+        lines.append(f"- 页面出错｜{state['error'][:120]}")
     claims = read_state(directory / "claims.json") or {}
     groups: dict[tuple[str, str], list[str]] = {}
     reds = sorted(state.get("red", {}).items(), key=lambda pair: pair[1]["first"])
@@ -489,16 +476,34 @@ def status_lines(remote: Path, detail: bool = False) -> list[str]:
     shown = 5
     for (word, taskbook), routes in groups.items():
         names = [route.removeprefix("/?view=") for route in routes]
-        lines.append(f"- 红 {len(routes)}｜{word}" + (f"｜{taskbook}" if taskbook else "") + "｜" + "、".join(names[:shown])
+        lines.append(f"- 页面红 {len(routes)}｜{word}" + (f"｜{taskbook}" if taskbook else "") + "｜" + "、".join(names[:shown])
                      + (f" 等 {len(names)} 条" if len(names) > shown else ""))
-    slowest = perf_lines(remote, PERF_SHOWN)
-    if slowest:
-        lines.append(f"- 最慢 {len(slowest)} 页（全部见 `shiftboss patrol perf`）")
-        lines += ["  " + line.removeprefix("- ") for line in slowest]
     if detail:
         for route, item in reds:
             lines.append(f"  {route}｜首见 {item['first'][5:16].replace('T', ' ')}｜{item['log']}")
     return lines
+
+
+def periodic_lines(remote: Path) -> list[str]:
+    """定时支线：进程是否在跑，各定时项最近一次的结果。"""
+    periodic = read_state(state_dir(remote) / "periodic.json") or {}
+    lines = [f"- 定时｜{'在跑' if lane_pid(remote, 'periodic.lock') else '没在跑'}"]
+    for name, item in (periodic.get("periodic") or {}).items():
+        if "code" not in item:
+            continue
+        word = f"红（首见 {item['first'][5:16].replace('T', ' ')}）" if item["code"] else "绿"
+        lines.append(f"- {name}｜{word}｜main@{item['commit'][:12]}｜{item['at'][11:16]}｜{item.get('seconds', '?')} 秒"
+                     + (f"｜{item['log']}" if item["code"] else ""))
+    return lines
+
+
+def slowest_lines(remote: Path) -> list[str]:
+    slowest = perf_lines(remote, PERF_SHOWN)
+    return [f"- 最慢 {len(slowest)} 页（全部见 `shiftboss patrol perf`）", *("  " + line.removeprefix("- ") for line in slowest)] if slowest else []
+
+
+def status_lines(remote: Path, detail: bool = False) -> list[str]:
+    return [*page_lines(remote, detail), *periodic_lines(remote), *slowest_lines(remote)]
 
 
 LANES = (("worker.lock", "页面支线", "watch"), ("periodic.lock", "定时支线", "periodic"))
