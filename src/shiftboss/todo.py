@@ -78,13 +78,17 @@ _cpu_sample: tuple[float, float] = (0.0, 0.0)
 
 
 def cpu_seconds() -> float:
-    """固定量的单线程纯计算耗时；关屏降频时约升 5–8 倍。同一进程 10 分钟内复用上次结果。"""
+    """固定量的单线程纯计算耗时（三次取最慢）；关屏降频时约升 5–8 倍。同一进程 10 分钟内复用上次结果。"""
     global _cpu_sample
     if time.time() - _cpu_sample[0] < 600:
         return _cpu_sample[1]
-    start = time.perf_counter()
-    sum(i % 7 for i in range(3_000_000))
-    _cpu_sample = (time.time(), time.perf_counter() - start)
+    # 降频是间歇的，单次采样会撞上短暂的满速：连跑三次取最慢的一次。
+    runs = []
+    for _ in range(3):
+        start = time.perf_counter()
+        sum(i % 7 for i in range(3_000_000))
+        runs.append(time.perf_counter() - start)
+    _cpu_sample = (time.time(), max(runs))
     return _cpu_sample[1]
 
 
