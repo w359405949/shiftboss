@@ -96,6 +96,17 @@ def ratchet_lines(repo) -> list[str]:
     return lines
 
 
+def mistake_lines(git_dir) -> list[str]:
+    """错题本（控制目录 `mistakes.md`）：条目数、再犯次数与最近一条的标题，看差错是否在减少。"""
+    path = config.control_dir(git_dir) / "mistakes.md"
+    if not path.is_file():
+        return []
+    text = path.read_text(encoding="utf-8")
+    titles = [line[3:].strip() for line in text.splitlines() if line.startswith("## ")]
+    again = sum(1 for line in text.splitlines() if line.lstrip("- ").startswith("再犯"))
+    return [f"【错题】{len(titles)} 条，再犯 {again} 次" + (f"｜最近：{titles[-1]}" if titles else "")]
+
+
 def verify_lines(repo) -> list[str]:
     from shiftboss import verify
     report = verify.show_report(inbox.origin_git_dir(repo)).splitlines()
@@ -174,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     puzzles = decisions.pending(repo, kind="puzzle")
     out.append(f"【我的困惑】{len(puzzles)}" if puzzles else "【我的困惑】：无")
     out += decisions.summary_lines(puzzles)
+    out += mistake_lines(git_dir)
     from shiftboss.dispatch import read_quota
     from shiftboss.taskbook import DEPENDENCY_KEYS, Taskbook, unmet_dependencies
     from shiftboss.taskbook import execution_status
