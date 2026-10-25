@@ -960,6 +960,9 @@ def merge_scope_reason(target: str) -> str | None:
                                                 check=False).returncode == 0 else "HEAD"
                     changed = sorted({line for line in git("diff", "--name-only", "--no-renames",
                                                            f"{base}...{target}").stdout.splitlines() if line})
+                    # 合入后内容与 base 相同的路径（经合并 main 带来、或改回原样）不算净改动。
+                    same = set(git("diff", "--name-only", "--no-renames", base, target).stdout.splitlines())
+                    changed = [path for path in changed if path in same]
                     if outside := out_of_scope(book.name, book.meta(), changed):
                         return (f"{book.name} 写到了写入范围外的 {len(outside)} 个路径（表头「写入范围」）："
                                 + "、".join(outside[:20]) + ("……" if len(outside) > 20 else ""))
