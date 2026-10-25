@@ -1015,6 +1015,15 @@ def main(argv: list[str] | None = None) -> int:
                   f"（TEMPLATE.md 子类型表），开发线不能做；改：shiftboss taskbook set {args.taskbook} --field 子类型={kind}")
             return 2
 
+    # 「改检查」为是却不授予任何检查脚本的写权，执行方只能停下交回（派活方两次漏改范围）。
+    if not args.close and cells.get("改检查") == "是":
+        from shiftboss.merge import guarded_check_paths
+        scope = [s.rstrip("/") + "/" if not Path(s).suffix else s for s in book.meta().get("写入范围", [])] if book else []
+        if not any(g == s or g.startswith(s) or s.startswith(g) for g in guarded_check_paths() for s in scope):
+            print(f"表头「改检查」为是，但写入范围 {scope} 不含任何检查脚本（{'、'.join(guarded_check_paths())}）；"
+                  f"改：shiftboss taskbook set {args.taskbook} --field 写入范围=<含检查脚本所在目录>")
+            return 2
+
     # 性能判据只写要消除的不合理写法、算法或架构，不写耗时门槛（TEMPLATE 第 15 条）：
     # 机器负载与主机降频都会让绝对秒数失真，门槛只会把执行方推去硬扣耗时或误判回归。
     if not args.close and cells.get("子类型") == "perf":
