@@ -890,6 +890,14 @@ def guarded_check_paths() -> list[str]:
     return sorted(paths)
 
 
+def check_hits(changed: list[str]) -> list[str]:
+    """改动路径中属于检查本身（检查脚本、测试或基线）的部分。"""
+    guarded = guarded_check_paths()
+    return [path for path in changed
+            if any(path == g or (g.endswith("/") and path.startswith(g)) for g in guarded)
+            or re.search(r"(^|/)[^/]*baseline[^/]*\.json$", path)]
+
+
 def check_change_reason(target: str, reviewed: bool) -> str | None:
     """分支改了检查本身时拒绝，派活方核对后以 --checks-reviewed 合入。
 
@@ -900,11 +908,7 @@ def check_change_reason(target: str, reviewed: bool) -> str | None:
         return None
     base = git("merge-base", "HEAD", target).stdout.strip()
     changed = [line for line in git("diff", "--name-only", "--no-renames", f"{base}...{target}").stdout.splitlines() if line]
-    guarded = guarded_check_paths()
-    hits = [path for path in changed
-            if any(path == g or (g.endswith("/") and path.startswith(g)) for g in guarded)
-            or re.search(r"(^|/)[^/]*baseline[^/]*\.json$", path)]
-    if not hits:
+    if not (hits := check_hits(changed)):
         return None
     stat = git("diff", "--stat", f"{base}...{target}", "--", *hits).stdout.rstrip()
     return (f"{target[:12]} 改了检查本身（检查脚本、测试或基线）：\n{stat}\n"

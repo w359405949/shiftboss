@@ -2,7 +2,7 @@
 
 适用的子类型由项目在 `shiftboss.toml` 的 `[automerge] subtypes` 登记（不登记即不启用）。条件：
 交回执行状态「完成」、无待议、无「待发布后补」、非性能类、破坏性为「否」、未改到 `[automerge] review_paths`
-登记的路径（全站共用层等须派活方按影响面核对的位置）；合并本身仍走 `shiftboss merge`
+登记的路径（全站共用层等须派活方按影响面核对的位置）与检查本身（检查脚本、测试或基线）；合并本身仍走 `shiftboss merge`
 （快速检查、写入范围、合入前置照常拦）。拒合的记下原因、同一提交不再重试，留给派活方。
 自动合入的线在状态摘要「该你处理」列为「复核自动合入」，派活方读完交回后 `--ack`。
 
@@ -63,7 +63,7 @@ def push(workspace: Path) -> None:
 
 def candidates(workspace: Path, allowed: list[str]):
     """→ (任务书名, 分支顶端提交)。条件见模块说明。"""
-    from shiftboss.merge import pending_lines, publish_later_lines
+    from shiftboss.merge import check_hits, pending_lines, publish_later_lines
     from shiftboss.taskbook import Taskbook, category_of, execution_status
     for book in Taskbook.iter_active(workspace):
         meta = book.meta()
@@ -73,10 +73,11 @@ def candidates(workspace: Path, allowed: list[str]):
         tip = git(workspace, "rev-parse", "--verify", "--quiet", ref, check=False).stdout.strip()
         if not tip or git(workspace, "merge-base", "--is-ancestor", tip, "origin/main", check=False).returncode == 0:
             continue
-        if reviewed := review_paths(workspace):
-            changed = git(workspace, "diff", "--name-only", "--no-renames", f"origin/main...{tip}", check=False).stdout.splitlines()
-            if any(path == p or (p.endswith("/") and path.startswith(p)) for path in changed for p in reviewed):
-                continue
+        # 改了共用层或检查本身的线留派活方核对：巡检合并时没有 --checks-reviewed，必然拒合。
+        changed = git(workspace, "diff", "--name-only", "--no-renames", f"origin/main...{tip}", check=False).stdout.splitlines()
+        reviewed = review_paths(workspace)
+        if any(path == p or (p.endswith("/") and path.startswith(p)) for path in changed for p in reviewed) or check_hits(changed):
+            continue
         delivery = git(workspace, "show", f"{tip}:{book.path.relative_to(workspace)}/delivery.md", check=False).stdout
         if execution_status(delivery) != "完成" or pending_lines(delivery) or publish_later_lines(delivery):
             continue
