@@ -420,6 +420,35 @@ def fast_checks(before: str) -> None:
     assertion_delta(before)
 
 
+FAST_IDLE_KILL = 10 * 60  # 快速检查单项连续无输出多久判卡死
+
+
+def run_until_idle(command: list[str]) -> tuple[int, str]:
+    """跑到结束；不设总时长，连续 FAST_IDLE_KILL 秒无输出才判卡死（用户定：以输出是否持续区分慢与卡死）。"""
+    import tempfile
+    with tempfile.TemporaryFile("w+", encoding="utf-8") as output:
+        process = subprocess.Popen(command, cwd=REPO, stdout=output, stderr=subprocess.STDOUT, text=True,
+                                   start_new_session=True)
+        last_size, last_change = -1, time.monotonic()
+        while True:
+            try:
+                code = process.wait(timeout=15)
+                break
+            except subprocess.TimeoutExpired:
+                output.flush()
+                size = os.fstat(output.fileno()).st_size
+                if size != last_size:
+                    last_size, last_change = size, time.monotonic()
+                elif time.monotonic() - last_change > FAST_IDLE_KILL:
+                    os.killpg(process.pid, 9)
+                    process.wait()
+                    output.write(f"\n连续 {FAST_IDLE_KILL // 60} 分钟没有新输出，判为卡死，已结束。\n")
+                    code = 124
+                    break
+        output.seek(0)
+        return code, output.read()
+
+
 def run_fast_commands(names: list[str]) -> None:
     """项目登记的秒级结构检查；只放静态分析，生成、构建与浏览器检查归常驻验证。"""
     for item in config.fast_commands():
@@ -428,10 +457,10 @@ def run_fast_commands(names: list[str]) -> None:
             continue
         command = config.closure_command() if run == "regen.closure_command" else list(run)
         started = time.monotonic()
-        result = subprocess.run(command, cwd=REPO, capture_output=True, text=True, timeout=300)
-        if result.returncode:
-            tail = "\n".join((result.stderr or result.stdout).strip().splitlines()[-12:])
-            raise MergeError(f"快速检查 {name} 失败（退出码 {result.returncode}）：\n{tail}")
+        code, text = run_until_idle(command)
+        if code:
+            tail = "\n".join(text.strip().splitlines()[-12:])
+            raise MergeError(f"快速检查 {name} 失败（退出码 {code}）：\n{tail}")
         spent = time.monotonic() - started
         print(f"快速检查 {name}: {spent:.3f}s", flush=True)
         # 开发线只跑秒级检查；做了才发现慢的，挪进常驻验证的闸（README 3.3c 例外），不在开发线排队限量。
