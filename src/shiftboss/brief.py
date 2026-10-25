@@ -138,6 +138,14 @@ def branch_merged(git_dir, meta: dict) -> bool:
     return run("rev-parse", "--verify", "--quiet", ref) == 0 and run("merge-base", "--is-ancestor", ref, "refs/heads/main") == 0
 
 
+def idle_copy(copy: str) -> bool:
+    """副本工作树干净且没有领先 origin/main 的提交。"""
+    if not copy or copy == "—" or not Path(copy).is_dir():
+        return False
+    run = lambda *args: subprocess.run(["git", "-C", copy, *args], capture_output=True, text=True).stdout.strip()
+    return not run("status", "--porcelain") and run("rev-list", "--count", "origin/main..HEAD") in ("0", "")
+
+
 def todo_lines(repo, git_dir) -> list[str]:
     from shiftboss import todo
     return todo.summary_lines(repo, git_dir)
@@ -214,7 +222,11 @@ def main(argv: list[str] | None = None) -> int:
         elif unreviewed and name in awaiting:
             waiting.append(f"{name}｜等巡检自动合入")
         elif unreviewed and not dependency_waits:
-            review.append(f"{name}｜{pushed.removeprefix('可核对').strip('（）') if pushed.startswith('可核对') else state}")
+            label = pushed.removeprefix('可核对').strip('（）') if pushed.startswith('可核对') else state
+            # 会话停下却一行未改、未推：执行方把进度说明当成了收尾，续同一会话即可，不是交回。
+            if state.startswith("做完了没推") and pushed.startswith("未推分支") and idle_copy(copy):
+                label += f"｜空交回：shiftboss dispatch {name} --recover 续"
+            review.append(f"{name}｜{label}")
         elif book and not unreviewed and branch_merged(git_dir, book.meta()):
             status = execution_status(book.delivery_text()) or "—"
             follow = "待收尾" if status == "完成" else "待续派"
