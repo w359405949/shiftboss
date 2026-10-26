@@ -725,7 +725,7 @@ def publish_later_lines(delivery: str) -> list[str]:
             continue
         if re.search(r"(无|未|不|没有)[^，。；|]{0,12}「?待发布后补", line):
             continue
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        cells = [cell.strip().rstrip("。.") for cell in line.strip().strip("|").split("|")]
         if line.lstrip().startswith("|") and all(cell in ("", "无", "—", "-", "待发布后补") for cell in cells):
             continue
         lines.append(line)
