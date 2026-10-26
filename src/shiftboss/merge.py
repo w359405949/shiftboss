@@ -717,12 +717,16 @@ def pending_lines(delivery: str) -> list[str]:
 
 
 def publish_later_lines(delivery: str) -> list[str]:
-    """交回中真正记为「待发布后补」的行：标题行与否定句（「无待发布后补」「未将……记作待发布后补」）不算。"""
+    """交回中真正记为「待发布后补」的行：标题行、否定句（「无待发布后补」「未将……记作待发布后补」）
+    与其余格为空或「无」的表格行（`| 待发布后补 | 无 |`）不算。"""
     lines = []
     for line in delivery.splitlines():
         if "待发布后补" not in line or line.lstrip().startswith("#"):
             continue
         if re.search(r"(无|未|不|没有)[^，。；|]{0,12}「?待发布后补", line):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if line.lstrip().startswith("|") and all(cell in ("", "无", "—", "-", "待发布后补") for cell in cells):
             continue
         lines.append(line)
     return lines
