@@ -314,9 +314,12 @@ class Patrol:
                 policy = self.policy()
                 routes = self.routes(policy["list"])
                 # 发布前进：本批改到的页面排在最前，改动的牵连最先报出，其余照常从头扫。
+                affected = []
                 if previous and self.pass_release and previous != self.pass_release:
                     affected = self.routes(policy["list"], previous, self.pass_release)
-                    routes = [*dict.fromkeys([*[r for r in affected if r in routes], *routes])]
+                # 红页紧随其后：修复合入或偶发故障后尽早复扫消红。
+                reds = [r for r in self.state.get("red", {}) if r in routes]
+                routes = [*dict.fromkeys([*[r for r in affected if r in routes], *reds, *routes])]
                 if self.pass_release:
                     self.state["swept_release"] = self.pass_release
                 self.state["pass"] += 1
@@ -335,6 +338,9 @@ class Patrol:
                         break   # 发布已前进：从头扫新发布，已扫的旧发布结果不再有意义
                     self.state.update(position=index + 1, route=route); self.save()
                     code, log = self.check(policy["check"], route, index)
+                    # 读不出任何页面失败原因的失败（浏览器连接断开等）按偶发故障当场重试一次。
+                    if code and not reason_kinds(log):
+                        code, log = self.check(policy["check"], route, index)
                     self.record(route, code, log, sha)
                 else:
                     self.state["finished"] = now(); self.save()
