@@ -460,15 +460,23 @@ def claim_rules(remote: Path) -> dict[str, dict]:
     return read_state(state_dir(remote) / "claim-rules.json") or {}
 
 
-def rule_taskbook(remote: Path, kinds: list[str]) -> str:
-    """失败原因只有一种且登记了按原因认领、负责线仍在办时，返回该线；负责线归档即规则失效。"""
+def rule_taskbook(remote: Path, kinds: list[str], first: str | None = None) -> str:
+    """失败原因只有一种且登记了按原因认领时返回负责线。负责线归档后规则只管首见早于归档合并的红
+    （照常走待发布／待复扫／修复无效），之后新出的红不再认领；不给 `first` 即只问规则是否仍在生效。"""
     if len(kinds) != 1:
         return ""
     rule = claim_rules(remote).get(kinds[0])
     if not rule:
         return ""
     info = owner(remote, rule["taskbook"])
-    return rule["taskbook"] if info and not info["archived"] else ""
+    if not info:
+        return ""
+    if not info["archived"]:
+        return rule["taskbook"]
+    if first is None or not info["merge"]:
+        return ""
+    merged_at = git(remote, "show", "-s", "--format=%cI", info["merge"], check=False).stdout.strip()
+    return rule["taskbook"] if merged_at and first < merged_at[:19] else ""
 
 
 def claim_reason(remote: Path, reason: str, taskbook: str) -> None:
@@ -478,8 +486,8 @@ def claim_reason(remote: Path, reason: str, taskbook: str) -> None:
     info = owner(remote, taskbook)
     if info is None or info["archived"]:
         raise ValueError("认领拒绝：main 上没有这份在办任务书")
-    rules = {key: rule for key, rule in claim_rules(remote).items()
-             if (found := owner(remote, rule["taskbook"])) and not found["archived"]}
+    # 已归档线的规则保留：它仍管归档前认领的红，直到这些红消掉或换线认领。
+    rules = claim_rules(remote)
     rules[reason] = {"taskbook": taskbook, "claimed": now()}
     write_state(state_dir(remote) / "claim-rules.json", rules)
     print(f"已按原因认领「{reason}」→ {taskbook}（该线归档后失效）")
@@ -488,7 +496,7 @@ def claim_reason(remote: Path, reason: str, taskbook: str) -> None:
 def red_state(remote: Path, item: dict, claimed: dict | None) -> tuple[str, str]:
     """→ (状态词, 负责线)。只有「无人负责」与「修复无效」要开线；「待发布」等常驻验证发布。"""
     if not claimed or claimed.get("first") != item["first"]:
-        taskbook = rule_taskbook(remote, item.get("kinds") or reason_kinds(item["log"]))
+        taskbook = rule_taskbook(remote, item.get("kinds") or reason_kinds(item["log"]), item["first"])
         if not taskbook:
             return "无人负责", ""
         claimed = {"taskbook": taskbook, "first": item["first"]}
