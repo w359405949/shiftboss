@@ -156,12 +156,13 @@ def stale_lanes(git_dir: Path) -> list[str]:
     import psutil
     import shiftboss
     from shiftboss import patrol, verify as verify_mod
-    # 只由派活方命令行调用、常驻进程不导入的模块改了不算。
+    # 只由派活方命令行调用、常驻进程不导入的模块改了不算；执行方启动器（workers/）只有派活与收件箱用。
     派活侧 = {"brief", "dispatch", "todo", "inbox", "decisions", "puzzle", "need", "check", "bootstrap",
              "docs_install", "recover", "cli", "native", "idle_audit", "doorbell"}
     package = Path(shiftboss.__file__).parent
     newest = max(path.stat().st_mtime for path in package.rglob("*.py")
-                 if path.stem not in 派活侧 and "hooks" not in path.relative_to(package).parts)
+                 if path.stem not in 派活侧
+                 and not {"hooks", "workers"} & set(path.relative_to(package).parts))
     lanes = [("工具闸", verify_mod.state_dir(git_dir) / "worker.lock"),
              ("页面", patrol.state_dir(git_dir) / "worker.lock"), ("定时", patrol.state_dir(git_dir) / "periodic.lock")]
     stale = []
