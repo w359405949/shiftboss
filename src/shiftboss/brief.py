@@ -158,7 +158,7 @@ def stale_lanes(git_dir: Path) -> list[str]:
     from shiftboss import patrol, verify as verify_mod
     # 只由派活方命令行调用、常驻进程不导入的模块改了不算。
     派活侧 = {"brief", "dispatch", "todo", "inbox", "decisions", "puzzle", "need", "check", "bootstrap",
-             "docs_install", "recover", "cli", "native"}
+             "docs_install", "recover", "cli", "native", "idle_audit", "doorbell"}
     package = Path(shiftboss.__file__).parent
     newest = max(path.stat().st_mtime for path in package.rglob("*.py")
                  if path.stem not in 派活侧 and "hooks" not in path.relative_to(package).parts)

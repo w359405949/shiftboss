@@ -26,6 +26,7 @@ COMMANDS = {
     "verify": "verify",
     "patrol": "patrol",     # 常驻巡检：逐页扫全部页面，查到一页红敲一次门铃
     "todo": "todo",         # 派活方待办：带触发条件，状态摘要列出，满足时敲门铃
+    "audit": "idle_audit",  # 空闲时的全项目审查：连续两次门铃无事可做时提议，按标准合同建线
     "bootstrap": "bootstrap",
     "init": "bootstrap",   # 在项目里装载 shiftboss：与 bootstrap 同一件事
 }

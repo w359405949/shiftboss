@@ -382,6 +382,20 @@ def ring_ripe_todos(path: Path) -> None:
             bell.write(f"{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')} todo {item['id']} 可做：{item['text']}\n")
 
 
+def ring_idle_audit(path: Path) -> None:
+    """门铃每响一次核一次空闲；连续两次无事可做且 main 已前进时，写一行提议全项目审查。"""
+    from shiftboss import idle_audit
+    from shiftboss.paths import project_root
+    from shiftboss.verify import origin
+    try:
+        line = idle_audit.observe(origin(project_root()))
+    except (ValueError, RuntimeError, OSError):
+        return
+    if line:
+        with path.open("a", encoding="utf-8") as bell:
+            bell.write(f"{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')} {line}\n")
+
+
 def watch(path: Path, heartbeat_minutes: int, fallback: Path, once: bool = False,
           ignore_green: bool = False) -> int:
     lock_path = path.parent / "bell.lock"
@@ -398,6 +412,7 @@ def watch(path: Path, heartbeat_minutes: int, fallback: Path, once: bool = False
             if rang:
                 say_stalled()
                 say_puzzles()
+                ring_idle_audit(path)
                 if once:
                     return 0
             elif heartbeat_minutes > 0 and \
@@ -419,6 +434,7 @@ def watch(path: Path, heartbeat_minutes: int, fallback: Path, once: bool = False
                     f"shiftboss inbox list（不是只看某一条线）")
                 say_stalled()
                 say_puzzles()
+                ring_idle_audit(path)
                 if once:
                     return 0
             time.sleep(POLL_SECONDS)
