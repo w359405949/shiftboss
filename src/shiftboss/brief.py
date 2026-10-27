@@ -175,10 +175,20 @@ def stale_lanes(git_dir: Path) -> list[str]:
     return stale
 
 
-def automation_lines(repo: Path) -> list[str]:
-    """自动任务开关（`shiftboss.toml` `[automation]`），每项标在名称后：派活方据此判断哪些事会被自动触发。"""
+def switch(key: str, repo: Path) -> str:
+    """自动任务开关（`shiftboss.toml` `[automation]`）的显示词，标在对应条目名后。"""
     from shiftboss import config
-    return ["".join(f"【{label}：{'开' if config.automation(key, repo) else '关'}】" for key, label, *_ in config.AUTOMATION)]
+    return "开" if config.automation(key, repo) else "关"
+
+
+def mark_lanes(lines: list[str], repo: Path) -> list[str]:
+    """常驻验证三条支线的行首名后标开关；红、最近等其余行不动。"""
+    names = {"- 工具闸｜": "verify", "- 页面｜": "patrol", "- 定时｜": "periodic"}
+    out = []
+    for line in lines:
+        prefix = next((p for p in names if line.startswith(p)), None)
+        out.append(f"{prefix[:-1]}：{switch(names[prefix], repo)}｜{line[len(prefix):]}" if prefix else line)
+    return out
 
 
 def docs_drift(repo: Path) -> list[str]:
@@ -282,20 +292,21 @@ def main(argv: list[str] | None = None) -> int:
         out.append(f"【{title}】{len(items)}{suffix}" + ("" if items else "：无"))
         out += [f"- {item}" for item in items]
     todos = todo_lines(repo, git_dir)
-    out.append(f"【派活方待办】{len(todos)}" + ("" if todos else "：无"))
+    out.append(f"【派活方待办：{switch('todo_bell', repo)}】{len(todos)}" + ("" if todos else "：无"))
     out += todos
     # 常驻验证的三条并行支线（D53）：工具闸、页面、定时。
     from shiftboss import patrol
     verify = verify_lines(repo)
     patrol_lines = patrol.page_lines(git_dir)
-    out += ["【常驻验证】", *verify, *patrol_lines, *patrol.periodic_lines(git_dir)]
+    out += [f"【常驻验证：{switch('verify', repo)}】", *mark_lanes([*verify, *patrol_lines, *patrol.periodic_lines(git_dir)], repo),
+            f"- 自动合入：{switch('automerge', repo)}"]
     if ratchets := ratchet_lines(repo):
         out += ["【棘轮余量】", *ratchets]
     if slowest := patrol.slowest_lines(git_dir):
         out += ["【性能】", *slowest]
     bell = bell_lines()
-    out += automation_lines(repo)
-    out += ["【门铃】", *bell, "【机器】", *machine_lines(git_dir)]
+    out += ["【门铃】", *bell, f"- 空闲审查：{switch('idle_audit', repo)}", f"- 会话恢复：{switch('session_recover', repo)}",
+            "【机器】", *machine_lines(git_dir)]
     automerged = automerge.unreviewed(git_dir)
     items = actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged,
                        stale_lanes(git_dir), docs_drift(repo))
