@@ -29,7 +29,7 @@
     shiftboss patrol status     # 当前进度与红页
     shiftboss patrol stop       # 当前页核完后停
     shiftboss patrol claim <路由> <任务书名>   # 红页关联负责修它的线（在办或已归档）
-    shiftboss patrol claim --reason <原因> <任务书名>   # 失败原因只有这一种的红页都归该线，直到它归档
+    shiftboss patrol claim --reason <原因> <任务书名>   # 失败原因只有一种种类且种类或原文含该词的红页都归该线，直到它归档
     shiftboss patrol perf       # 各页最近耗时与历次中位数，最慢的在前
 """
 from __future__ import annotations
@@ -284,12 +284,12 @@ class Patrol:
             self.save()
             return
         known = red.get(route)
-        kinds = reason_kinds(log)
+        reasons = reason_lines(log)
         red[route] = {"first": known["first"] if known else now(), "last": now(), "commit": sha,
-                      "log": str(log), "code": code, "kinds": kinds}
+                      "log": str(log), "code": code, "reasons": reasons}
         self.save()
         # 按原因认领规则命中的新红已有负责线，不敲门铃。
-        if not known and not rule_taskbook(self.remote, kinds):
+        if not known and not rule_taskbook(self.remote, reasons):
             ring(self.remote, f"patrol red {route}; run shiftboss patrol status")
 
     def publication_lag(self) -> bool:
@@ -461,13 +461,13 @@ def claim(remote: Path, route: str, taskbook: str) -> None:
     print(f"已认领 {route} → {taskbook}")
 
 
-def reason_kinds(log: Path) -> list[str]:
-    """页面闸日志里本页失败原因的种类（「模板几何」「布局指纹」等冒号前的名字）；读不出返回空表。"""
+def reason_lines(log: Path) -> list[str]:
+    """页面闸日志里本页的失败原因原文；读不出返回空表。"""
     try:
         lines = Path(log).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
-    kinds: set[str] = set()
+    found: list[str] = []
     for line in lines:
         if '"reasons"' not in line:
             continue
@@ -478,23 +478,31 @@ def reason_kinds(log: Path) -> list[str]:
         # 带 attempts 的是逐次尝试的详细记录，其 reasons 混入启动日志；只认页面结论行。
         if not isinstance(result, dict) or "attempts" in result:
             continue
-        reasons = result.get("reasons") or []
-        kinds.update(str(reason).split(":", 1)[0].strip() for reason in reasons)
-    return sorted(kinds)
+        found.extend(str(reason) for reason in result.get("reasons") or [])
+    return found
+
+
+def reason_kinds(log: Path) -> list[str]:
+    """页面闸日志里本页失败原因的种类（「模板几何」「布局指纹」等冒号前的名字）；读不出返回空表。"""
+    return sorted({reason.split(":", 1)[0].strip() for reason in reason_lines(log)})
 
 
 def claim_rules(remote: Path) -> dict[str, dict]:
     return read_state(state_dir(remote) / "claim-rules.json") or {}
 
 
-def rule_taskbook(remote: Path, kinds: list[str], first: str | None = None) -> str:
-    """失败原因只有一种且登记了按原因认领时返回负责线。负责线归档后规则只管首见早于归档合并的红
-    （照常走待发布／待复扫／修复无效），之后新出的红不再认领；不给 `first` 即只问规则是否仍在生效。"""
+def rule_taskbook(remote: Path, reasons: list[str], first: str | None = None) -> str:
+    """失败原因只有一种种类、且规则键等于该种类或出现在某条原因原文里时返回负责线（多条命中取最长的键）。
+    负责线归档后规则只管首见早于归档合并的红（照常走待发布／待复扫／修复无效），之后新出的红不再认领；
+    不给 `first` 即只问规则是否仍在生效。"""
+    kinds = {reason.split(":", 1)[0].strip() for reason in reasons}
     if len(kinds) != 1:
         return ""
-    rule = claim_rules(remote).get(kinds[0])
-    if not rule:
+    rules = claim_rules(remote)
+    keys = [key for key in rules if key in kinds or any(key in reason for reason in reasons)]
+    if not keys:
         return ""
+    rule = rules[max(keys, key=len)]
     info = owner(remote, rule["taskbook"])
     if not info:
         return ""
@@ -507,7 +515,7 @@ def rule_taskbook(remote: Path, kinds: list[str], first: str | None = None) -> s
 
 
 def claim_reason(remote: Path, reason: str, taskbook: str) -> None:
-    """按原因认领：此后失败原因只有 `reason` 一种的红页都归 `taskbook`，直到它归档。"""
+    """按原因认领：此后失败原因只有一种种类、且该种类或某条原因原文含 `reason` 的红页都归 `taskbook`，直到它归档。"""
     if Path(taskbook).name != taskbook:
         raise ValueError("任务书给文件名，不带目录或扩展名")
     info = owner(remote, taskbook)
@@ -523,7 +531,7 @@ def claim_reason(remote: Path, reason: str, taskbook: str) -> None:
 def red_state(remote: Path, item: dict, claimed: dict | None) -> tuple[str, str]:
     """→ (状态词, 负责线)。只有「无人负责」与「修复无效」要开线；「待发布」等常驻验证发布。"""
     if not claimed or claimed.get("first") != item["first"]:
-        taskbook = rule_taskbook(remote, item.get("kinds") or reason_kinds(item["log"]), item["first"])
+        taskbook = rule_taskbook(remote, item.get("reasons") or reason_lines(item["log"]), item["first"])
         if not taskbook:
             return "无人负责", ""
         claimed = {"taskbook": taskbook, "first": item["first"]}
@@ -657,7 +665,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", type=Path, default=None)
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--now", action="store_true", help="stop：不等当前页核完，立即结束整棵进程树")
-    parser.add_argument("--reason", help="claim：按失败原因认领（如「模板几何」），此时只给任务书名")
+    parser.add_argument("--reason", help="claim：按失败原因认领（种类如「模板几何」，或原因原文里的词如选择器），此时只给任务书名")
     args = parser.parse_args(argv)
     repo = (args.repo or project_root()).resolve()
     remote = origin(repo)
