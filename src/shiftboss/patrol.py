@@ -2,7 +2,7 @@
 
 - 工具闸支线（A）：`shiftboss.verify`，按提交生成、发布、跑测试与闸，不开浏览器；
 - 页面支线（B，本模块 `watch`）：按项目登记的页面清单挨个核对最近一次发布的提交（页面读已发布的派生物），
-  发布前进时先核本批改到的页面，再接着从头扫全部页面；逐页串行，一次只占一个浏览器；
+  发布前进时先核本批改到的页面与红页，其余按最久未核排；逐页串行，一次只占一个浏览器；
 - 定时支线（C，本模块 `periodic`）：定时重活（如构建与 ROM 冒烟）与自动合入，独立进程、独立副本。
 
 三条各自推进、各自记红，互不让路。查到一页红就敲一次门铃。
@@ -259,12 +259,29 @@ class Patrol:
         with perf_path(self.remote).open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
+    def last_checked(self) -> dict[str, str]:
+        """每页最近一次核对的时间；状态里没有时从性能记录补齐。"""
+        checked = self.state.get("checked")
+        if checked is None:
+            checked = {}
+            path = perf_path(self.remote)
+            if path.exists():
+                for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    checked[entry["route"]] = max(checked.get(entry["route"], ""), entry["at"])
+            self.state["checked"] = checked
+        return checked
+
     def record(self, route: str, code: int, log: Path, sha: str) -> None:
         self.record_perf(route, log, sha)
+        self.last_checked()[route] = now()
         red = self.state["red"]
         if code == 0:
-            if red.pop(route, None):
-                self.save()
+            red.pop(route, None)
+            self.save()
             return
         known = red.get(route)
         kinds = reason_kinds(log)
@@ -314,13 +331,16 @@ class Patrol:
                 sha = self.checkout_tip(published=True)
                 policy = self.policy()
                 routes = self.routes(policy["list"])
-                # 发布前进：本批改到的页面排在最前，改动的牵连最先报出，其余照常从头扫。
+                # 发布前进：本批改到的页面排在最前，改动的牵连最先报出。
                 affected = []
                 if previous and self.pass_release and previous != self.pass_release:
                     affected = self.routes(policy["list"], previous, self.pass_release)
                 # 红页紧随其后：修复合入或偶发故障后尽早复扫消红。
                 reds = [r for r in self.state.get("red", {}) if r in routes]
-                routes = [*dict.fromkeys([*[r for r in affected if r in routes], *reds, *routes])]
+                # 其余按最久未核排：发布前进会打断整遍，若每遍从清单头扫，清单尾的页永远轮不到。
+                checked = self.last_checked()
+                rest = sorted(routes, key=lambda r: checked.get(r, ""))
+                routes = [*dict.fromkeys([*[r for r in affected if r in routes], *reds, *rest])]
                 if self.pass_release:
                     self.state["swept_release"] = self.pass_release
                 self.state["pass"] += 1
@@ -336,7 +356,7 @@ class Patrol:
                     if stop.exists():
                         break
                     if self.pass_release and (verify.index_of(self.remote) or {}).get("last_consistent") != self.pass_release:
-                        break   # 发布已前进：从头扫新发布，已扫的旧发布结果不再有意义
+                        break   # 发布已前进：换新发布另排一遍，未核的页仍按最久未核排在前面
                     self.state.update(position=index + 1, route=route); self.save()
                     code, log = self.check(policy["check"], route, index)
                     # 读不出任何页面失败原因的失败（浏览器连接断开等）按偶发故障当场重试一次。
