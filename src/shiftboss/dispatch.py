@@ -714,6 +714,31 @@ def granted_protected(book) -> list[str]:
     return [s for s in scope if any(s == p or s.startswith(p) for p in protected)]
 
 
+def contract_scope_reason(book) -> str | None:
+    """合同「要求」行点名的受保护路径须在表头写入范围内；引用别线提交不许写 git merge。
+
+    派活方多次在要求里点名生成器、检查、基线或布局指纹，却漏改写入范围，推送守卫拒收白跑一轮；
+    写「git merge <提交>」则会把那条线未验收的整段历史带进本分支。只读引用的路径写在背景里。
+    """
+    from shiftboss.config import load
+    contract = book.contract_text()
+    if found := re.findall(r"git merge\s+`?[0-9a-f]{7,40}", contract):
+        return (f"派活拒绝：合同写了「{found[0]}」；引用别的在办线的提交只写 cherry-pick，"
+                "merge 会带入那条线的整段历史")
+    guard = load(REPO).get("guard", {})
+    protected = [*guard.get("protected", []), *guard.get("layout_paths", [])]
+    scope = book.meta().get("写入范围") or []
+    required = "\n".join(line for line in contract.splitlines() if line.lstrip().startswith("- 要求"))
+    paths = sorted({p.rstrip("/.，。；") for p in re.findall(r"`((?:engine|game|docs)/[^`\s]+|regen\.json)`", required)})
+    granted = [s.rstrip("/") for s in scope]
+    missing = [p for p in paths if any(p == g.rstrip("/") or p.startswith(g) for g in protected)
+               and not any(p == s or p.startswith(s + "/") for s in granted)]
+    if missing:
+        return (f"派活拒绝：合同要求点名的受保护路径不在表头写入范围：{'、'.join(missing)}；"
+                f"要改就补进写入范围（shiftboss taskbook set {book.name} --field 写入范围=…），只读引用就移到背景")
+    return None
+
+
 def write_note(book, message: str, executor: str = "codex") -> None:
     """把这一轮的交代写进轮次记录。**布局的事全归 `shiftboss.taskbook`。**"""
     level = book.round_level()
@@ -1033,6 +1058,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"性能合同含耗时门槛「{'、'.join(found)}」（TEMPLATE 第 15 条）：判据改写为要消除的不合理写法、算法或架构，"
                   "耗时只作同机改前改后对照")
             return 2
+
+    if not args.close and book and (reason := contract_scope_reason(book)):
+        print(reason)
+        return 2
 
     ledger = load_sessions()
     entry = ledger.get(args.taskbook) or {}

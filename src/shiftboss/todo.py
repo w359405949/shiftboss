@@ -51,6 +51,13 @@ def add(remote: Path, text: str, when: str | None = None, line: str | None = Non
         when = f"at:{int(time.time()) + int(match[1]) * (60 if match[2] == 'm' else 3600)}"
     elif when and not re.fullmatch(r"(publish|archived|answered):\S+|(load|cpu):\d+(\.\d+)?", when):
         raise ValueError("条件写成 publish:<提交>、archived:<任务书>、answered:<编号>、after:<分钟m|小时h>、load:<上限> 或 cpu:<秒>")
+    # 「X 归档后合入 Y」是线与线的先后：写成待办挡不住自动合入，须写进 Y 表头「合入前置」（README 第 3 节）。
+    if when and when.startswith("archived:"):
+        from shiftboss.patrol import owner
+        for name in re.findall(r"合[入并]\s*`?([a-z0-9][a-z0-9-]+)", text):
+            if (info := owner(remote, name)) and not info["archived"]:
+                raise ValueError(f"「{name}」是在办任务书：合入先后写进它的表头"
+                                 f"（shiftboss taskbook set {name} --field 合入前置={when.split(':', 1)[1]}），不登记待办")
     items = load(remote)
     number = max([(read_state(store(remote)) or {}).get("last", 0),
                   *(int(item["id"][1:]) for item in items)]) + 1

@@ -151,7 +151,36 @@ def todo_lines(repo, git_dir) -> list[str]:
     return todo.summary_lines(repo, git_dir)
 
 
-def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged=()) -> list[str]:
+def stale_lanes(git_dir: Path) -> list[str]:
+    """启动早于 shiftboss 包内最近一次源码改动的常驻进程：内存里还是旧代码，改动对它不生效。"""
+    import psutil
+    import shiftboss
+    from shiftboss import patrol, verify as verify_mod
+    # 只由派活方命令行调用、常驻进程不导入的模块改了不算。
+    派活侧 = {"brief", "dispatch", "todo", "inbox", "decisions", "puzzle", "need", "check", "bootstrap",
+             "docs_install", "recover", "cli", "native"}
+    package = Path(shiftboss.__file__).parent
+    newest = max(path.stat().st_mtime for path in package.rglob("*.py")
+                 if path.stem not in 派活侧 and "hooks" not in path.relative_to(package).parts)
+    lanes = [("工具闸", verify_mod.state_dir(git_dir) / "worker.lock"),
+             ("页面", patrol.state_dir(git_dir) / "worker.lock"), ("定时", patrol.state_dir(git_dir) / "periodic.lock")]
+    stale = []
+    for label, lock in lanes:
+        pid = lock.read_text(encoding="utf-8").strip() if lock.exists() else ""
+        try:
+            if pid.isdigit() and psutil.Process(int(pid)).create_time() < newest:
+                stale.append(label)
+        except psutil.NoSuchProcess:
+            pass
+    return stale
+
+
+def docs_drift(repo: Path) -> list[str]:
+    from shiftboss.docs_install import drift
+    return drift(repo, missing=False)
+
+
+def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged=(), stale=(), drifted=()) -> list[str]:
     """派活方现在就能动手的事项：在等条件的不算。Stop 钩子据此拦下收尾，见 `shiftboss.hooks.show_brief`。"""
     items = []
     if automerged:
@@ -177,6 +206,12 @@ def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automer
         items.append(f"页面红无主或修复无效 {len(patrol_reds)} 组")
     if any("不在" in line for line in bell):
         items.append("门铃不在")
+    # 改了常驻进程会调用的入口却没重启，旧进程照跑旧代码（错题本两次）。
+    if stale:
+        items.append(f"常驻进程代码落后（{'、'.join(stale)}）：shiftboss verify stop 后 start")
+    # 包内文档改了没同步，执行方的快速检查会报不一致而停下。
+    if drifted:
+        items.append(f"工作流文档未同步（{'、'.join(drifted)}）：shiftboss init")
     return items
 
 
@@ -255,7 +290,8 @@ def main(argv: list[str] | None = None) -> int:
     bell = bell_lines()
     out += ["【门铃】", *bell, "【机器】", *machine_lines(git_dir)]
     automerged = automerge.unreviewed(git_dir)
-    items = actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged)
+    items = actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged,
+                       stale_lanes(git_dir), docs_drift(repo))
     print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")
     # 该你处理放在最前：派活方每次收尾前据此逐项处理，钩子也据此拦下收尾。
     print(f"【该你处理】{'；'.join(items)}" if items else "【该你处理】：无")
