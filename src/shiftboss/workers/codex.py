@@ -84,6 +84,11 @@ def step_count(session_id: str | None) -> int | None:
 # 推理强度由派活方按任务表现调整（用户授权）：max、ultra 会触发 codex 自身的 plan 模式，不在可选范围。
 EFFORTS = ("low", "medium", "high", "xhigh")
 
+# 执行方只用 exec_command、write_stdin、apply_patch、view_image（实测 70 个会话、9330 次调用，
+# 网页搜索 0 次）；不用的内置工具关掉，省下每次请求的工具定义，也免得浏览器类工具往会话里塞截图。
+UNUSED_FEATURES = ("image_generation", "browser_use", "browser_use_external", "in_app_browser",
+                   "computer_use", "apps")
+
 
 def tui_command(copy_win: str, prompt: str, *, resume_id: str | None = None, effort: str | None = None) -> list[str]:
     """新派、续开、恢复共用：信任只传给这一次 TUI，不读写共享配置。
@@ -96,7 +101,8 @@ def tui_command(copy_win: str, prompt: str, *, resume_id: str | None = None, eff
     trust = "projects={" + project + '={trust_level="trusted"}}'
     if effort is not None and effort not in EFFORTS:
         raise ValueError(f"推理强度只能是 {'、'.join(EFFORTS)}：{effort}")
-    return ([str(resolve_codex()), "-C", copy_win, "-c", trust, "--search",
+    disabled = [arg for feature in UNUSED_FEATURES for arg in ("--disable", feature)]
+    return ([str(resolve_codex()), "-C", copy_win, "-c", trust, *disabled,
              "-s", "danger-full-access", "-a", "never"]
             + (["-c", f'model_reasoning_effort="{effort}"'] if effort else [])
             + (["resume", resume_id] if resume_id else []) + [prompt])
@@ -105,6 +111,18 @@ def tui_command(copy_win: str, prompt: str, *, resume_id: str | None = None, eff
 def rollout_of(session_id: str) -> Path | None:
     hits = list((CODEX_HOME / "sessions").rglob(f"rollout-*{session_id}.jsonl"))
     return hits[0] if hits else None
+
+
+def session_has_images(session_id: str | None) -> bool:
+    """会话历史里有图片（view_image 等）。codex 有图片时 resume 不按增量发，每次请求重传全部图片。"""
+    path = rollout_of(session_id) if session_id else None
+    if not path:
+        return False
+    try:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            return any('"input_image"' in line for line in handle)
+    except OSError:
+        return False
 
 
 def newest_session(copy_win: str, since: float, previous: str | None = None,

@@ -116,7 +116,7 @@ RECOVER_PROMPT = "继续"
 
 
 def start_fresh(entry: dict, *, forced: bool, burned: bool,
-                own_wip: bool = False) -> tuple[bool, str]:
+                own_wip: bool = False, images: bool = False) -> tuple[bool, str]:
     """要不要开新会话，以及为什么。**`closed` 是其中一条，别漏。**
 
     `--close` 的意思是这条线这一轮收摊了；合并成功也会自动 close。
@@ -139,6 +139,9 @@ def start_fresh(entry: dict, *, forced: bool, burned: bool,
     # 本轮中途 `--close` 下来改要求时，脏树是它自己没做完的活，历史正是认得这棵树的那段。
     if entry.get("closed") and not own_wip:
         return True, "上一轮已收摊（--close 或合并时自动关）"
+    # 带图片的会话 resume 时每次请求都重传全部图片（执行方 CLI 的缺陷）；脏树要靠历史认的除外。
+    if images and not own_wip:
+        return True, "会话里有图片，resume 会每次请求重传"
     return False, ""
 
 
@@ -1230,7 +1233,9 @@ def main(argv: list[str] | None = None) -> int:
     attempts = int(entry.get("attempts", 0)) + (1 if rework else 0)
     old_id = entry.get("session_id")
     burned = attempts >= MAX_ATTEMPTS
-    fresh, why_fresh = start_fresh(entry, forced=args.fresh, burned=burned, own_wip=own_wip)
+    has_images = getattr(WORKERS[executor], "session_has_images", None)
+    fresh, why_fresh = start_fresh(entry, forced=args.fresh, burned=burned, own_wip=own_wip,
+                                   images=bool(has_images and has_images(old_id)))
 
     # 原会话带着历史开新一轮用 `NEW_ROUND_PROMPT`；「继续」只归 `--recover`。
     template = STANDING_PROMPT if fresh else NEW_ROUND_PROMPT
