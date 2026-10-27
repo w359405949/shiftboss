@@ -171,7 +171,8 @@ class Patrol:
         """到点的定时检查在独立副本里跑 main 最新提交：巡检一遍要几小时，构建错误不能等到下一遍才发现。"""
         # 自动合入出错只记下并敲铃，不让巡检整体停下。
         try:
-            self.run_automerge()
+            if config.automation("automerge", self.repo):
+                self.run_automerge()
         except Exception as exc:
             self.state["automerge_error"] = str(exc)[:300]; self.save()
             ring(self.remote, f"automerge failed: {str(exc)[:120]}")
@@ -616,6 +617,10 @@ def start(repo: Path, workspace: Path) -> int:
     for lock_name, label, command in LANES:
         if pid := lane_pid(remote, lock_name):
             print(f"{label}已在跑：PID {pid}")
+            continue
+        key = "patrol" if command == "watch" else "periodic"
+        if not config.automation(key, repo):
+            print(f"自动任务「{label}」已关（shiftboss.toml [automation] {key}），不起")
             continue
         (state_dir(remote) / lock_name).unlink(missing_ok=True)
         argv = [sys.executable, "-B", "-m", "shiftboss.patrol", command, "--repo", str(repo),

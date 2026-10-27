@@ -87,6 +87,10 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="只报告，不动手")
     args = ap.parse_args(argv)
+    from shiftboss import config
+    if not args.check and not config.automation("session_recover", REPO):
+        print("自动任务「会话恢复」已关（shiftboss.toml [automation] session_recover），只报告不动手")
+        args.check = True
 
     restart_resident(args.check)
     lines = running_lines(REPO)

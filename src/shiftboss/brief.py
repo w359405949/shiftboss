@@ -175,6 +175,14 @@ def stale_lanes(git_dir: Path) -> list[str]:
     return stale
 
 
+def automation_lines(repo: Path) -> list[str]:
+    """自动任务开关（`shiftboss.toml` `[automation]`）：派活方据此判断哪些事会被自动触发。"""
+    from shiftboss import config
+    on = [label for key, label, *_ in config.AUTOMATION if config.automation(key, repo)]
+    off = [label for key, label, *_ in config.AUTOMATION if not config.automation(key, repo)]
+    return [f"- 开：{'、'.join(on) or '无'}", f"- 关：{'、'.join(off) or '无'}"]
+
+
 def docs_drift(repo: Path) -> list[str]:
     from shiftboss.docs_install import drift
     return drift(repo, missing=False)
@@ -288,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
     if slowest := patrol.slowest_lines(git_dir):
         out += ["【性能】", *slowest]
     bell = bell_lines()
+    out += ["【自动任务】", *automation_lines(repo)]
     out += ["【门铃】", *bell, "【机器】", *machine_lines(git_dir)]
     automerged = automerge.unreviewed(git_dir)
     items = actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged,

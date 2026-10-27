@@ -60,6 +60,8 @@ def audit_in_progress(repo: Path) -> bool:
 def observe(remote: Path) -> str | None:
     """门铃每响一次调一次；满足触发条件时返回要写进门铃的一行，否则返回 None。"""
     repo = project_root()
+    if not config.automation("idle_audit", repo):
+        return None
     state = read_state(state_path(remote)) or {}
     idle, _reason = idle_now(repo)
     now = time.time()

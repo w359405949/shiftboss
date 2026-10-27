@@ -377,6 +377,9 @@ def ring_ripe_todos(path: Path) -> None:
         remote = origin(repo)
     except (ValueError, RuntimeError):
         return
+    from shiftboss import config
+    if not config.automation("todo_bell", repo):
+        return
     for item in todo.ripe(repo, remote):
         with path.open("a", encoding="utf-8") as bell:
             bell.write(f"{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')} todo {item['id']} 可做：{item['text']}\n")

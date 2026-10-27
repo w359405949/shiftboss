@@ -33,6 +33,24 @@ def _get(section: str, key: str, default, root: Path | None = None):
     return value
 
 
+# 自动任务开关：每项自动行为在触发前读 `[automation]`；没写的按开。键、名称、触发者与用途。
+AUTOMATION = (
+    ("verify", "常驻验证", "verify start", "工具闸支线：按提交生成、发布、跑闸"),
+    ("patrol", "巡检", "verify start／patrol start", "页面支线：逐页核对已发布的提交"),
+    ("periodic", "定时", "verify start／patrol start", "定时支线：演示构建、ROM 冒烟等定时重活"),
+    ("automerge", "自动合入", "定时支线", "满足条件的交回由巡检合并、推送、归档"),
+    ("todo_bell", "待办提醒", "门铃", "待办条件满足时敲门铃"),
+    ("idle_audit", "空闲审查", "门铃", "连续两次门铃无事可做且 main 前进时提议全项目审查"),
+    ("session_recover", "会话恢复", "SessionStart 钩子（recover）", "重启被中断的常驻进程、接回进程没了的执行方"),
+)
+
+
+def automation(key: str, root: Path | None = None) -> bool:
+    if key not in {item[0] for item in AUTOMATION}:
+        raise KeyError(f"未登记的自动任务：{key}")
+    return bool(_get("automation", key, True, root))
+
+
 def plan_file(root: Path | None = None) -> str:
     """生成计划（步骤、闸、分层、后台验证策略）所在文件，相对项目根。"""
     return _get("regen", "plan", "regen.json", root)
