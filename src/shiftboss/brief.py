@@ -169,8 +169,12 @@ def stale_lanes(git_dir: Path) -> list[str]:
     for label, lock in lanes:
         pid = lock.read_text(encoding="utf-8").strip() if lock.exists() else ""
         try:
-            if pid.isdigit() and psutil.Process(int(pid)).create_time() < newest:
+            process = psutil.Process(int(pid)) if pid.isdigit() else None
+            if process and process.create_time() < newest:
                 stale.append(label)
+            # 不带 --publish 的工具闸照验不发布，页面支线一直停在「发布落后」（2026-10-29 重启漏参数停了 4 小时）。
+            elif process and label == "工具闸" and "--publish" not in process.cmdline():
+                stale.append("工具闸没带 --publish")
         except psutil.NoSuchProcess:
             pass
     return stale
@@ -225,7 +229,7 @@ def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automer
         items.append("门铃不在")
     # 改了常驻进程会调用的入口却没重启，旧进程照跑旧代码（错题本两次）。
     if stale:
-        items.append(f"常驻进程代码落后（{'、'.join(stale)}）：shiftboss verify stop 后 start")
+        items.append(f"常驻进程代码落后（{'、'.join(stale)}）：shiftboss verify stop 后 start --publish")
     # 包内文档改了没同步，执行方的快速检查会报不一致而停下。
     if drifted:
         items.append(f"工作流文档未同步（{'、'.join(drifted)}）：shiftboss init")
