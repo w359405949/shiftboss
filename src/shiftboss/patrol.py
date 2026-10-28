@@ -501,27 +501,25 @@ def claim_rules(remote: Path) -> dict[str, dict]:
 
 
 def rule_taskbook(remote: Path, reasons: list[str], first: str | None = None) -> str:
-    """失败原因只有一种种类、且规则键等于该种类或出现在某条原因原文里时返回负责线（多条命中按键长从长到短，取第一条仍生效的）。
-    负责线归档后规则只管首见早于归档合并的红（照常走待发布／待复扫／修复无效），之后新出的红不再认领；
+    """失败原因只有一种种类、且规则键等于该种类或出现在某条原因原文里时返回负责线。
+    归档线在首见之后合并的先认（这红已修，照常走待发布／待复扫／修复无效），否则取在办线；同类内按键长从长到短。
     不给 `first` 即只问规则是否仍在生效。"""
     kinds = {reason.split(":", 1)[0].strip() for reason in reasons}
     if len(kinds) != 1:
         return ""
     rules = claim_rules(remote)
-    keys = [key for key in rules if key in kinds or any(key in reason for reason in reasons)]
-    for key in sorted(keys, key=len, reverse=True):
-        taskbook = rules[key]["taskbook"]
-        info = owner(remote, taskbook)
-        if not info:
-            continue
-        if not info["archived"]:
-            return taskbook
-        if first is None or not info["merge"]:
-            continue
-        merged_at = git(remote, "show", "-s", "--format=%cI", info["merge"], check=False).stdout.strip()
-        if merged_at and first < merged_at[:19]:
-            return taskbook
-    return ""
+    keys = sorted((key for key in rules if key in kinds or any(key in reason for reason in reasons)), key=len, reverse=True)
+    candidates = [rule["taskbook"] for key in keys for rule in [rules[key], *rules[key].get("previous", [])]]
+    infos = {taskbook: owner(remote, taskbook) for taskbook in candidates}
+    if first is not None:
+        for taskbook in candidates:
+            info = infos[taskbook]
+            if not info or not info["archived"] or not info["merge"]:
+                continue
+            merged_at = git(remote, "show", "-s", "--format=%cI", info["merge"], check=False).stdout.strip()
+            if merged_at and first < merged_at[:19]:
+                return taskbook
+    return next((taskbook for taskbook in candidates if infos[taskbook] and not infos[taskbook]["archived"]), "")
 
 
 def claim_reason(remote: Path, reason: str, taskbook: str) -> None:
@@ -533,7 +531,12 @@ def claim_reason(remote: Path, reason: str, taskbook: str) -> None:
         raise ValueError("认领拒绝：main 上没有这份在办任务书")
     # 已归档线的规则保留：它仍管归档前认领的红，直到这些红消掉或换线认领。
     rules = claim_rules(remote)
-    rules[reason] = {"taskbook": taskbook, "claimed": now()}
+    previous = rules.get(reason)
+    kept = []
+    if previous:
+        kept = [rule for rule in [{"taskbook": previous["taskbook"], "claimed": previous["claimed"]}, *previous.get("previous", [])]
+                if (owner(remote, rule["taskbook"]) or {}).get("archived")]
+    rules[reason] = {"taskbook": taskbook, "claimed": now(), **({"previous": kept} if kept else {})}
     write_state(state_dir(remote) / "claim-rules.json", rules)
     print(f"已按原因认领「{reason}」→ {taskbook}（该线归档后失效）")
 
