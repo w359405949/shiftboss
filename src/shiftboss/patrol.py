@@ -56,6 +56,8 @@ NAME = "patrol"
 IDLE_KILL = 10 * 60   # 单页或定时项连续无输出多久判卡死；不设总时长（D54）
 AUTOMERGE_INTERVAL = 120   # 自动合入至多每两分钟查一次
 YIELD_POLL = 30   # 发布落后时每隔多少秒再看一次；定时支线的轮询间隔
+# 用户定 D68：页面核对优先级低于开发线；1 分钟负载达到此值时巡检逐页暂停、定时项本轮跳过。
+HIGH_LOAD = 20
 PUBLISH_LAG = 3600   # main 上未发布的产品改动最早一条超过此秒数即算发布落后，巡检暂停
 MIN_FREE_BYTES = 5 * 2**30   # 磁盘剩余低于此值即停：逐页证据会累积，写满会拖垮全部执行方与常驻验证
 
@@ -185,6 +187,10 @@ class Patrol:
                if time.time() - (results.get(item["name"]) or {}).get("tried", 0) >= int(item.get("every_minutes", 10)) * 60]
         if not due:
             return
+        if (load := os.getloadavg()[0]) >= HIGH_LOAD:
+            self.state["periodic_yield"] = f"{now()} 负载 {load:.0f} ≥ {HIGH_LOAD}，本轮跳过"; self.save()
+            return
+        self.state.pop("periodic_yield", None)
         workspace = self.periodic_workspace
         marker = workspace / ".git/shiftboss-patrol-owned"
         if not workspace.exists():
@@ -303,7 +309,10 @@ class Patrol:
         return bool(times) and time.time() - int(times[-1]) > PUBLISH_LAG
 
     def wait_reason(self) -> str | None:
-        return "发布落后" if self.publication_lag() else None
+        if self.publication_lag():
+            return "发布落后"
+        load = os.getloadavg()[0]
+        return f"负载 {load:.0f} ≥ {HIGH_LOAD}，让开发线" if load >= HIGH_LOAD else None
 
     def yield_to_verify(self, stop: Path) -> None:
         if not self.wait_reason():
@@ -587,7 +596,8 @@ def page_lines(remote: Path, detail: bool = False) -> list[str]:
 def periodic_lines(remote: Path) -> list[str]:
     """定时支线：进程是否在跑，各定时项最近一次的结果。"""
     periodic = read_state(state_dir(remote) / "periodic.json") or {}
-    lines = [f"- 定时｜{'在跑' if lane_pid(remote, 'periodic.lock') else '没在跑'}"]
+    running = lane_pid(remote, 'periodic.lock')
+    lines = [f"- 定时｜{('暂停（' + periodic['periodic_yield'] + '）') if running and periodic.get('periodic_yield') else '在跑' if running else '没在跑'}"]
     for name, item in (periodic.get("periodic") or {}).items():
         if "code" not in item:
             continue
