@@ -802,11 +802,14 @@ def start(repo: Path, workspace: Path, publish: bool) -> int:
     """以独立后台进程起 `watch`，工作目录为项目根。"""
     import psutil
     from shiftboss import native
+    from shiftboss import patrol
     lock=state_dir(origin(repo))/'worker.lock'
     if lock.exists():
         pid=lock.read_text(encoding='utf-8').strip()
         if pid.isdigit() and psutil.pid_exists(int(pid)):
-            print(f'常驻验证已在跑：PID {pid}；要换代码先 stop 或结束该进程');return 1
+            print(f'常驻验证已在跑：PID {pid}；要换代码先 stop 或结束该进程')
+            # 工具闸支线先停完、页面或定时支线后停完时，补起已停的支线。
+            patrol.start(repo, config.copies_dir(origin(repo))/patrol.NAME);return 1
         print(f'锁 {lock} 记的 PID {pid or "无"} 已结束，删锁后再起');lock.unlink()
     if config.automation('verify', repo):
         argv=[sys.executable,'-B','-m','shiftboss.verify','watch','--repo',str(repo),
@@ -815,7 +818,6 @@ def start(repo: Path, workspace: Path, publish: bool) -> int:
     else:
         print('自动任务「常驻验证」已关（shiftboss.toml [automation] verify），不起')
     # 三条支线一个入口（D53）：工具闸支线之外，页面与定时两条支线一并拉起，已在跑的照旧。
-    from shiftboss import patrol
     patrol.start(repo, config.copies_dir(origin(repo))/patrol.NAME)
     return 0
 
