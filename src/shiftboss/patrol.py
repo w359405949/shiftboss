@@ -501,7 +501,7 @@ def claim_rules(remote: Path) -> dict[str, dict]:
 
 
 def rule_taskbook(remote: Path, reasons: list[str], first: str | None = None) -> str:
-    """失败原因只有一种种类、且规则键等于该种类或出现在某条原因原文里时返回负责线（多条命中取最长的键）。
+    """失败原因只有一种种类、且规则键等于该种类或出现在某条原因原文里时返回负责线（多条命中按键长从长到短，取第一条仍生效的）。
     负责线归档后规则只管首见早于归档合并的红（照常走待发布／待复扫／修复无效），之后新出的红不再认领；
     不给 `first` 即只问规则是否仍在生效。"""
     kinds = {reason.split(":", 1)[0].strip() for reason in reasons}
@@ -509,18 +509,19 @@ def rule_taskbook(remote: Path, reasons: list[str], first: str | None = None) ->
         return ""
     rules = claim_rules(remote)
     keys = [key for key in rules if key in kinds or any(key in reason for reason in reasons)]
-    if not keys:
-        return ""
-    rule = rules[max(keys, key=len)]
-    info = owner(remote, rule["taskbook"])
-    if not info:
-        return ""
-    if not info["archived"]:
-        return rule["taskbook"]
-    if first is None or not info["merge"]:
-        return ""
-    merged_at = git(remote, "show", "-s", "--format=%cI", info["merge"], check=False).stdout.strip()
-    return rule["taskbook"] if merged_at and first < merged_at[:19] else ""
+    for key in sorted(keys, key=len, reverse=True):
+        taskbook = rules[key]["taskbook"]
+        info = owner(remote, taskbook)
+        if not info:
+            continue
+        if not info["archived"]:
+            return taskbook
+        if first is None or not info["merge"]:
+            continue
+        merged_at = git(remote, "show", "-s", "--format=%cI", info["merge"], check=False).stdout.strip()
+        if merged_at and first < merged_at[:19]:
+            return taskbook
+    return ""
 
 
 def claim_reason(remote: Path, reason: str, taskbook: str) -> None:
