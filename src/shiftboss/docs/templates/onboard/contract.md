@@ -7,7 +7,7 @@
 ### 1.1 现成件
 
 - `shiftboss/README.md`（第 2、4、5 节）、`shiftboss/TEMPLATE.md`、`shiftboss/DONE.md`：要读的文档
-- `AGENTS.md` 及其指向的项目文档
+- 项目 `README.md` 及其指向的项目文档
 - `shiftboss.toml`、`shiftboss taskbook show <名字>`：第 2.2 节查证用
 
 ## 2. 要做的事
