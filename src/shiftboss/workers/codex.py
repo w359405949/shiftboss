@@ -87,7 +87,7 @@ EFFORTS = ("low", "medium", "high", "xhigh")
 # 执行方只用 exec_command、write_stdin、apply_patch、view_image（实测 70 个会话、9330 次调用，
 # 网页搜索 0 次）；不用的内置工具关掉，省下每次请求的工具定义，也免得浏览器类工具往会话里塞截图。
 UNUSED_FEATURES = ("image_generation", "browser_use", "browser_use_external", "in_app_browser",
-                   "computer_use", "apps")
+                   "computer_use", "apps", "memories", "external_agent_memory_import")
 
 
 def tui_command(copy_win: str, prompt: str, *, resume_id: str | None = None, effort: str | None = None) -> list[str]:
@@ -102,7 +102,9 @@ def tui_command(copy_win: str, prompt: str, *, resume_id: str | None = None, eff
     if effort is not None and effort not in EFFORTS:
         raise ValueError(f"推理强度只能是 {'、'.join(EFFORTS)}：{effort}")
     disabled = [arg for feature in UNUSED_FEATURES for arg in ("--disable", feature)]
+    # 甲乙方只通过任务书与交回共享事实；新派与续派均不读写跨会话自动记忆。
     return ([str(resolve_codex()), "-C", copy_win, "-c", trust, *disabled,
+             "-c", "memories.use_memories=false", "-c", "memories.generate_memories=false",
              "-s", "danger-full-access", "-a", "never"]
             + (["-c", f'model_reasoning_effort="{effort}"'] if effort else [])
             + (["resume", resume_id] if resume_id else []) + [prompt])
