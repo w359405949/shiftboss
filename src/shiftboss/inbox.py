@@ -710,6 +710,8 @@ def main(argv: list[str] | None = None) -> int:
     """谁交回了、`ack`、装门铃、现算「什么在跑」
 
     副本闲置状态列：`inbox list` 直接把这一列标出来。
+    无新交回且本轮其它可处理事项已办妥时，派活方结束当前回复，由后台门铃唤醒下一轮；
+    不为等交回调用 sleep、重复读门铃日志或收件箱。在办任务继续由任务书与收件箱追踪。
     """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("command", choices=("list", "ack", "ready", "install-hook", "status"), nargs="?", default="list")
@@ -805,6 +807,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if not rows:
         print("没有新交回的活")
+        print("若本轮其它可处理事项已办妥，立即结束当前回复，等待门铃推送；"
+              "不要 sleep、重复读门铃日志或轮询收件箱。后台任务继续执行。")
     report_merged_idle(repo, git_dir, rows)
     from shiftboss.dispatch import load_sessions
     print("\n".join(stale_derived_warning(repo, git_dir)
