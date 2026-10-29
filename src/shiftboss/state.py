@@ -82,12 +82,12 @@ def read_state(path: Path) -> dict:
 
 
 DISPATCHER_NAME = "dispatcher.json"
+SESSION_ID_ENV_KEYS = ("CODEX_THREAD_ID", "CODEX_SESSION_ID", "CLAUDE_CODE_SESSION_ID")
 
 
 def current_session_id() -> str | None:
     """同一进程只按宿主提供的会话身份校验，不把 Codex 调用当成人工命令。"""
-    return (os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID")
-            or os.environ.get("CLAUDE_CODE_SESSION_ID"))
+    return next((value for key in SESSION_ID_ENV_KEYS if (value := os.environ.get(key))), None)
 
 
 def claim_dispatcher(session_id: str) -> None:

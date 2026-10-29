@@ -103,13 +103,18 @@ def run(remote: Path, workspace: Path, ring) -> None:
     if not allowed:
         return
     state = read_state(store(remote)) or {"merged": {}, "refused": {}}
+    from shiftboss.merge import AUTOMERGE_ENV
+    from shiftboss.state import SESSION_ID_ENV_KEYS
+    # 巡检是项目后台任务，不继承启动它的交互会话身份；用户换甲方后仍须能合并和归档。
+    # 只清子进程环境，普通会话仍经 require_dispatcher 校验，后台也不改派活方登记。
+    merge_env = {key: value for key, value in os.environ.items() if key not in SESSION_ID_ENV_KEYS}
+    merge_env[AUTOMERGE_ENV] = "1"
     for name, tip in list(candidates(workspace, allowed)):
         if state["refused"].get(name, {}).get("tip") == tip:
             continue
         py = [sys.executable, "-B", "-m", "shiftboss.merge"]
-        from shiftboss.merge import AUTOMERGE_ENV
         merged = subprocess.run([*py, tip], cwd=workspace, capture_output=True, text=True,
-                                env={**os.environ, AUTOMERGE_ENV: "1"})
+                                env=merge_env)
         if merged.returncode:
             git(workspace, "merge", "--abort", check=False)
             git(workspace, "reset", "--quiet", "--hard", "origin/main")
@@ -117,7 +122,7 @@ def run(remote: Path, workspace: Path, ring) -> None:
             ring(remote, f"automerge refused {name} @ {tip[:12]}; run shiftboss automerge --list")
             continue
         push(workspace)
-        subprocess.run([*py, "--done", name], cwd=workspace, capture_output=True, text=True)
+        subprocess.run([*py, "--done", name], cwd=workspace, capture_output=True, text=True, env=merge_env)
         push(workspace)
         record(remote, "merged", name, {"tip": tip, "at": time.time(), "acked": False})
         record(remote, "refused", name, None)
