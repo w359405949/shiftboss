@@ -1,4 +1,4 @@
-"""空闲时自动提议全项目审查：连续两次门铃无事可做才敲，`shiftboss audit new` 按标准合同建审查线。
+"""空闲时触发全项目审查待办：连续两次门铃无事可做才敲，`shiftboss audit new` 按标准合同建审查线。
 
 用法：
     shiftboss audit new      # 建 sweep-project-audit-<日期> 并记下本次审查的 main 提交
@@ -58,7 +58,7 @@ def audit_in_progress(repo: Path) -> bool:
 
 
 def pending(repo: Path, remote: Path) -> str | None:
-    """已提议的审查留在简报待处理项，直到建线；不因门铃消息已读而消失。"""
+    """已触发的审查留在简报待处理项，直到建线；不因门铃消息已读而消失。"""
     if not config.automation("idle_audit", repo):
         return None
     state = read_state(state_path(remote)) or {}
@@ -87,7 +87,7 @@ def observe(remote: Path) -> str | None:
             and not audit_in_progress(repo)):
         state.update(proposed_head=head, streak=0, first_idle=None)
         write_state(state_path(remote), state)
-        return f"idle-audit 连续两次门铃无事可做，main@{head[:12]} 自上次审查已前进：shiftboss audit new 开全项目审查"
+        return f"idle-audit 待处理：main@{head[:12]} 满足空闲审查条件；当轮建审查任务书、核对合同、提交推送并派出（README 3.7）"
     return None
 
 
