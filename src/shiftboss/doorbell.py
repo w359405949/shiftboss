@@ -2,7 +2,7 @@
 
 - 写：执行方 push 由 bare 仓库的 `post-receive`（`HOOK`）写一行；常驻验证经 `ring()` 写一行。
 - 装：`install_hook()`；文件名只经 `bell_path()` 取。
-- 听：本模块的命令行；执行方一 push 就打印一行，顺带安静两小时敲一次心跳。
+- 听：本模块的命令行；执行方一 push 就打印一行，同时按固定周期敲心跳，响铃后继续监听。
 
 一次 push 一行。**这里跟那个 hook 守同一条规矩：不做判断。** 只报「哪条分支动了」
 「该查一次了」，做完没做完由 `shiftboss.inbox list` 从分支上的任务书现算。
@@ -253,16 +253,7 @@ def drain(path: Path, offset: int, ignore_green: bool = False) -> tuple[int, boo
 
 
 def say_stalled() -> None:
-    """门铃响一次，就把**挂住的线**一并报出来。
-
-    **心跳兜不住多线**：它只在整个门铃安静满 `--heartbeat-minutes` 才敲，
-    而任何一条线推送都会把它顺延。同时跑三五条线时几乎不会有那么久的全局安静，
-    于是「执行方没做完也没 push 就死在那儿」这件事永远等不到心跳——
-    2026-09-21 实测漏过一次 9 小时 11 分的空转，期间别的线一直在推。
-
-    设计本来的兜底是「门铃响了要查整个收件箱」，但那靠人记得。
-    **这里把它变成响一次就自动报一次**，读不到收件箱时静默跳过，不拦门铃。
-    """
+    """每次通知都顺带检查全部挂住的线，不等下一个固定心跳周期。"""
     try:
         from shiftboss.inbox import origin_git_dir, stalled_lines, survey, STALE_HOURS, humanize
         repo = project_root()
@@ -310,36 +301,45 @@ def _event_time(line: str) -> float | None:
 # 推荐的重挂命令只在这里写一处。**心跳必须短于宿主的后台时限**：Claude Code 的后台命令
 # 默认满 30 分钟即被结束，起门铃时把时限设为 6 小时（`timeout` 21600000，工作区 settings 的
 # BASH_MAX_TIMEOUT_MS 把上限抬到 6 小时）；超过时限的心跳永远等不到。
-# 心跳 50 分钟：派活方的输入缓存 60 分钟过期，醒得比它早；心跳从监听器起挂或门铃最后一件事起算，
-# 即无事时每 50 分钟叫醒一次。
+# 心跳固定每 50 分钟一次：不因推送或其他通知顺延；监听器响铃后持续运行。
 HEARTBEAT_MINUTES = 50
-REARM_COMMAND = f"shiftboss bell --once --ignore-green --heartbeat-minutes {HEARTBEAT_MINUTES}（单独一条后台命令）"
+REARM_COMMAND = f"shiftboss bell --ignore-green --heartbeat-minutes {HEARTBEAT_MINUTES}（单独一条后台命令）"
 
 
-def last_event(path: Path) -> float:
-    """门铃文件里最后一件**会叫醒派活方**的事的时刻；全绿的验证行不算。
+def heartbeat_schedule_path(path: Path) -> Path:
+    return path.with_name(path.name + ".heartbeat.json")
 
-    **心跳按它计时，不按本进程启动时刻计时。** 派活方用 `--once` 挂铃、每响一次就重挂，
-    按进程计时的话每次重挂都从零数起——安静多久都等不满；而心跳本来就是防派活方
-    忙别的事，不该靠它按时重挂来维持节奏。文件里读不到时刻就退回文件的修改时间。
-    """
-    try:
+
+def heartbeat_schedule(path: Path, minutes: int | None = None,
+                       started: float | None = None) -> tuple[float, float]:
+    """固定周期的起点持久保存；普通事件不改它，监听器重启也不重新计时。"""
+    from shiftboss.state import read_state, write_state
+    started = time.time() if started is None else started
+    state = read_state(heartbeat_schedule_path(path))
+    seconds = max(0, minutes) * 60 if minutes is not None else state.get("seconds", HEARTBEAT_MINUTES * 60)
+    if state.get("seconds") == seconds and isinstance(state.get("anchor"), (int, float)):
+        return state["anchor"], seconds
+    anchor = started
+    # 首次升级沿用最近的心跳；推送、合入和验证行均不能作为周期起点。
+    if path.exists():
         with path.open("rb") as handle:
             handle.seek(max(0, path.stat().st_size - 65536))
             lines = handle.read().decode("utf-8", "replace").splitlines()
-    except OSError:
-        return time.time()
-    for line in reversed(lines):
-        line = line.strip()
-        if not line or GREEN.search(line):
-            continue
-        stamp = _event_time(line)
-        if stamp is not None:
-            return stamp
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return time.time()
+        for line in reversed(lines):
+            if line.split()[-1:] == ["heartbeat"]:
+                stamp = _event_time(line)
+                if stamp is not None:
+                    anchor = stamp
+                    break
+    if minutes is not None:
+        write_state(heartbeat_schedule_path(path), {"anchor": anchor, "seconds": seconds})
+    return anchor, seconds
+
+
+def next_heartbeat_at(anchor: float, seconds: float, now: float) -> float | None:
+    if seconds <= 0:
+        return None
+    return anchor + (max(0, int((now - anchor) // seconds)) + 1) * seconds
 
 
 def mark_path(path: Path) -> Path:
@@ -407,34 +407,22 @@ def watch(path: Path, heartbeat_minutes: int, fallback: Path, once: bool = False
     handle = acquire(lock_path, path, fallback)
     started = time.time()
     try:
+        anchor, heartbeat_seconds = heartbeat_schedule(path, heartbeat_minutes, started)
+        due = next_heartbeat_at(anchor, heartbeat_seconds, started)
+        next_heartbeat = None if due is None else time.monotonic() + due - time.time()
         offset = read_mark(path)
         while True:
+            # 先独立判定周期，再读取事件；持续有推送也不能饿死心跳。
+            now = time.monotonic()
+            if next_heartbeat is not None and now >= next_heartbeat:
+                with path.open("a", encoding="utf-8") as bell:
+                    bell.write(f"{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')} heartbeat\n")
+                # 跳过阻塞期间错过的周期，保持原相位，不补发一串过期心跳。
+                next_heartbeat += (int((now - next_heartbeat) // heartbeat_seconds) + 1) * heartbeat_seconds
             ring_ripe_todos(path)
             offset, rang = drain(path, offset, ignore_green)
             write_mark(path, offset)
             if rang:
-                say_stalled()
-                say_puzzles()
-                ring_idle_audit(path)
-                if once:
-                    return 0
-            elif heartbeat_minutes > 0 and \
-                    time.time() - max(last_event(path), started) >= heartbeat_minutes * 60:
-                # 心跳自己也写进门铃文件：下一次心跳从这一行起算，与谁、何时重挂无关。
-                with path.open("a", encoding="utf-8") as bell:
-                    bell.write(f"{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')} heartbeat\n")
-                offset = path.stat().st_size
-                write_mark(path, offset)
-                # **心跳响了必须过整个收件箱，不是抽查。** 它存在的理由是执行方
-                # 既没做完也没 push 就死在那儿时门铃永远不响，而派的是 TUI，
-                # 进程还在，从外面看和在干活一样。会话判活那套不稳（手工起的认不出、
-                # PID 会被复用、queue 投递成功不等于被消费），它失能时唯一还成立的
-                # 判据是 refs 与台账——那正是 `inbox list` 现算的东西。
-                # 所以 A 副本的 push 把我叫起来时，B 副本死没死一样看得见；
-                # **反过来说，这条成立的前提是门铃响了要查整个收件箱。**
-                stamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-                say(f"心跳 {stamp} 把整个收件箱过一遍："
-                    f"shiftboss inbox list（不是只看某一条线）")
                 say_stalled()
                 say_puzzles()
                 ring_idle_audit(path)
@@ -451,7 +439,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--path", type=Path, default=None,
                         help="门铃文件；默认取控制目录里的 bell.log")
     parser.add_argument("--heartbeat-minutes", type=int, default=HEARTBEAT_MINUTES,
-                        help="门铃文件里最后一件事（全绿验证不算）过去这么久就敲一次心跳，心跳本身也记进门铃；0 表示只听门铃")
+                        help="固定心跳周期（分钟），推送等事件不重置计时；默认持续监听，0 表示关闭心跳")
     parser.add_argument("--once", action="store_true",
                         help="响一次（门铃或心跳）就退出，供后台等待一次事件")
     parser.add_argument("--ignore-green", action="store_true",

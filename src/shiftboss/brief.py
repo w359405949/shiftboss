@@ -26,8 +26,9 @@ def bell_lines() -> list[str]:
     listeners = doorbell.rival_listeners(path, path, include_current=True)
     if listeners:
         started = min(proc.create_time() for proc in listeners)
-        due = max(doorbell.last_event(path), started) + doorbell.HEARTBEAT_MINUTES * 60
-        lines = [f"- 监听｜在｜心跳 {clock(due)}"]
+        anchor, seconds = doorbell.heartbeat_schedule(path, started=started)
+        due = doorbell.next_heartbeat_at(anchor, seconds, time.time())
+        lines = [f"- 监听｜在｜固定心跳 {clock(due)}" if due is not None else "- 监听｜在｜心跳关闭"]
     else:
         lines = ["- 监听｜不在｜需重挂"]
     return lines
