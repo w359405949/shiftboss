@@ -23,7 +23,7 @@ def clock(epoch: float) -> str:
 
 def bell_lines() -> list[str]:
     path = doorbell.default_path()
-    listeners = doorbell.rival_listeners(path, path)
+    listeners = doorbell.rival_listeners(path, path, include_current=True)
     if listeners:
         started = min(proc.create_time() for proc in listeners)
         due = max(doorbell.last_event(path), started) + doorbell.HEARTBEAT_MINUTES * 60
@@ -201,7 +201,7 @@ def docs_drift(repo: Path) -> list[str]:
     return drift(repo, missing=False)
 
 
-def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged=(), stale=(), drifted=()) -> list[str]:
+def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged=(), stale=(), drifted=(), audit=None) -> list[str]:
     """派活方现在就能动手的事项：在等条件的不算。Stop 钩子据此拦下收尾，见 `shiftboss.hooks.show_brief`。"""
     items = []
     if automerged:
@@ -233,6 +233,8 @@ def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automer
     # 包内文档改了没同步，执行方的快速检查会报不一致而停下。
     if drifted:
         items.append(f"工作流文档未同步（{'、'.join(drifted)}）：shiftboss init")
+    if audit:
+        items.append(f"闲时全项目审查 main@{audit[:12]}")
     return items
 
 
@@ -313,8 +315,9 @@ def main(argv: list[str] | None = None) -> int:
     out += ["【门铃】", *bell, f"- 空闲审查：{switch('idle_audit', repo)}", f"- 会话恢复：{switch('session_recover', repo)}",
             "【机器】", *machine_lines(git_dir)]
     automerged = automerge.unreviewed(git_dir)
+    from shiftboss import idle_audit
     items = actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged,
-                       stale_lanes(git_dir), docs_drift(repo))
+                       stale_lanes(git_dir), docs_drift(repo), audit=idle_audit.pending(repo, git_dir))
     print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")
     # 该你处理放在最前：派活方每次收尾前据此逐项处理，钩子也据此拦下收尾。
     print(f"【该你处理】{'；'.join(items)}" if items else "【该你处理】：无")

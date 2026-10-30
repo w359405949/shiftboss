@@ -57,6 +57,15 @@ def audit_in_progress(repo: Path) -> bool:
     return any(p.name.startswith(AUDIT_PREFIX) for p in plans.iterdir() if p.is_dir() and p.name != "archive")
 
 
+def pending(repo: Path, remote: Path) -> str | None:
+    """已提议的审查留在简报待处理项，直到建线；不因门铃消息已读而消失。"""
+    if not config.automation("idle_audit", repo):
+        return None
+    state = read_state(state_path(remote)) or {}
+    head = state.get("proposed_head")
+    return head if head and head != state.get("audited_head") and not audit_in_progress(repo) else None
+
+
 def observe(remote: Path) -> str | None:
     """门铃每响一次调一次；满足触发条件时返回要写进门铃的一行，否则返回 None。"""
     repo = project_root()
