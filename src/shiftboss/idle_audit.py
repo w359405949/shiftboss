@@ -53,8 +53,9 @@ def main_head(repo: Path) -> str:
 
 
 def audit_in_progress(repo: Path) -> bool:
-    plans = repo / "shiftboss" / "plans"
-    return any(p.name.startswith(AUDIT_PREFIX) for p in plans.iterdir() if p.is_dir() and p.name != "archive")
+    # Empty leftovers do not own a task; use the same taskbook index as dispatch.
+    from shiftboss.taskbook import Taskbook
+    return any(book.name.startswith(AUDIT_PREFIX) for book in Taskbook.iter_active(repo))
 
 
 def pending(repo: Path, remote: Path) -> str | None:

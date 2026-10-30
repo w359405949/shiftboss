@@ -28,6 +28,8 @@ class IdleFollowUp(unittest.TestCase):
             git("push", "-q", "origin", "main")
             (repo / "shiftboss.toml").write_text("[automation]\nidle_audit=true\n")
             (repo / "shiftboss" / "plans").mkdir(parents=True)
+            # A leftover directory is not an active taskbook and must not suppress the bell.
+            (repo / "shiftboss" / "plans" / "sweep-project-audit-old").mkdir()
             control = remote.parent / "control"
             control.mkdir(exist_ok=True)
             bell = control / "bell.log"
