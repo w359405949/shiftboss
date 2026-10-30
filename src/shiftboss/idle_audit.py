@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 import time
@@ -43,8 +42,8 @@ def idle_now(repo: Path) -> tuple[bool, str]:
     for marker, reason in checks:
         if marker not in out:
             return False, reason
-    if re.search(r"^- (页面红|工具闸红)", out, re.M):
-        return False, "有红项在修"
+    # Red diagnostics can remain after their line is archived. Brief's actionable
+    # items and live/queued counts already describe the work that prevents idling.
     return True, ""
 
 

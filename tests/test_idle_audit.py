@@ -12,6 +12,25 @@ from shiftboss.state import write_state
 
 
 class IdleFollowUp(unittest.TestCase):
+    def test_archived_red_pages_do_not_block_an_otherwise_idle_brief(self):
+        idle = ("【该你处理】：无\n【待你定】：无\n"
+                "【在跑】0/10 会话：无\n【排队】0：无\n"
+                "- 页面红 6｜已归档｜sweep-cutscene-lock-readiness\n")
+        result = subprocess.CompletedProcess([], 0, stdout=idle)
+        with patch.object(idle_audit.subprocess, "run", return_value=result):
+            self.assertEqual(idle_audit.idle_now(Path(".")), (True, ""))
+
+    def test_actionable_red_or_active_repair_still_blocks_idle(self):
+        idle = ("【该你处理】：无\n【待你定】：无\n"
+                "【在跑】0/10 会话：无\n【排队】0：无\n")
+        for old, new in [("【该你处理】：无", "【该你处理】工具闸红无人负责"),
+                         ("【在跑】0/", "【在跑】1/"),
+                         ("【排队】0", "【排队】1")]:
+            with self.subTest(new=new):
+                result = subprocess.CompletedProcess([], 0, stdout=idle.replace(old, new))
+                with patch.object(idle_audit.subprocess, "run", return_value=result):
+                    self.assertFalse(idle_audit.idle_now(Path("."))[0])
+
     def test_listener_can_observe_idle_and_propose_after_two_bells(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
