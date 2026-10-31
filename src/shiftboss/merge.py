@@ -919,6 +919,7 @@ def guarded_check_paths() -> list[str]:
              if re.search(r"\.(mjs|js|py)$", arg) and "/" in arg}
     paths |= {entry.split("::", 1)[0] for entry in config.approved_tests() if "/" in entry}
     paths |= {d.rstrip("/") + "/" for d in config.assertion_dirs()}
+    paths |= set(config.check_paths())
     return sorted(paths)
 
 

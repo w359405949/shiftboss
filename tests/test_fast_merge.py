@@ -625,3 +625,25 @@ class MergedSessionLookup(unittest.TestCase):
         self.assertEqual(calls.call_count, 2)
         self.assertEqual([call.args[1] for call in find.call_args_list], ["match", "local"])
         self.assertEqual([call.args[0] for call in followups.call_args_list], ["match", "local"])
+
+
+class CheckHelperOwnership(unittest.TestCase):
+    def test_helper_is_guarded_without_registering_an_execution_item(self):
+        from shiftboss import config, merge
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "shiftboss.toml").write_text('[verify]\ncheck_paths = ["engine/tools/browser/page-probe.js"]\n')
+            settings = config.load(root)
+            with patch.object(config, "load", return_value=settings):
+                self.assertEqual(config.approved_tests(), [])
+                self.assertIn("engine/tools/browser/page-probe.js", merge.guarded_check_paths())
+                self.assertEqual(merge.check_hits(["engine/tools/browser/page-probe.js",
+                                  "engine/tools/browser/other.js", "engine/editor/main.js"]),
+                                 ["engine/tools/browser/page-probe.js"])
+
+    def test_helper_declaration_defaults_to_empty(self):
+        from shiftboss import config
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "shiftboss.toml").write_text('[verify]\n')
+            self.assertEqual(config.check_paths(root), [])

@@ -123,6 +123,11 @@ def ratchet_dirs(root: Path | None = None) -> list[str]:
     return list(_get("brief", "ratchets", [], root))
 
 
+def check_paths(root: Path | None = None) -> list[str]:
+    """非独立运行的检查辅助脚本：只归检查写权，不登记或新增执行项。"""
+    return list(_get("verify", "check_paths", [], root))
+
+
 def approved_tests(root: Path | None = None) -> list[str]:
     """经用户同意新增的测试项：测试文件路径、`路径::用例名`，或闸命令里新出现的参数。"""
     return list(_get("verify", "approved_tests", [], root))
