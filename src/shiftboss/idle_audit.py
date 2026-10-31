@@ -93,7 +93,12 @@ def observe(remote: Path) -> str | None:
 
 def new(repo: Path, remote: Path) -> str:
     from shiftboss import taskbook
-    name = f"{AUDIT_PREFIX}-{datetime.now():%Y%m%d}"
+    stem = f"{AUDIT_PREFIX}-{datetime.now():%Y%m%d}"
+    name = stem
+    suffix = 1
+    while taskbook.Taskbook.find(repo, name) is not None:
+        suffix += 1
+        name = f"{stem}-{suffix}"
     taskbook.new(repo, name, kind="sweep")
     references = config.load(repo).get("audit", {}).get("references", [])
     rules = "、".join(f"[{Path(r).name}](../../../{r})" for r in references) or "项目的架构依据与项目说明"
