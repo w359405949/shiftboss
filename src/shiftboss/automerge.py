@@ -1,10 +1,10 @@
-"""自动合入：满足条件的交回由常驻巡检在独立副本里合并、推送、归档，派活方事后复核。
+"""自动合入：满足条件的交回由常驻巡检在独立副本里合并、推送，派活方复核后归档。
 
 适用的子类型由项目在 `shiftboss.toml` 的 `[automerge] subtypes` 登记（不登记即不启用）。条件：
 交回执行状态「完成」、无待议、无「待发布后补」、非性能类、破坏性为「否」、未改到 `[automerge] review_paths`
 登记的路径（全站共用层等须派活方按影响面核对的位置）与检查本身（检查脚本、测试或基线）；合并本身仍走 `shiftboss merge`
 （快速检查、写入范围、合入前置照常拦）。拒合的记下原因、同一提交不再重试，留给派活方。
-自动合入的线在状态摘要「该你处理」列为「复核自动合入」，派活方读完交回后 `--ack`。
+自动合入后保留在办任务书、执行方与原件；派活方核对后 `--ack` 关闭会话、归档清理并推送，再登记复核。
 
 用法：
     shiftboss automerge --list          # 已自动合入、待复核的线
@@ -122,8 +122,6 @@ def run(remote: Path, workspace: Path, ring) -> None:
             ring(remote, f"automerge refused {name} @ {tip[:12]}; run shiftboss automerge --list")
             continue
         push(workspace)
-        subprocess.run([*py, "--done", name], cwd=workspace, capture_output=True, text=True, env=merge_env)
-        push(workspace)
         record(remote, "merged", name, {"tip": tip, "at": time.time(), "acked": False})
         record(remote, "refused", name, None)
         ring(remote, f"automerged {name} @ {tip[:12]}; review its delivery, then shiftboss automerge --ack {name}")
@@ -145,6 +143,35 @@ def unreviewed(remote: Path) -> list[str]:
     return sorted(name for name, item in (state.get("merged") or {}).items() if not item.get("acked"))
 
 
+def acknowledge(repo: Path, remote: Path, name: str) -> None:
+    """复核后才归档清理；归档或推送失败时保留未复核状态，允许重试。"""
+    from shiftboss.taskbook import Taskbook
+    state = read_state(store(remote)) or {}
+    item = (state.get("merged") or {}).get(name)
+    if item is None:
+        raise SystemExit(f"{name} 不在自动合入记录里")
+    if item.get("acked"):
+        return
+    book = Taskbook.find(repo, name)
+    if book is None:
+        raise SystemExit(f"{name} 的任务书不存在，未登记复核")
+    if "archive" not in book.path.relative_to(repo).parts:
+        archived = subprocess.run(
+            [sys.executable, "-B", "-m", "shiftboss.merge", "--done", name],
+            cwd=repo, capture_output=True, text=True)
+        if archived.returncode:
+            raise SystemExit(archived.stdout + archived.stderr)
+        if archived.stdout:
+            print(archived.stdout, end="")
+    # 也覆盖归档成功但上次推送失败的重试，以及旧版已经自动归档的记录。
+    push(repo)
+    current = read_state(store(remote)) or {}
+    reviewed = (current.get("merged") or {}).get(name)
+    if reviewed is None or reviewed.get("tip") != item.get("tip"):
+        raise SystemExit(f"{name} 的自动合入记录已变化，未登记复核")
+    record(remote, "merged", name, {**reviewed, "acked": True})
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="shiftboss automerge", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -153,13 +180,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     from shiftboss.paths import project_root
     from shiftboss.verify import origin
-    remote = origin(project_root())
+    repo = project_root()
+    remote = origin(repo)
     state = read_state(store(remote)) or {"merged": {}, "refused": {}}
     if args.ack:
-        if args.ack not in state.get("merged", {}):
-            raise SystemExit(f"{args.ack} 不在自动合入记录里")
-        state["merged"][args.ack]["acked"] = True
-        write_state(store(remote), state)
+        acknowledge(repo, remote, args.ack)
         print(f"已复核 {args.ack}")
         return 0
     for name in unreviewed(remote):
