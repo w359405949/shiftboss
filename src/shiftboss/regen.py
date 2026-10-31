@@ -410,11 +410,16 @@ def generation_paths(paths: list[str], base: str, head: str) -> list[str]:
     return paths
 
 
-def affected_stages(stages: list[dict], paths: list[str]) -> list[dict]:
-    """改动路径命中输入（含代码闭包）的阶段及其下游；不把「从未生成过」的阶段算进来，项目登记的宽输入不计。"""
+def generation_check_paths(paths: list[str]) -> list[str]:
+    """先按项目已声明的分支核对排除项过滤，不为全被排除的改动求代码闭包。"""
     from shiftboss import config
     skip = config.generation_check_skip(REPO)
-    paths = [p for p in paths if not any(matches_prefix(p, prefix) for prefix in skip)]
+    return [p for p in paths if not any(matches_prefix(p, prefix) for prefix in skip)]
+
+
+def affected_stages(stages: list[dict], paths: list[str]) -> list[dict]:
+    """改动路径命中输入（含代码闭包）的阶段及其下游；不把「从未生成过」的阶段算进来，项目登记的宽输入不计。"""
+    paths = generation_check_paths(paths)
     return select_stages(stages, paths, [], {stage["name"] for stage in stages}) if paths else []
 
 
@@ -432,8 +437,9 @@ def branch_check(ref: str) -> int:
         print(f"认不出 {ref} 或它与 origin/main 的共同祖先；先 git fetch origin")
         return 1
     paths = generation_paths(sorted(filter(None, git("diff", "--name-only", "--no-renames", base, head).stdout.splitlines())), base, head)
+    paths = generation_check_paths(paths)
     stages = validate_stages(load_plan())
-    chosen = affected_stages(closure_stages(stages), paths) if stages else []
+    chosen = affected_stages(closure_stages(stages), paths) if stages and paths else []
     if not chosen:
         print(f"{head[:12]} 相对 origin/main 没有改到生成输入，不用核对。")
         return 0

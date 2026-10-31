@@ -549,3 +549,79 @@ class JsImportScan(unittest.TestCase):
                   "const s = \"import {w} from './w.js'\";\n"
                   "export {a}; import {m} from '../m.js'\n")
         self.assertEqual(named_imports(source), [('a, b as c', './x.js'), ('m', '../m.js')])
+
+
+class GenerationInputFiltering(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.stages = [{"name": "one", "command": ["python", "-B", "-m", "producer"],
+                        "inputs": ["engine/"], "after": []}]
+
+    def reason(self, paths):
+        from shiftboss import merge, regen
+        def git(*args, **kwargs):
+            output = "base" if args[0] == "merge-base" else "target" if args[0] == "rev-list" else "\n".join(paths)
+            return subprocess.CompletedProcess(args, 0, output, "")
+        with (patch.object(merge, "git", side_effect=git),
+              patch.object(regen, "load_plan", return_value={"stages": self.stages}),
+              patch.object(regen, "closure_stages", return_value=self.stages) as closure,
+              patch.object(regen, "checks_dir", return_value=Path(self.temp.name)),
+              patch("shiftboss.config.generation_check_skip", return_value=["shiftboss/plans/"])):
+            result = merge.generation_input_reason("target")
+            return result, closure.call_count
+
+    def test_excluded_metadata_does_not_run_closure(self):
+        result, calls = self.reason(["shiftboss/plans/job/contract.md", "shiftboss/plans/job/meta.json"])
+        self.assertIsNone(result)
+        self.assertEqual(calls, 0)
+
+    def test_product_input_in_mixed_change_still_requires_generation(self):
+        result, calls = self.reason(["shiftboss/plans/job/delivery.md", "engine/producer.py"])
+        self.assertIn("缺全新检出的生成核对", result)
+        self.assertEqual(calls, 1)
+
+    def test_exclusion_does_not_expand_to_similarly_named_directory(self):
+        from shiftboss import regen
+        with patch("shiftboss.config.generation_check_skip", return_value=["shiftboss/plans/"]):
+            self.assertEqual(regen.generation_check_paths(["shiftboss/plans-extra/producer.py"]),
+                             ["shiftboss/plans-extra/producer.py"])
+
+    def test_branch_check_metadata_does_not_run_closure_or_generator(self):
+        from shiftboss import regen
+        def child(args, **kwargs):
+            self.assertEqual(args[0], "git")
+            output = "a" * 40 if args[1] == "rev-parse" else "b" * 40 if args[1] == "merge-base" else "shiftboss/plans/job/delivery.md"
+            return subprocess.CompletedProcess(args, 0, output, "")
+        with (patch.object(regen.subprocess, "run", side_effect=child),
+              patch.object(regen, "load_plan", return_value={"stages": self.stages}),
+              patch.object(regen, "closure_stages") as closure,
+              patch("shiftboss.config.generation_check_skip", return_value=["shiftboss/plans/"])):
+            self.assertEqual(regen.branch_check("HEAD"), 0)
+        closure.assert_not_called()
+
+
+class MergedSessionLookup(unittest.TestCase):
+    def test_bulk_refs_preserve_remote_precedence_and_local_fallback(self):
+        from shiftboss import merge
+        target = "a" * 40
+        refs = [f"refs/remotes/origin/codex/match {target}",
+                f"refs/heads/codex/local {target}",
+                f"refs/heads/codex/shadowed {target}",
+                f"refs/remotes/origin/codex/shadowed {'b' * 40}"]
+        ledger = {name: {"branch": "codex/" + name} for name in ("match", "local", "shadowed")}
+        ledger.update({f"old-{i}": {"branch": f"codex/old-{i}"} for i in range(1000)})
+        def git(*args, **kwargs):
+            self.assertIn(args[0], ("symbolic-ref", "for-each-ref"),
+                          "historical sessions must not spawn a git lookup each")
+            return subprocess.CompletedProcess(args, 0, "main" if args[0] == "symbolic-ref" else "\n".join(refs), "")
+        book = unittest.mock.Mock()
+        book.delivery_text.return_value = "执行状态：完成"
+        with (patch.object(merge, "git", side_effect=git) as calls,
+              patch.object(dispatch, "load_sessions", return_value=ledger),
+              patch("shiftboss.taskbook.Taskbook.find", return_value=book) as find,
+              patch.object(merge, "register_followups") as followups):
+            merge.close_merged_sessions(target)
+        self.assertEqual(calls.call_count, 2)
+        self.assertEqual([call.args[1] for call in find.call_args_list], ["match", "local"])
+        self.assertEqual([call.args[0] for call in followups.call_args_list], ["match", "local"])

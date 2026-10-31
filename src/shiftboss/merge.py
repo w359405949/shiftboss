@@ -687,19 +687,18 @@ def close_merged_sessions(target: str) -> None:
     """
     if git("symbolic-ref", "--short", "HEAD").stdout.strip() != "main":
         return
-    refs = git("for-each-ref", "--format=%(objectname)",
-               "refs/heads/codex/", "refs/remotes/origin/codex/").stdout.splitlines()
-    if target not in refs:
+    refs = dict(line.split(" ", 1) for line in git(
+        "for-each-ref", "--format=%(refname) %(objectname)",
+        "refs/heads/codex/", "refs/remotes/origin/codex/").stdout.splitlines())
+    if target not in refs.values():
         return
     from shiftboss import dispatch
     for name, entry in dispatch.load_sessions().items():
         branch = entry.get("branch", "")
         if not branch.startswith("codex/"):
             continue
-        tip = git("rev-parse", "--verify", f"origin/{branch}", check=False)
-        if tip.returncode:
-            tip = git("rev-parse", "--verify", branch, check=False)
-        if tip.returncode == 0 and tip.stdout.strip() == target:
+        tip = refs.get(f"refs/remotes/origin/{branch}", refs.get(f"refs/heads/{branch}"))
+        if tip == target:
             from shiftboss.taskbook import Taskbook, execution_status
             book = Taskbook.find(REPO, name)
             signal = execution_status(book.delivery_text() if book else "") or "未标"
@@ -989,6 +988,9 @@ def generation_input_reason(target: str, reviewed: bool = False) -> str | None:
         return None
     base = git("merge-base", "HEAD", target, check=False).stdout.strip()
     paths = regen.generation_paths(sorted(filter(None, git("diff", "--name-only", "--no-renames", base, target, check=False).stdout.splitlines())), base, target)
+    paths = regen.generation_check_paths(paths)
+    if not paths:
+        return None
     chosen = regen.affected_stages(regen.closure_stages(stages), paths)
     if not chosen:
         return None
