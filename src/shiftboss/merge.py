@@ -1335,6 +1335,10 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(stale)
         if outside := merge_scope_reason(target):
             raise MergeError(outside)
+        # 交给巡检的合并在其独立副本里执行下方所有守卫；此处先返回，
+        # 避免派活方只为得知“等待自动合入”而同步计算整个生成输入闭包。
+        if queued := automerge_pending_reason(target, args.manual):
+            raise MergeError(queued)
         if producer := producer_first_reason(target, args.outputs_unchanged or args.producer_phase):
             raise MergeError(producer)
         if checks := check_change_reason(target, args.checks_reviewed):
@@ -1343,8 +1347,6 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(generation)
         if ignored := merge_ignored_reason(target):
             raise MergeError(ignored)
-        if queued := automerge_pending_reason(target, args.manual):
-            raise MergeError(queued)
         print(f"合并 {args.ref} ({target[:12]})：", flush=True)
         merged = git("-c", "rerere.enabled=false", "-c", "merge.autoStash=false",
                      "merge", "--no-ff", "--no-commit", "--no-edit", target, check=False)
