@@ -964,6 +964,14 @@ def merge_scope_reason(target: str) -> str | None:
                                                 check=False).returncode == 0 else "HEAD"
                     changed = sorted({line for line in git("diff", "--name-only", "--no-renames",
                                                            f"{base}...{target}").stdout.splitlines() if line})
+                    # 三点 diff 在多个共同祖先中任取一个，会把已合入 main 的另一个祖先误算为本线改动。
+                    # 仅在此情形读取 Git 的真实干净合并树；冲突或旧 Git 不支持时保留原拒绝路径。
+                    if len(git("merge-base", "--all", base, target).stdout.splitlines()) > 1:
+                        merged = git("merge-tree", "--write-tree", base, target, check=False)
+                        if merged.returncode == 0:
+                            tree = merged.stdout.splitlines()[0]
+                            changed = sorted(set(git("diff", "--name-only", "--no-renames",
+                                                     base, tree).stdout.splitlines()))
                     # 合入后内容与 base 相同的路径（经合并 main 带来、或改回原样）不算净改动。
                     same = set(git("diff", "--name-only", "--no-renames", base, target).stdout.splitlines())
                     changed = [path for path in changed if path in same]
