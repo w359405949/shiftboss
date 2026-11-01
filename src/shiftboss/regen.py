@@ -26,6 +26,7 @@ from __future__ import annotations
 from shiftboss.paths import project_root
 
 import argparse
+import codecs
 import hashlib
 import json
 import os
@@ -264,6 +265,31 @@ def observed_writes(before: dict[str, str], after: dict[str, str]) -> set[str]:
             if before.get(name) != after.get(name) and (REPO / name).is_file()}
 
 
+def run_producer(command: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
+    """透传生产端真实输出，同时保留两条原始输出供失败诊断使用。"""
+    def drain(stream):
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        parts = []
+        while chunk := stream.read1(65536):
+            value = decoder.decode(chunk)
+            parts.append(value)
+            if value:
+                print(value, end="", flush=True)
+        tail = decoder.decode(b"", final=True)
+        parts.append(tail)
+        if tail:
+            print(tail, end="", flush=True)
+        return "".join(parts)
+
+    with subprocess.Popen(command, cwd=str(REPO), stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, env={**env, "PYTHONUNBUFFERED": "1"}) as process:
+        with ThreadPoolExecutor(max_workers=2) as readers:
+            stdout = readers.submit(drain, process.stdout)
+            stderr = readers.submit(drain, process.stderr)
+            code = process.wait()
+            return subprocess.CompletedProcess(command, code, stdout.result(), stderr.result())
+
+
 def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
             outputs: list[dict] | None = None, parallel: bool = False, on_output=None,
             names: list[str] | None = None, after: list[list[str]] | None = None) -> bool:
@@ -294,8 +320,11 @@ def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
         try:
             # Node 生产端没有 Python 的审计钩子：它只声明产物，写了什么由这里前后对照工作树独立观察。
             before = changed_files() if report_path and command[0] == "node" else None
-            proc = subprocess.run(cmd, cwd=str(REPO), capture_output=True,
-                                  text=True, encoding="utf-8", errors="replace", env=env)
+            if outputs is not None:
+                proc = run_producer(cmd, env)
+            else:
+                proc = subprocess.run(cmd, cwd=str(REPO), capture_output=True,
+                                      text=True, encoding="utf-8", errors="replace", env=env)
             if proc.returncode == 0 and report_path:
                 report = json.loads(report_path.read_text(encoding="utf-8"))
                 if report.get("schema") != SCHEMA:
