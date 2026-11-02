@@ -152,11 +152,28 @@ def todo_lines(repo, git_dir) -> list[str]:
     return todo.summary_lines(repo, git_dir)
 
 
+def lane_paths(git_dir: Path):
+    from shiftboss import patrol, verify as verify_mod
+    verification, pages = verify_mod.state_dir(git_dir), patrol.state_dir(git_dir)
+    return [("工具闸", verification / "worker.lock", verification / "stop"),
+            ("页面", pages / "worker.lock", pages / "stop"),
+            ("定时", pages / "periodic.lock", pages / "periodic-stop")]
+
+
+def draining_lanes(git_dir: Path) -> list[str]:
+    """正常 stop 已受理且进程尚未退出：等待当前工作收尾，不重复要求 stop。"""
+    lanes = []
+    for label, lock, stop in lane_paths(git_dir):
+        pid = lock.read_text(encoding="utf-8").strip() if lock.exists() else ""
+        if stop.exists() and pid.isdigit() and psutil.pid_exists(int(pid)):
+            lanes.append(label)
+    return lanes
+
+
 def stale_lanes(git_dir: Path) -> list[str]:
     """启动早于 shiftboss 包内最近一次源码改动的常驻进程：内存里还是旧代码，改动对它不生效。"""
     import psutil
     import shiftboss
-    from shiftboss import patrol, verify as verify_mod
     # 只由派活方命令行调用、常驻进程不导入的模块改了不算；执行方启动器（workers/）只有派活与收件箱用。
     派活侧 = {"brief", "dispatch", "todo", "inbox", "decisions", "puzzle", "need", "check", "bootstrap",
              "docs_install", "recover", "cli", "native", "idle_audit", "doorbell"}
@@ -164,10 +181,8 @@ def stale_lanes(git_dir: Path) -> list[str]:
     newest = max(path.stat().st_mtime for path in package.rglob("*.py")
                  if path.stem not in 派活侧
                  and not {"hooks", "workers"} & set(path.relative_to(package).parts))
-    lanes = [("工具闸", verify_mod.state_dir(git_dir) / "worker.lock"),
-             ("页面", patrol.state_dir(git_dir) / "worker.lock"), ("定时", patrol.state_dir(git_dir) / "periodic.lock")]
     stale = []
-    for label, lock in lanes:
+    for label, lock, _stop in lane_paths(git_dir):
         pid = lock.read_text(encoding="utf-8").strip() if lock.exists() else ""
         try:
             process = psutil.Process(int(pid)) if pid.isdigit() else None
@@ -202,7 +217,7 @@ def docs_drift(repo: Path) -> list[str]:
     return drift(repo, missing=False)
 
 
-def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged=(), stale=(), drifted=(), audit=None) -> list[str]:
+def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged=(), stale=(), drifted=(), audit=None, draining=()) -> list[str]:
     """派活方现在就能动手的事项：在等条件的不算。Stop 钩子据此拦下收尾，见 `shiftboss.hooks.show_brief`。"""
     items = []
     if automerged:
@@ -229,8 +244,9 @@ def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automer
     if any("不在" in line for line in bell):
         items.append("门铃不在")
     # 改了常驻进程会调用的入口却没重启，旧进程照跑旧代码（错题本两次）。
-    if stale:
-        items.append(f"常驻进程代码落后（{'、'.join(stale)}）：shiftboss verify stop 后 start --publish")
+    restart = [name for name in stale if ("工具闸" if name == "工具闸没带 --publish" else name) not in draining]
+    if restart:
+        items.append(f"常驻进程代码落后（{'、'.join(restart)}）：shiftboss verify stop 后 start --publish")
     # 包内文档改了没同步，执行方的快速检查会报不一致而停下。
     if drifted:
         items.append(f"工作流文档未同步（{'、'.join(drifted)}）：shiftboss init")
@@ -306,8 +322,13 @@ def main(argv: list[str] | None = None) -> int:
     from shiftboss import patrol
     verify = verify_lines(repo)
     patrol_lines = patrol.page_lines(git_dir)
+    stale, draining = stale_lanes(git_dir), draining_lanes(git_dir)
     out += [f"【常驻验证：{switch('verify', repo)}】", *mark_lanes([*verify, *patrol_lines, *patrol.periodic_lines(git_dir)], repo),
             f"- 自动合入：{switch('automerge', repo)}"]
+    if draining:
+        out.append(f"- 正在停止｜{'、'.join(draining)}｜当前任务结束后退出")
+    if stale:
+        out.append(f"- 常驻代码待更新｜{'、'.join(stale)}")
     if ratchets := ratchet_lines(repo):
         out += ["【棘轮余量】", *ratchets]
     if slowest := patrol.slowest_lines(git_dir):
@@ -318,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
     automerged = automerge.unreviewed(git_dir)
     from shiftboss import idle_audit
     items = actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged,
-                       stale_lanes(git_dir), docs_drift(repo), audit=idle_audit.pending(repo, git_dir))
+                       stale, docs_drift(repo), audit=idle_audit.pending(repo, git_dir), draining=draining)
     print(f"【时间】{datetime.now():%Y-%m-%d %H:%M}")
     # 该你处理放在最前：派活方每次收尾前据此逐项处理，钩子也据此拦下收尾。
     print(f"【该你处理】{'；'.join(items)}" if items else "【该你处理】：无")
