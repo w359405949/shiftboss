@@ -493,7 +493,8 @@ class Verifier:
         # 卡死才结束：按进展判断，日志连续 IDLE_KILL 秒没有新输出才算卡死；总耗时不设上限（用户要求耗时不设硬门槛，
         # 主机负载高时生成可远超预算，按总时长杀会让派生物发布不了）。页面闸照旧由自己的单页会话期限兜。
         idle_limit=None if label.startswith('pages-') else IDLE_KILL
-        with process_output.writer(log, self.workspace) as output:
+        # 外层工具日志使用派活仓库的兼容协议；命令仍在固定验证源码执行。
+        with process_output.writer(log, self.repo) as output:
             env=os.environ.copy();env['PYTHONIOENCODING']='utf-8'
             base,head=getattr(self,'batch',('',sha))
             env['SHIFTBOSS_VERIFY_BASE']=base;env['SHIFTBOSS_VERIFY_HEAD']=head

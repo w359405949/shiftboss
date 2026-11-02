@@ -197,7 +197,7 @@ class Patrol:
             log = self.directory / "logs" / f"periodic-{re.sub(r'[\s/\\:]+', '_', name)}.log"
             env = os.environ.copy(); env["PYTHONIOENCODING"] = "utf-8"
             started = time.time()
-            with process_output.writer(log, workspace) as handle:
+            with process_output.writer(log, self.repo) as handle:
                 handle.write(f"{now()} {name} @ {sha}\n$ {subprocess.list2cmdline(item['run'])}\n")
                 handle.flush()
                 code = run_until_idle(interpreter(item["run"]), workspace, handle, env)
@@ -217,7 +217,7 @@ class Patrol:
             env.update(SHIFTBOSS_VERIFY_BASE=base, SHIFTBOSS_VERIFY_HEAD=head or "HEAD")
         p = subprocess.run(interpreter(command), cwd=self.workspace, capture_output=True, text=True, encoding="utf-8",
                            env=env)
-        for line in process_output.expand(p.stdout, self.workspace).splitlines():
+        for line in process_output.expand(p.stdout, self.repo).splitlines():
             line = line.strip()
             if line.startswith("{"):
                 data = json.loads(line)
@@ -229,7 +229,8 @@ class Patrol:
         log = self.directory / "logs" / f"{self.state['pass']:04d}-{index:03d}.log"
         argv = interpreter([part.replace("{route}", route).replace("{index}", str(index)) for part in command])
         env = os.environ.copy(); env["PYTHONIOENCODING"] = "utf-8"
-        with process_output.writer(log, self.workspace) as handle:
+        # 工具日志由派活仓库统一定义存储协议，跨历史检出保持可读。
+        with process_output.writer(log, self.repo) as handle:
             handle.write(f"{now()} {route}\n$ {subprocess.list2cmdline(argv)}\n")
             handle.flush()
             code = run_until_idle(argv, self.workspace, handle, env)

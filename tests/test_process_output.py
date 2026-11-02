@@ -160,7 +160,7 @@ class OutputProtocol(unittest.TestCase):
         self.install()
         (self.root / 'logs').mkdir()
         instance = object.__new__(Verifier)
-        instance.directory = instance.workspace = self.root
+        instance.directory = instance.workspace = instance.repo = self.root
         instance.stage = lambda *args: None
         result = instance.command('abc', 'gate-1', ['python', '-c', "import sys; print('fixture-reference'); sys.exit(9)"])
         self.assertEqual(result['returncode'], 9)
@@ -182,6 +182,36 @@ class OutputProtocol(unittest.TestCase):
             with self.assertRaisesRegex(OSError, 'before spawn'):
                 self.run_child('print(1)', sink=Rejected())
         spawn.assert_not_called()
+
+    def test_old_child_checkout_uses_controller_storage_policy(self):
+        from shiftboss import patrol
+        from shiftboss.verify import Verifier
+        self.install()
+        old = self.root / 'old-checkout'
+        old.mkdir()
+        self.assertIsNone(output.adapter(old))
+        directory = self.root / 'control'
+        (directory / 'logs').mkdir(parents=True)
+        instance = object.__new__(patrol.Patrol)
+        instance.repo = self.root
+        instance.workspace = old
+        instance.directory = directory
+        instance.state = {'pass': 1}
+        command = [sys.executable, '-c', "print('x'*3000)"]
+        code, log = instance.check(command, '/sample', 1)
+        self.assertEqual(code, 0)
+        self.assertTrue(log.with_name(log.name + '0').exists())
+        self.assertIn('x'*3000, output.read_log(log, self.root))
+        verifier = object.__new__(Verifier)
+        verifier.repo = self.root
+        verifier.workspace = old
+        verifier.directory = directory
+        verifier.stage = lambda *args: None
+        result = verifier.command('fixture', 'gate-old', command)
+        verified_log = Path(result['log'])
+        self.assertEqual(result['returncode'], 0)
+        self.assertTrue(verified_log.with_name(verified_log.name + '0').exists())
+        self.assertEqual(output.read_log(verified_log, self.root), 'x'*3000 + '\n')
 
 
 if __name__ == "__main__":
