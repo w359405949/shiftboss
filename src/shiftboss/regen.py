@@ -192,6 +192,9 @@ def with_closure(stages: list[dict], root: Path | None = None) -> list[dict]:
 
 
 def stage_selection(stages: list[dict], args) -> list[dict]:
+    # 点名阶段只连带下游；干净检出的清单缺席不应把它扩大成全量。
+    if args.stage:
+        return select_stages(stages, [], args.stage, {stage["name"] for stage in stages})
     stages = with_closure(stages)
     old = previous_catalog() or {}
     done = {p["stage"] for p in old.get("producers") or [] if p.get("stage")}
@@ -427,16 +430,30 @@ def closure_stages(stages: list[dict]) -> list[dict]:
 
 
 def generation_paths(paths: list[str], base: str, head: str) -> list[str]:
-    """`shiftboss.toml` 只有 `[regen]` 一节被生成器读（经 `shiftboss.outputs`）；其余各节是工作流配置，变了不算生成输入。"""
+    """过滤工作流执行登记；生成阶段及未知计划字段的改动仍交真实生成守卫。"""
     import tomllib
-    if "shiftboss.toml" not in paths:
-        return paths
-    def regen_table(ref: str) -> dict:
-        shown = subprocess.run(["git", "show", f"{ref}:shiftboss.toml"], cwd=REPO, capture_output=True, text=True)
-        return tomllib.loads(shown.stdout).get("regen", {}) if shown.returncode == 0 else {}
-    if regen_table(base) == regen_table(head):
-        return [p for p in paths if p != "shiftboss.toml"]
-    return paths
+    from shiftboss import config
+    remaining = list(paths)
+    def shown(ref: str, path: str) -> str | None:
+        result = subprocess.run(["git", "show", f"{ref}:{path}"], cwd=REPO, capture_output=True, text=True)
+        return result.stdout if result.returncode == 0 else None
+    if "shiftboss.toml" in remaining:
+        def regen_table(ref: str) -> dict:
+            source = shown(ref, "shiftboss.toml")
+            return tomllib.loads(source).get("regen", {}) if source is not None else {}
+        if regen_table(base) == regen_table(head):
+            remaining.remove("shiftboss.toml")
+    plan = config.plan_file(REPO)
+    if plan in remaining:
+        before, after = shown(base, plan), shown(head, plan)
+        if before is not None and after is not None:
+            old, new = json.loads(before), json.loads(after)
+            # 仅 gates/gate_layers 是检查的执行登记；不忽略 stages/steps 或未知键。
+            if isinstance(old, dict) and isinstance(new, dict) and (
+                    {k: v for k, v in old.items() if k not in {"gates", "gate_layers"}} ==
+                    {k: v for k, v in new.items() if k not in {"gates", "gate_layers"}}):
+                remaining.remove(plan)
+    return remaining
 
 
 def generation_check_paths(paths: list[str]) -> list[str]:
@@ -484,7 +501,8 @@ def branch_check(ref: str) -> int:
         name = config.local_config_file(REPO)
         if name and (REPO / name).is_file():
             (worktree / name).write_bytes((REPO / name).read_bytes())
-        done = subprocess.run([sys.executable, "-B", "-m", "shiftboss.regen", "--steps", "--base", base],
+        selected_args = [argument for stage in chosen for argument in ("--stage", stage["name"])]
+        done = subprocess.run([sys.executable, "-B", "-m", "shiftboss.regen", "--steps", *selected_args],
                               cwd=worktree, capture_output=True, text=True, encoding="utf-8")
         output = done.stdout + done.stderr
         print("\n".join(output.rstrip().splitlines()[-25:]), flush=True)
