@@ -61,6 +61,17 @@ def closure_command(root: Path | None = None) -> list[str]:
     return list(_get("regen", "closure_command", [], root))
 
 
+def output_adapter(root: Path | None = None) -> str | None:
+    """可选日志存储协议文件，API 为 shiftboss.output-adapter.v1。
+
+    独立验证副本可切换源码；每次读取实际配置，不缓存 checkout 前的声明。
+    未声明保持原始日志，声明后的版本/文件/读取错误不能降级为原始读取。
+    """
+    path = (root or project_root()) / CONFIG_NAME
+    declaration = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    return declaration.get("verify", {}).get("output_adapter")
+
+
 def catalog_file(root: Path | None = None) -> str:
     """生产端产物清单，相对项目根。"""
     return _get("regen", "catalog", "derived-artifacts.json", root)

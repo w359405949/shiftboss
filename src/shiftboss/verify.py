@@ -57,7 +57,7 @@ import subprocess
 import sys
 import time
 
-from shiftboss import config
+from shiftboss import config, process_output
 from shiftboss.outputs import catalog_files, commit_generated, plan_commands
 from shiftboss.state import read_state, write_state
 
@@ -167,7 +167,7 @@ def batch_candidates(repo: Path, low: str | None, tip: str, detail: str) -> list
         for raw in re.findall(r'/[^\s`|]+\.log\b', '\n'.join(texts)):
             if raw not in seen and Path(raw).is_file():
                 seen.add(raw)
-                texts.append(Path(raw).read_text(encoding='utf-8', errors='replace')[-200000:])
+                texts.append(process_output.read_log(Path(raw), repo)[-200000:])
     mentioned = set()
     for raw in LOG_PATH.findall('\n'.join(texts)):
         path = raw.split('/verify/', 1)[-1] if '/verify/' in raw else raw
@@ -493,23 +493,14 @@ class Verifier:
         # 卡死才结束：按进展判断，日志连续 IDLE_KILL 秒没有新输出才算卡死；总耗时不设上限（用户要求耗时不设硬门槛，
         # 主机负载高时生成可远超预算，按总时长杀会让派生物发布不了）。页面闸照旧由自己的单页会话期限兜。
         idle_limit=None if label.startswith('pages-') else IDLE_KILL
-        with log.open('w',encoding='utf-8') as output:
+        with process_output.writer(log, self.workspace) as output:
             env=os.environ.copy();env['PYTHONIOENCODING']='utf-8'
             base,head=getattr(self,'batch',('',sha))
             env['SHIFTBOSS_VERIFY_BASE']=base;env['SHIFTBOSS_VERIFY_HEAD']=head
             try:
-                process=subprocess.Popen(cmd,cwd=self.workspace,stdout=output,stderr=subprocess.STDOUT,env=env,start_new_session=True)
-                last_size,last_change=-1,time.monotonic()
-                while True:
-                    try:
-                        code=process.wait(timeout=30); break
-                    except subprocess.TimeoutExpired:
-                        output.flush(); size=log.stat().st_size
-                        if size!=last_size: last_size,last_change=size,time.monotonic()
-                        elif idle_limit and time.monotonic()-last_change>idle_limit:
-                            os.killpg(process.pid,9); process.wait()
-                            output.write(f'\n连续 {idle_limit//60} 分钟没有新输出，判为卡死，已结束该命令及其子进程。\n')
-                            code=124; break
+                message=f'\n连续 {idle_limit//60} 分钟没有新输出，判为卡死，已结束该命令及其子进程。\n' if idle_limit else ''
+                code=process_output.run(cmd,self.workspace,output,env,idle_limit=idle_limit,
+                                        poll_interval=30,idle_message=message)
             except OSError as exc:
                 output.write(str(exc)+'\n');code=127
         return {'command':command,'returncode':code,'seconds':time.monotonic()-start,'log':str(log)}

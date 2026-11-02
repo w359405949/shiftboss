@@ -45,7 +45,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from shiftboss import config
+from shiftboss import config, process_output
 from shiftboss.doorbell import ring
 from shiftboss.paths import project_root
 from shiftboss.state import read_state, write_state
@@ -77,21 +77,8 @@ def now() -> str:
 
 def run_until_idle(argv: list[str], cwd: Path, handle, env: dict) -> int:
     """跑到结束，输出写进 `handle`；连续 IDLE_KILL 秒没有新输出才结束整个进程组并返回 124。"""
-    process = subprocess.Popen(argv, cwd=cwd, stdout=handle, stderr=subprocess.STDOUT, env=env, start_new_session=True)
-    last_size, last_change = -1, time.monotonic()
-    while True:
-        try:
-            return process.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            handle.flush()
-            size = os.fstat(handle.fileno()).st_size
-            if size != last_size:
-                last_size, last_change = size, time.monotonic()
-            elif time.monotonic() - last_change > IDLE_KILL:
-                os.killpg(process.pid, 9)
-                process.wait()
-                handle.write(f"\n连续 {IDLE_KILL // 60} 分钟没有新输出，判为卡死\n")
-                return 124
+    return process_output.run(argv, cwd, handle, env, idle_limit=IDLE_KILL, poll_interval=15,
+                              idle_message=f"\n连续 {IDLE_KILL // 60} 分钟没有新输出，判为卡死\n")
 
 
 class Patrol:
@@ -210,7 +197,7 @@ class Patrol:
             log = self.directory / "logs" / f"periodic-{re.sub(r'[\s/\\:]+', '_', name)}.log"
             env = os.environ.copy(); env["PYTHONIOENCODING"] = "utf-8"
             started = time.time()
-            with log.open("w", encoding="utf-8") as handle:
+            with process_output.writer(log, workspace) as handle:
                 handle.write(f"{now()} {name} @ {sha}\n$ {subprocess.list2cmdline(item['run'])}\n")
                 handle.flush()
                 code = run_until_idle(interpreter(item["run"]), workspace, handle, env)
@@ -230,7 +217,7 @@ class Patrol:
             env.update(SHIFTBOSS_VERIFY_BASE=base, SHIFTBOSS_VERIFY_HEAD=head or "HEAD")
         p = subprocess.run(interpreter(command), cwd=self.workspace, capture_output=True, text=True, encoding="utf-8",
                            env=env)
-        for line in p.stdout.splitlines():
+        for line in process_output.expand(p.stdout, self.workspace).splitlines():
             line = line.strip()
             if line.startswith("{"):
                 data = json.loads(line)
@@ -242,16 +229,16 @@ class Patrol:
         log = self.directory / "logs" / f"{self.state['pass']:04d}-{index:03d}.log"
         argv = interpreter([part.replace("{route}", route).replace("{index}", str(index)) for part in command])
         env = os.environ.copy(); env["PYTHONIOENCODING"] = "utf-8"
-        with log.open("w", encoding="utf-8") as handle:
+        with process_output.writer(log, self.workspace) as handle:
             handle.write(f"{now()} {route}\n$ {subprocess.list2cmdline(argv)}\n")
             handle.flush()
             code = run_until_idle(argv, self.workspace, handle, env)
         return code, log
 
-    def record_perf(self, route: str, log: Path, sha: str) -> None:
+    def record_perf(self, route: str, log: Path, sha: str, *, path_map: dict | None = None) -> None:
         """从该页日志取耗时与指标，追加进性能记录；页面没给出耗时就不记。"""
         result = None
-        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in process_output.read_log(log, self.repo, path_map=path_map).splitlines():
             line = line.strip()
             if line.startswith("{") and '"route"' in line and '"seconds"' in line:
                 result = json.loads(line)
@@ -290,7 +277,7 @@ class Patrol:
             self.save()
             return
         known = red.get(route)
-        reasons = reason_lines(log)
+        reasons = reason_lines(log, self.repo)
         red[route] = {"first": known["first"] if known else now(), "last": now(), "commit": sha,
                       "log": str(log), "code": code, "reasons": reasons}
         self.save()
@@ -470,12 +457,11 @@ def claim(remote: Path, route: str, taskbook: str) -> None:
     print(f"已认领 {route} → {taskbook}")
 
 
-def reason_lines(log: Path) -> list[str]:
-    """页面闸日志里本页的失败原因原文；读不出返回空表。"""
-    try:
-        lines = Path(log).read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+def reason_lines(log: Path, root: Path | None = None, *, path_map: dict | None = None) -> list[str]:
+    """本页原始原因；无日志返回空表，显式存储/引用损坏必须报错。"""
+    if not Path(log).exists():
         return []
+    lines = process_output.read_log(Path(log), root, path_map=path_map).splitlines()
     found: list[str] = []
     for line in lines:
         if '"reasons"' not in line:
