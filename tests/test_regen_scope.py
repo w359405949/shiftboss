@@ -4,6 +4,7 @@ import copy
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -101,6 +102,125 @@ class GenerationScope(unittest.TestCase):
         self.assertEqual(child_calls[0][5:], ["--stage", "web", "--stage", "manifest"])
         record = json.loads((self.root / "checks" / (head + ".json")).read_text())
         self.assertEqual(record["stages"], ["web", "manifest"])
+
+
+class ClosureCache(unittest.TestCase):
+    """真实 Git 和小型目录发现命令；不运行产品闭包或生成。"""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name) / "repo"
+        self.root.mkdir()
+        self.cache = Path(self.temp.name) / "checks"
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.name", "Cache test")
+        self.git("config", "user.email", "cache@localhost")
+        (self.root / "sources").mkdir()
+        (self.root / "sources/first.py").write_text("first = True\n")
+        (self.root / "notes").mkdir()
+        (self.root / "notes/task.md").write_text("first task\n")
+        (self.root / "discover.py").write_text(
+            "import json\nfrom pathlib import Path\n"
+            "print(json.dumps({'web': sorted(str(p) for p in Path('sources').glob('*.py'))}))\n")
+        self.command = [sys.executable, "discover.py"]
+        self.stages = [{"name": "web", "inputs": ["data/"], "command": ["node", "web.mjs"]}]
+        self.commit()
+        for target, value in [("REPO", self.root), ("checks_dir", self.cache)]:
+            patched = patch.object(regen, target, value) if target == "REPO" else patch.object(regen, target, return_value=value)
+            patched.start()
+            self.addCleanup(patched.stop)
+        self.skip_patch = patch("shiftboss.config.generation_check_skip", return_value=["notes/"])
+        self.skip_patch.start()
+        self.addCleanup(self.skip_patch.stop)
+        command_patch = patch("shiftboss.config.closure_command", side_effect=lambda root=None: self.command)
+        command_patch.start()
+        self.addCleanup(command_patch.stop)
+        real_closure = regen.with_closure
+        execution_patch = patch.object(regen, "with_closure", wraps=real_closure)
+        self.executions = execution_patch.start()
+        self.addCleanup(execution_patch.stop)
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self):
+        self.git("add", ".")
+        self.git("commit", "-qm", "fixture")
+
+    def test_metadata_commit_and_dirty_notes_reuse_actual_closure(self):
+        first = regen.closure_stages(self.stages)
+        self.assertEqual(first[0]["inputs"], ["data/", "sources/first.py"])
+        (self.root / "notes/task.md").write_text("next task\n")
+        self.commit()
+        self.assertEqual(regen.closure_stages(self.stages), first)
+        (self.root / "notes/task.md").write_text("uncommitted task\n")
+        (self.root / "notes/new.md").write_text("another task\n")
+        self.assertEqual(regen.closure_stages(self.stages), first)
+        self.assertEqual(self.executions.call_count, 1)
+
+    def test_new_source_is_discovered_instead_of_trusting_old_file_list(self):
+        regen.closure_stages(self.stages)
+        (self.root / "sources/next.py").write_text("next = True\n")
+        self.commit()
+        actual = regen.closure_stages(self.stages)
+        self.assertIn("sources/next.py", actual[0]["inputs"])
+        self.assertEqual(self.executions.call_count, 2)
+
+    def test_source_and_analyzer_changes_invalidate(self):
+        regen.closure_stages(self.stages)
+        for file in ["sources/first.py", "discover.py"]:
+            path = self.root / file
+            path.write_text(path.read_text() + "\n# source change\n")
+            self.commit()
+            regen.closure_stages(self.stages)
+        self.assertEqual(self.executions.call_count, 3)
+
+    def test_dirty_staged_and_untracked_inputs_never_use_or_write_cache(self):
+        regen.closure_stages(self.stages)
+        stored = sorted(self.cache.iterdir())
+        (self.root / "sources/next.py").write_text("next = True\n")
+        for staged in [False, True]:
+            if staged:
+                self.git("add", "sources/next.py")
+            actual = regen.closure_stages(self.stages)
+            self.assertIn("sources/next.py", actual[0]["inputs"])
+            self.assertEqual(sorted(self.cache.iterdir()), stored)
+        (self.root / "sources/first.py").write_text("dirty = True\n")
+        regen.closure_stages(self.stages)
+        self.assertEqual(sorted(self.cache.iterdir()), stored)
+        self.assertEqual(self.executions.call_count, 4)
+
+    def test_command_stages_and_exclusions_are_part_of_identity(self):
+        regen.closure_stages(self.stages)
+        self.command = [self.command[0], "-B", "discover.py"]
+        regen.closure_stages(self.stages)
+        self.stages[0]["inputs"].append("another/")
+        self.assertIn("another/", regen.closure_stages(self.stages)[0]["inputs"])
+        with patch("shiftboss.config.generation_check_skip", return_value=[]):
+            regen.closure_stages(self.stages)
+        self.assertEqual(self.executions.call_count, 4)
+
+    def test_change_during_analysis_does_not_store_result(self):
+        real_closure = self.executions._mock_wraps
+        def mutate(stages):
+            result = real_closure(stages)
+            (self.root / "sources/late.py").write_text("late = True\n")
+            return result
+        with patch.object(regen, "with_closure", side_effect=mutate):
+            regen.closure_stages(self.stages)
+        self.assertFalse(self.cache.exists())
+
+    def test_old_tree_only_cache_is_not_used_and_failure_not_stored(self):
+        self.cache.mkdir()
+        tree = self.git("rev-parse", "HEAD^{tree}")
+        (self.cache / f"closure-{tree}.json").write_text('[{"stale": true}]')
+        self.assertEqual(regen.closure_stages(self.stages)[0]["name"], "web")
+        self.command = [self.command[0], "-c", "raise RuntimeError('expected fixture failure')"]
+        before = sorted(self.cache.iterdir())
+        with self.assertRaisesRegex(ValueError, "闭包命令失败"):
+            regen.closure_stages(self.stages)
+        self.assertEqual(sorted(self.cache.iterdir()), before)
 
 
 if __name__ == "__main__":

@@ -416,16 +416,51 @@ def checks_dir() -> Path:
     return config.control_dir(origin(REPO)) / CHECKS_DIR
 
 
+def closure_identity(stages: list[dict]) -> str | None:
+    """只忽略项目已声明的非生成路径；不拿上次闭包文件表推断新输入。
+
+    闭包分析针对仓库来源。保留全部其余跟踪路径（含文件模式和对象），
+    因而新增文件、动态目录和分析器本身的变化都会失效。相关脏文件或
+    非忽略的新文件不以 HEAD 冒充当前来源，也不读写持久缓存。
+    """
+    from shiftboss import config
+    skip = config.generation_check_skip(REPO)
+    def relevant(path: str) -> bool:
+        return not any(matches_prefix(path, prefix) for prefix in skip)
+    def git(*arguments):
+        done = subprocess.run(["git", *arguments], cwd=REPO, capture_output=True)
+        return done.stdout if done.returncode == 0 else None
+    changed = git("diff", "--name-only", "--no-renames", "-z", "HEAD", "--")
+    added = git("ls-files", "--others", "--exclude-standard", "-z")
+    tree = git("ls-tree", "-r", "-z", "HEAD")
+    if any(value is None for value in (changed, added, tree)):
+        return None
+    if any(relevant(os.fsdecode(path)) for path in (changed + added).split(b"\0") if path):
+        return None
+    entries = []
+    for entry in tree.split(b"\0"):
+        if entry and relevant(os.fsdecode(entry.split(b"\t", 1)[1])):
+            entries.append(entry.hex())
+    identity = {"schema": 2, "root": str(REPO.resolve()), "stages": stages,
+                "command": config.closure_command(REPO), "python": sys.executable,
+                "skip": skip, "entries": entries}
+    return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+
+
 def closure_stages(stages: list[dict]) -> list[dict]:
-    """`with_closure` 按当前代码树缓存：闭包命令要十几秒，合入时每次重算太重。"""
-    tree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=REPO, capture_output=True, text=True).stdout.strip()
-    cache = checks_dir() / f"closure-{tree}.json"
-    if tree and cache.is_file():
+    """相同生成相关来源复用；任务元数据前进不再迫使全图重算。"""
+    identity = closure_identity(stages)
+    cache = checks_dir() / f"closure-v2-{identity}.json" if identity else None
+    if cache and cache.is_file():
         return json.loads(cache.read_text(encoding="utf-8"))
     closed = with_closure(stages)
-    if tree:
+    # 分析期间有写入或切换来源时，只返回这次结果，不登记为另一来源的缓存。
+    if cache and closure_identity(stages) == identity:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(closed, ensure_ascii=False), encoding="utf-8")
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=cache.parent,
+                                         prefix=cache.name, suffix=".tmp", delete=False) as stream:
+            json.dump(closed, stream, ensure_ascii=False)
+        os.replace(stream.name, cache)
     return closed
 
 
