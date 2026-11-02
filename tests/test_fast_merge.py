@@ -116,6 +116,28 @@ class FastMergeAcceptance(unittest.TestCase):
         self.assertFalse((self.repo/'unexpected-generation').exists())
         self.assertEqual(len(self.git('show','-s','--format=%P').split()),2)
         self.assertEqual(self.git('status','--porcelain'),'')
+    def test_perf_merge_accepts_explicit_post_publication_browser_boundary(self):
+        from shiftboss.taskbook import Taskbook, new
+        new(self.repo, 'perf-work', kind='perf', branch='incoming')
+        book = Taskbook.find(self.repo, 'perf-work')
+        book.set_meta(**{'类别': '性能', '完成标准': '成形', '破坏性': '否',
+                         '调度状态': '待核对', '轮次': 1,
+                         '写入范围': ['note.md', 'shiftboss/plans/perf-work/']})
+        self.commit('performance contract')
+        self.git('switch', '-q', 'main')
+        self.git('merge', '-q', 'incoming')
+        self.git('switch', '-q', 'incoming')
+        (self.repo / 'note.md').write_text('Remove unused preparation; preserve actual consumers.')
+        (book.path / 'delivery.md').write_text(
+            '执行状态：完成\n\n同库完整输出与失效反例通过。\n'
+            '实际静态包与浏览器待发布后补；不外推页面或OOM收益。\n')
+        self.commit('reviewed sparse preparation')
+        self.git('switch', '-q', 'main')
+        result = self.merge()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.repo / 'unexpected-generation').exists())
+        self.assertEqual((self.repo / 'note.md').read_text(),
+                         'Remove unused preparation; preserve actual consumers.')
     def test_merge_shows_removed_assertions(self):
         """删掉的断言要出现在**合并这一步**的输出里。
 

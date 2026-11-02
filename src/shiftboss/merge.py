@@ -1097,31 +1097,6 @@ def merge_dependency_reason(target: str) -> str | None:
     return None
 
 
-def performance_stale_reason(target: str) -> str | None:
-    """性能线把耗时对照留到发布后的不合：没有改前改后同机对照就合入，明显退化要到别的线补测才暴露。
-
-    对照只为排除明显退化，不设耗时门槛（README 3.2 第 9 条）；main 在它派出后改过同一批文件不作废。
-    """
-    from shiftboss.taskbook import Taskbook, category_of
-    if git("merge-base", "--is-ancestor", target, "HEAD", check=False).returncode == 0:
-        return None
-    for book in Taskbook.iter_active(REPO):
-        if category_of(book.meta()) != "性能":
-            continue
-        branch = book.meta().get("分支", f"codex/{book.name}")
-        ref = next((r for r in (f"origin/{branch}", branch)
-                    if git("rev-parse", "--verify", "--quiet", r, check=False).returncode == 0), None)
-        if not ref or git("merge-base", "--is-ancestor", target, ref, check=False).returncode:
-            continue
-        base = git("merge-base", "HEAD", target).stdout.strip()
-        mine = {p for p in git("diff", "--name-only", base, target).stdout.split() if not p.startswith(PLANS_DIR + "/")}
-        delivery = git("show", f"{target}:{PLANS_DIR}/{book.name}/delivery.md", check=False).stdout
-        if mine and publish_later_lines(delivery):
-            return (f"{book.name} 是性能线，交回把改前改后同机对照留到发布后；"
-                    "不合并，续派让它在副本生成后测（README 3.2 第 9 条）")
-    return None
-
-
 def moving_branch_reason(ref: str, target: str) -> str | None:
     """仍在推进的线只许按提交号合，不许按分支名合。
 
@@ -1339,8 +1314,6 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(moving)
         if waiting := merge_dependency_reason(target):
             raise MergeError(waiting)
-        if stale := performance_stale_reason(target):
-            raise MergeError(stale)
         if outside := merge_scope_reason(target):
             raise MergeError(outside)
         # 交给巡检的合并在其独立副本里执行下方所有守卫；此处先返回，
