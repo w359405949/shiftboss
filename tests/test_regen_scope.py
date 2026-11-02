@@ -83,6 +83,53 @@ class GenerationScope(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "未知阶段"):
             regen.stage_selection(self.plan["stages"], argparse.Namespace(stage=["missing"]))
 
+    def select_current(self, *, full=False, missing_catalog=False):
+        stages = copy.deepcopy(self.plan["stages"])
+        stages[0]["inputs"].extend(["shiftboss.toml", "plan.json"])
+        catalog = None if missing_catalog else {"producers": [{"stage": s["name"]} for s in stages]}
+        with (patch.object(regen, "REPO", self.root),
+              patch.object(regen, "with_closure", side_effect=lambda value: value),
+              patch.object(regen, "previous_catalog", return_value=catalog)):
+            return [s["name"] for s in regen.stage_selection(
+                stages, argparse.Namespace(stage=[], full=full, base=self.base))]
+
+    def test_regular_generation_filters_committed_verify_only_change(self):
+        with (self.root / "shiftboss.toml").open("a") as stream:
+            stream.write('[verify]\noutput_adapter = "adapter.py"\n')
+        self.commit()
+        self.assertEqual(self.select_current(), [])
+        self.assertEqual(self.select_current(full=True), ["unrelated", "web", "manifest"])
+        self.assertEqual(self.select_current(missing_catalog=True), ["unrelated", "web", "manifest"])
+
+    def test_regular_generation_reads_dirty_and_staged_regen_changes(self):
+        path = self.root / "shiftboss.toml"
+        path.write_text('[regen]\nplan = "plan.json"\n[verify]\nflag = true\n')
+        self.commit()
+        path.write_text('[regen]\nplan = "plan.json"\nnew_input = "source/"\n[verify]\nflag = true\n')
+        self.assertEqual(self.select_current(), ["unrelated"])
+        self.git("add", "shiftboss.toml")
+        self.assertEqual(self.select_current(), ["unrelated"])
+
+    def test_regular_generation_filters_dirty_gate_registration_but_keeps_sources(self):
+        plan = copy.deepcopy(self.plan)
+        plan["gates"].append(["python", "another.py"])
+        self.write_plan(plan)
+        (self.root / "web").mkdir()
+        (self.root / "web/new.py").write_text("new = True\n")
+        self.assertEqual(self.select_current(), ["web", "manifest"])
+        plan["producer_options"] = {"new": True}
+        self.write_plan(plan)
+        self.assertEqual(self.select_current(), ["unrelated", "web", "manifest"])
+
+    def test_regular_generation_keeps_removed_config_and_merge_base_semantics(self):
+        (self.root / "shiftboss.toml").unlink()
+        self.assertEqual(self.select_current(), ["unrelated"])
+        self.git("update-ref", "refs/remotes/origin/main", self.base)
+        with patch.object(regen, "REPO", self.root):
+            self.assertEqual(regen.change_base(), self.base)
+            (self.root / ".git/MERGE_HEAD").write_text(self.base + "\n")
+            self.assertEqual(regen.change_base(), "HEAD")
+
     def test_branch_check_passes_exact_affected_stages_to_fresh_child(self):
         (self.root / "out").mkdir()
         head, base = "a" * 40, "b" * 40

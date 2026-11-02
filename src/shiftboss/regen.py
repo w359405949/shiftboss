@@ -198,10 +198,22 @@ def stage_selection(stages: list[dict], args) -> list[dict]:
     stages = with_closure(stages)
     old = previous_catalog() or {}
     done = {p["stage"] for p in old.get("producers") or [] if p.get("stage")}
-    paths = None if args.full else ([] if args.stage else changed_paths(args.base))
+    paths = None if args.full else generation_paths(
+        changed_paths(args.base), change_base(args.base), None)
     if paths:
         print(f"生成输入改动 {len(paths)} 个路径（基准 {args.base or 'merge-base'}）", flush=True)
     return select_stages(stages, paths, args.stage, done)
+
+
+def change_base(base: str | None = None) -> str:
+    """共同基准用于路径枚举和分节比较；工作树内容不能替换成 HEAD。"""
+    if base is None:
+        merge_head = subprocess.run(["git", "rev-parse", "--verify", "-q", "MERGE_HEAD"],
+                                    cwd=REPO, capture_output=True)
+        base = "HEAD" if merge_head.returncode == 0 else subprocess.run(
+            ["git", "merge-base", "HEAD", "origin/main"], cwd=REPO,
+            check=True, capture_output=True, text=True).stdout.strip()
+    return base
 
 
 def changed_paths(base: str | None = None) -> list[str]:
@@ -209,11 +221,7 @@ def changed_paths(base: str | None = None) -> list[str]:
     def git(*args):
         return subprocess.run(["git", *args], cwd=REPO, check=True,
                               capture_output=True).stdout.decode("utf-8")
-    if base is None:
-        merge_head = subprocess.run(["git", "rev-parse", "--verify", "-q", "MERGE_HEAD"],
-                                    cwd=REPO, capture_output=True)
-        base = "HEAD" if merge_head.returncode == 0 else git(
-            "merge-base", "HEAD", "origin/main").strip()
+    base = change_base(base)
     tracked = git("diff", "--name-only", "--no-renames", "-z", "--end-of-options", base, "--")
     untracked = git("ls-files", "--others", "--exclude-standard", "-z")
     return sorted(set(filter(None, (tracked + untracked).split("\0"))))
@@ -464,19 +472,21 @@ def closure_stages(stages: list[dict]) -> list[dict]:
     return closed
 
 
-def generation_paths(paths: list[str], base: str, head: str) -> list[str]:
+def generation_paths(paths: list[str], base: str, head: str | None) -> list[str]:
     """过滤工作流执行登记；生成阶段及未知计划字段的改动仍交真实生成守卫。"""
     import tomllib
     from shiftboss import config
     remaining = list(paths)
-    def shown(ref: str, path: str) -> str | None:
+    def shown(ref: str | None, path: str) -> str | None:
+        if ref is None:
+            current = REPO / path
+            return current.read_text(encoding="utf-8") if current.is_file() else None
         result = subprocess.run(["git", "show", f"{ref}:{path}"], cwd=REPO, capture_output=True, text=True)
         return result.stdout if result.returncode == 0 else None
     if "shiftboss.toml" in remaining:
-        def regen_table(ref: str) -> dict:
-            source = shown(ref, "shiftboss.toml")
-            return tomllib.loads(source).get("regen", {}) if source is not None else {}
-        if regen_table(base) == regen_table(head):
+        before, after = shown(base, "shiftboss.toml"), shown(head, "shiftboss.toml")
+        if before is not None and after is not None and (
+                tomllib.loads(before).get("regen", {}) == tomllib.loads(after).get("regen", {})):
             remaining.remove("shiftboss.toml")
     plan = config.plan_file(REPO)
     if plan in remaining:
