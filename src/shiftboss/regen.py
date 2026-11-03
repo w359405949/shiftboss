@@ -27,6 +27,7 @@ from shiftboss.paths import project_root
 
 import argparse
 import codecs
+import fcntl
 import hashlib
 import json
 import os
@@ -456,20 +457,29 @@ def closure_identity(stages: list[dict]) -> str | None:
 
 
 def closure_stages(stages: list[dict]) -> list[dict]:
-    """相同生成相关来源复用；任务元数据前进不再迫使全图重算。"""
-    identity = closure_identity(stages)
-    cache = checks_dir() / f"closure-v2-{identity}.json" if identity else None
-    if cache and cache.is_file():
-        return json.loads(cache.read_text(encoding="utf-8"))
-    closed = with_closure(stages)
-    # 分析期间有写入或切换来源时，只返回这次结果，不登记为另一来源的缓存。
-    if cache and closure_identity(stages) == identity:
+    """完整来源身份相同的并发调用只分析一次；不缩小失效范围。"""
+    while True:
+        identity = closure_identity(stages)
+        if identity is None:
+            return with_closure(stages)
+        cache = checks_dir() / f"closure-v2-{identity}.json"
         cache.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=cache.parent,
-                                         prefix=cache.name, suffix=".tmp", delete=False) as stream:
-            json.dump(closed, stream, ensure_ascii=False)
-        os.replace(stream.name, cache)
-    return closed
+        # 锁文件不删除：删除会让后来的调用锁住另一个 inode，与已有等待者并发。
+        with cache.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            # 等待期间可能切换 HEAD、改输入或出现新文件，不能复用等待前的身份。
+            if closure_identity(stages) != identity:
+                continue
+            if cache.is_file():
+                return json.loads(cache.read_text(encoding="utf-8"))
+            closed = with_closure(stages)
+            # 分析期间有写入时只返回本次结果，不把它登记为另一个来源的缓存。
+            if closure_identity(stages) == identity:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=cache.parent,
+                                                 prefix=cache.name, suffix=".tmp", delete=False) as stream:
+                    json.dump(closed, stream, ensure_ascii=False)
+                os.replace(stream.name, cache)
+            return closed
 
 
 def generation_paths(paths: list[str], base: str, head: str | None) -> list[str]:

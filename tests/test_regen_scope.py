@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from unittest.mock import patch
 
 from shiftboss import config, regen
@@ -256,7 +258,7 @@ class ClosureCache(unittest.TestCase):
             return result
         with patch.object(regen, "with_closure", side_effect=mutate):
             regen.closure_stages(self.stages)
-        self.assertFalse(self.cache.exists())
+        self.assertEqual(list(self.cache.glob("*.json")), [])
 
     def test_old_tree_only_cache_is_not_used_and_failure_not_stored(self):
         self.cache.mkdir()
@@ -264,10 +266,75 @@ class ClosureCache(unittest.TestCase):
         (self.cache / f"closure-{tree}.json").write_text('[{"stale": true}]')
         self.assertEqual(regen.closure_stages(self.stages)[0]["name"], "web")
         self.command = [self.command[0], "-c", "raise RuntimeError('expected fixture failure')"]
-        before = sorted(self.cache.iterdir())
+        before = sorted(self.cache.glob("*.json"))
         with self.assertRaisesRegex(ValueError, "闭包命令失败"):
             regen.closure_stages(self.stages)
-        self.assertEqual(sorted(self.cache.iterdir()), before)
+        self.assertEqual(sorted(self.cache.glob("*.json")), before)
+
+    def test_concurrent_same_source_discovers_once(self):
+        started, release, waiting = Event(), Event(), Event()
+        real_closure = self.executions._mock_wraps
+        real_identity = regen.closure_identity
+        def discover(stages):
+            started.set()
+            if not release.wait(5):
+                raise AssertionError("fixture did not release closure")
+            return real_closure(stages)
+        def identity(stages):
+            value = real_identity(stages)
+            if started.is_set():
+                waiting.set()
+            return value
+        with patch.object(regen, "with_closure", side_effect=discover) as calls, \
+             patch.object(regen, "closure_identity", side_effect=identity), \
+             ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(regen.closure_stages, self.stages)
+            self.assertTrue(started.wait(5))
+            second = pool.submit(regen.closure_stages, self.stages)
+            try:
+                self.assertTrue(waiting.wait(5))
+            finally:
+                release.set()
+            self.assertEqual(first.result(timeout=5), second.result(timeout=5))
+            self.assertEqual(calls.call_count, 1)
+
+    def test_source_changed_while_waiting_never_uses_previous_cache(self):
+        started, release, waiting = Event(), Event(), Event()
+        real_closure = self.executions._mock_wraps
+        real_identity = regen.closure_identity
+        def discover(stages):
+            result = real_closure(stages)
+            started.set()
+            if not release.wait(5):
+                raise AssertionError("fixture did not release closure")
+            return result
+        def identity(stages):
+            value = real_identity(stages)
+            if started.is_set():
+                waiting.set()
+            return value
+        with patch.object(regen, "with_closure", side_effect=discover) as calls, \
+             patch.object(regen, "closure_identity", side_effect=identity), \
+             ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(regen.closure_stages, self.stages)
+            self.assertTrue(started.wait(5))
+            second = pool.submit(regen.closure_stages, self.stages)
+            try:
+                self.assertTrue(waiting.wait(5))
+                (self.root / "sources/late.py").write_text("late = True\n")
+            finally:
+                release.set()
+            self.assertNotIn("sources/late.py", first.result(timeout=5)[0]["inputs"])
+            self.assertIn("sources/late.py", second.result(timeout=5)[0]["inputs"])
+            self.assertEqual(calls.call_count, 2)
+            self.assertEqual(list(self.cache.glob("*.json")), [])
+
+    def test_failed_producer_releases_lock_for_retry(self):
+        with patch.object(regen, "with_closure", side_effect=ValueError("original failure")):
+            with self.assertRaisesRegex(ValueError, "original failure"):
+                regen.closure_stages(self.stages)
+        self.assertEqual(list(self.cache.glob("*.json")), [])
+        self.assertIn("sources/first.py", regen.closure_stages(self.stages)[0]["inputs"])
 
 
 if __name__ == "__main__":
