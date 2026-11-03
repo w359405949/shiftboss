@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 import io
 import psutil
 
@@ -669,3 +669,120 @@ class CheckHelperOwnership(unittest.TestCase):
             root = Path(temp)
             (root / "shiftboss.toml").write_text('[verify]\n')
             self.assertEqual(config.check_paths(root), [])
+
+
+class CheckCommittedGenerationInputs(unittest.TestCase):
+    """推送自查须检查已提交的分支输入，不能把 HEAD 与自身比较。"""
+
+    def run_check(self, paths, *, record=None, changed_since_record=False,
+                  record_on_branch=True, pending=(), base_ref="origin/main"):
+        from shiftboss import check, merge, regen
+        stages = [{"name": "one", "command": ["python", "-B", "-m", "producer"],
+                   "inputs": ["engine/"], "after": []}]
+        calls = []
+
+        def git(*args, **kwargs):
+            calls.append(args)
+            if args[0] == "merge-base":
+                output = "HEAD" if args[1:] == ("HEAD", "HEAD") else "fork"
+            elif args[0] == "rev-list":
+                output = "later\nproof" if record_on_branch else "later"
+            elif args[0] == "diff" and "--no-renames" in args:
+                output = "\n".join(paths) if args[-2:] == ("fork", "HEAD") else ""
+            elif args[0] == "diff":
+                output = "engine/input.py" if changed_since_record else ""
+            else:
+                self.fail(f"Unexpected Git operation: {args}")
+            return subprocess.CompletedProcess(args, 0, output, "")
+
+        with tempfile.TemporaryDirectory() as temp:
+            if record is not None:
+                (Path(temp) / "proof.json").write_text(json.dumps({"ok": record}))
+            with (patch.object(check, "git", side_effect=git),
+                  patch.object(merge, "git", side_effect=git),
+                  patch.object(check, "fast_checks") as fast,
+                  patch.object(check, "uncommitted_generation_inputs", return_value=list(pending)),
+                  patch.object(regen, "load_plan", return_value={"stages": stages}),
+                  patch.object(regen, "closure_stages", return_value=stages),
+                  patch.object(regen, "checks_dir", return_value=Path(temp)),
+                  patch("shiftboss.config.generation_check_skip", return_value=["shiftboss/plans/"]),
+                  redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO())):
+                code = check.main(["--base", base_ref])
+            fast.assert_called_once_with("fork")
+        self.git_calls = calls
+        return code
+
+    def test_committed_input_without_proof_is_rejected(self):
+        self.assertEqual(self.run_check(["engine/input.py"]), 1)
+
+    def test_new_committed_input_is_not_missed(self):
+        self.assertEqual(self.run_check(["engine/new-input.py"]), 1)
+
+    def test_report_only_change_is_allowed(self):
+        self.assertEqual(self.run_check(["shiftboss/plans/job/delivery.md"]), 0)
+
+    def test_same_input_proof_survives_unrelated_commit(self):
+        self.assertEqual(self.run_check(["engine/input.py", "docs/note.md"], record=True), 0)
+
+    def test_changed_input_requires_a_new_proof(self):
+        self.assertEqual(self.run_check(["engine/input.py"], record=True,
+                                       changed_since_record=True), 1)
+
+    def test_foreign_proof_is_not_accepted(self):
+        self.assertEqual(self.run_check(["engine/input.py"], record=True,
+                                       record_on_branch=False), 1)
+
+    def test_failed_proof_is_not_accepted(self):
+        self.assertEqual(self.run_check(["engine/input.py"], record=False), 1)
+
+    def test_custom_upstream_uses_its_actual_fork(self):
+        self.assertEqual(self.run_check(["engine/input.py"], base_ref="upstream/release"), 1)
+        self.assertEqual([row for row in self.git_calls if row[0] == "merge-base"],
+                         [("merge-base", "HEAD", "upstream/release")])
+
+    def test_uncommitted_input_still_blocks(self):
+        self.assertEqual(self.run_check([], pending=["engine/input.py"]), 1)
+
+
+    def test_real_git_branch_requires_and_reuses_matching_input_proof(self):
+        from shiftboss import check, merge, regen
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / "repo"
+            repo.mkdir()
+            proofs = Path(temp) / "proofs"
+            proofs.mkdir()
+
+            def git(*args):
+                result = subprocess.run(["git", "-C", str(repo), *args],
+                                        capture_output=True, text=True, check=True)
+                return result.stdout.strip()
+
+            git("init", "-q", "-b", "main")
+            git("config", "user.name", "Scope check")
+            git("config", "user.email", "scope@localhost")
+            (repo / "engine").mkdir()
+            source = repo / "engine/input.py"
+            source.write_text("first")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            git("update-ref", "refs/remotes/origin/main", "HEAD")
+            source.write_text("second")
+            git("commit", "-qam", "input")
+            stages = [{"name": "one", "command": ["python", "-B", "-m", "producer"],
+                       "inputs": ["engine/"], "after": []}]
+            with (patch.object(merge, "REPO", repo), patch.object(regen, "REPO", repo),
+                  patch.object(check, "fast_checks"),
+                  patch.object(regen, "load_plan", return_value={"stages": stages}),
+                  patch.object(regen, "closure_stages", return_value=stages),
+                  patch.object(regen, "checks_dir", return_value=proofs),
+                  redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO())):
+                self.assertEqual(check.main([]), 1)
+                (proofs / (git("rev-parse", "HEAD") + ".json")).write_text(json.dumps({"ok": True}))
+                self.assertEqual(check.main([]), 0)
+                (repo / "note.md").write_text("unrelated")
+                git("add", ".")
+                git("commit", "-qm", "unrelated")
+                self.assertEqual(check.main([]), 0)
+                source.write_text("third")
+                git("commit", "-qam", "changed input")
+                self.assertEqual(check.main([]), 1)

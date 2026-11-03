@@ -983,11 +983,12 @@ def merge_scope_reason(target: str) -> str | None:
     return None
 
 
-def generation_input_reason(target: str, reviewed: bool = False) -> str | None:
+def generation_input_reason(target: str, reviewed: bool = False, *, base: str | None = None) -> str | None:
     """分支改到生成输入（生成计划阶段输入与代码闭包，含共用层）时，须有 `shiftboss regen --branch-check` 的通过记录（用户定 D43）。
 
     记录的提交在分支上、且本分支改到的生成输入在记录提交与要合的提交之间未再变动，即认；之后合进来的 main 改动不作废记录。
     `reviewed`：派活方已读过交回里同等的全新检出生成回显（派活方自己不跑生成）。
+    `base`：推送自查传入与上游的分叉点；合入检查缺省使用当前 HEAD 与目标的分叉点。
     """
     if reviewed:
         return None
@@ -995,7 +996,8 @@ def generation_input_reason(target: str, reviewed: bool = False) -> str | None:
     stages = regen.validate_stages(regen.load_plan())
     if not stages:
         return None
-    base = git("merge-base", "HEAD", target, check=False).stdout.strip()
+    if base is None:
+        base = git("merge-base", "HEAD", target, check=False).stdout.strip()
     paths = regen.generation_paths(sorted(filter(None, git("diff", "--name-only", "--no-renames", base, target, check=False).stdout.splitlines())), base, target)
     paths = regen.generation_check_paths(paths)
     if not paths:

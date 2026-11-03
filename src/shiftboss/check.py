@@ -28,7 +28,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base", default="origin/main", help="比对的上游（缺省 origin/main；先自行 fetch）")
     args = ap.parse_args(argv)
     try:
-        fast_checks(git("merge-base", "HEAD", args.base).stdout.strip())
+        base = git("merge-base", "HEAD", args.base).stdout.strip()
+        fast_checks(base)
     except MergeError as exc:
         print(f"[检查失败] {exc}", file=sys.stderr)
         return 1
@@ -36,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         shown = "、".join(pending[:5]) + ("……" if len(pending) > 5 else "")
         print(f"[检查失败] 未提交的改动碰到生成输入（{shown}）：先提交，再做全新检出的生成核对，最后重跑本检查", file=sys.stderr)
         return 1
-    if reason := generation_input_reason("HEAD"):
+    if reason := generation_input_reason("HEAD", base=base):
         print(f"[检查失败] {reason}", file=sys.stderr)
         return 1
     print("快速检查通过")
