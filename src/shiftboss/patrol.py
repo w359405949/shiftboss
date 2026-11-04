@@ -67,6 +67,16 @@ def interpreter(command: list[str]) -> list[str]:
     return [sys.executable, *command[1:]] if command and command[0] == "python" else list(command)
 
 
+def route_order(routes: list[str], affected: list[str], reds: list[str],
+                checked: dict[str, str]) -> list[str]:
+    """各优先组内先核最久未核的页，发布前进后仍能继续覆盖同组尾部。"""
+    registered = set(routes)
+    def oldest(group):
+        return sorted((route for route in group if route in registered),
+                      key=lambda route: checked.get(route, ""))
+    return list(dict.fromkeys([*oldest(affected), *oldest(reds), *oldest(routes)]))
+
+
 def state_dir(remote: Path) -> Path:
     return config.control_dir(remote) / NAME
 
@@ -334,10 +344,9 @@ class Patrol:
                     affected = self.routes(policy["list"], previous, self.pass_release)
                 # 红页紧随其后：修复合入或偶发故障后尽早复扫消红。
                 reds = [r for r in self.state.get("red", {}) if r in routes]
-                # 其余按最久未核排：发布前进会打断整遍，若每遍从清单头扫，清单尾的页永远轮不到。
+                # 发布前进会打断整遍，各优先组都须按最久未核排。
                 checked = self.last_checked()
-                rest = sorted(routes, key=lambda r: checked.get(r, ""))
-                routes = [*dict.fromkeys([*[r for r in affected if r in routes], *reds, *rest])]
+                routes = route_order(routes, affected, reds, checked)
                 if self.pass_release:
                     self.state["swept_release"] = self.pass_release
                 self.state["pass"] += 1
