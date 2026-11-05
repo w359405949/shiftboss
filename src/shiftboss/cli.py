@@ -11,6 +11,7 @@ from shiftboss.paths import project_root
 
 COMMANDS = {
     "inbox": "inbox",
+    "inspect": "inspect_json",  # 有界查看 JSON 与按真实命令定位验证阶段
     "brief": "brief",       # 派活方每次汇报末尾附的状态摘要
     "ask": "decisions",     # 待用户定夺的事项：登记、列出、记下答复
     "automerge": "automerge",  # 自动合入的线：列出待复核、复核完确认

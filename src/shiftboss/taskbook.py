@@ -62,9 +62,15 @@ DEPENDENCY_KEYS = ("派发前置", "合入前置")
 
 
 def dependency_list(value) -> list[str]:
-    """表头依赖格：列表，或用逗号、顿号、空白分隔的名字。"""
+    """列表格接受字符串数组、JSON 数组，或分隔文本；不把 JSON 标点写进路径。"""
+    if isinstance(value, str) and value.lstrip().startswith("["):
+        value = json.loads(value)
+        if not isinstance(value, list):
+            raise ValueError("列表参数必须是字符串数组")
     if isinstance(value, list):
-        return [str(item) for item in value if str(item).strip()]
+        if any(not isinstance(item, str) or not item.strip() for item in value):
+            raise ValueError("列表参数必须只含非空字符串")
+        return value.copy()
     return [item for item in re.split(r"[,，、\s]+", str(value or "")) if item and item != "—"]
 
 
@@ -571,6 +577,13 @@ def main(argv=None) -> int:
         if not pairs:
             print("set 要 --field 键=值")
             return 2
+        for key in (SCOPE_KEY, *DEPENDENCY_KEYS):
+            if key in pairs:
+                try:
+                    pairs[key] = dependency_list(pairs[key])
+                except (ValueError, TypeError) as error:
+                    print(f"{key}列表参数无效：{error}")
+                    return 2
         if pairs.get("你的工作副本"):
             pairs["你的工作副本"] = copy_path(repo, pairs["你的工作副本"])
         if pairs.get("改布局") not in (None, "", "是", "否"):

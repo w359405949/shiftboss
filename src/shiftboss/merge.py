@@ -942,6 +942,17 @@ def check_change_reason(target: str, reviewed: bool) -> str | None:
     base = git("merge-base", "HEAD", target).stdout.strip()
     changed = [line for line in git("diff", "--name-only", "--no-renames", f"{base}...{target}").stdout.splitlines() if line]
     if not (hits := check_hits(changed)):
+        from shiftboss.taskbook import Taskbook
+        for book in Taskbook.iter_active(REPO):
+            meta = book.meta()
+            if meta.get("改检查") != "是":
+                continue
+            branch = meta.get("分支") or f"codex/{book.name}"
+            for ref in (f"origin/{branch}", branch):
+                if (git("rev-parse", "--verify", "--quiet", ref, check=False).returncode == 0
+                        and git("merge-base", "--is-ancestor", target, ref, check=False).returncode == 0):
+                    return (f"{book.name} 已声明改检查：是（包括未独立登记的检查辅助模块）；"
+                            "核对后加 --checks-reviewed 合入")
         return None
     stat = git("diff", "--stat", f"{base}...{target}", "--", *hits).stdout.rstrip()
     return (f"{target[:12]} 改了检查本身（检查脚本、测试或基线）：\n{stat}\n"

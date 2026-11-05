@@ -67,7 +67,8 @@ def candidates(workspace: Path, allowed: list[str]):
     from shiftboss.taskbook import Taskbook, category_of, execution_status
     for book in Taskbook.iter_active(workspace):
         meta = book.meta()
-        if meta.get("子类型") not in allowed or category_of(meta) == "性能" or meta.get("破坏性") != "否":
+        if (meta.get("子类型") not in allowed or category_of(meta) == "性能"
+                or meta.get("破坏性") != "否" or meta.get("改检查") == "是"):
             continue
         ref = f"origin/{meta.get('分支') or 'codex/' + book.name}"
         tip = git(workspace, "rev-parse", "--verify", "--quiet", ref, check=False).stdout.strip()
