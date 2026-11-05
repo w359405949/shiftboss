@@ -185,23 +185,46 @@ def model_of(session_id: str | None) -> str | None:
     return model
 
 
-def parked_at(session_id: str | None) -> str | None:
-    """rollout 末事件是 `task_complete` 即停在等输入，返回其时刻；在干活或读不到返回 None。"""
+def terminal_event(session_id: str | None) -> tuple[str, object] | None:
+    """只按执行生命周期判断；完成后的 token/item 记账不重开任务。"""
     roll = rollout_of(session_id) if session_id else None
     if roll is None:
         return None
-    last_type, last_ts = "", None
+    terminal = None
+    current_turn = None
     try:
-        for line in roll.read_text(encoding="utf-8", errors="replace").splitlines():
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            kind = (row.get("payload") or {}).get("type") or ""
-            if kind:
-                last_type, last_ts = kind, row.get("timestamp")
-    except (OSError, ValueError):
-        return None
-    return last_ts if last_type == "task_complete" else None
+        with roll.open(encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if row.get("type") != "event_msg":
+                    continue
+                payload = row.get("payload") or {}
+                kind = payload.get("type")
+                turn = payload.get("turn_id") or payload.get("root_turn_id")
+                if kind in ("task_started", "turn_started"):
+                    current_turn, terminal = turn, None
+                elif kind in ("task_complete", "turn_aborted"):
+                    if current_turn and turn and current_turn != turn:
+                        continue  # 旧轮延迟终态不能结束正在执行的新轮。
+                    stamp = row.get("timestamp")
+                    terminal = (stamp, payload.get("error") if kind == "task_complete" else None) if isinstance(stamp, str) else None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None  # 包括并发追加的半行：未知不当作可安全恢复。
+    return terminal
+
+
+def parked_at(session_id: str | None) -> str | None:
+    """正常完成或取消后的停靠时刻；错误由 failed_at 另行分类。"""
+    terminal = terminal_event(session_id)
+    return terminal[0] if terminal else None
+
+
+def failed_at(session_id: str | None) -> str | None:
+    """最新执行以结构化错误结束；新执行开始后即清除，不匹配正文里的错误文字。"""
+    terminal = terminal_event(session_id)
+    return terminal[0] if terminal and isinstance(terminal[1], (dict, str)) and terminal[1] else None
 
 
 def sandbox_warning(sid: str | None) -> str | None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把该在执行而进程没了的那几条线接回来；常驻验证留下旧锁而进程没了时一并重起。
+"""把该在执行但进程退出或执行中断的那几条线接回来；常驻验证留下旧锁而进程没了时一并重起。
 
     shiftboss recover --check     # 只报告，不动手
     shiftboss recover             # 逐条 resume
@@ -12,7 +12,8 @@
 **接哪几条只按收件箱的执行状态（`session_state`）判：**
 
 - `进程已退出`——会话没停在等输入、副本上却没有执行方进程，**接**。
-- `在干活`——进程还在，**不接**：`--recover` 会往活会话里投「继续」，打断正在做的事。
+- `执行中断`——插件确认最新一轮以结构化错误结束，即使终端仍活着也接；
+- `在干活`——没有已知中断且进程还在，**不接**：`--recover` 会往活会话里投「继续」，打断正在做的事。
 - `停着`、`做完了没推`、`--close` 过的——等的是核对与下一轮派活，**不接**：
   resume 一个已经收工的会话只会让它对着干净的树发呆，还占住额度。
 
@@ -31,8 +32,8 @@ from pathlib import Path
 REPO = project_root()
 
 def still_running(state: str, mode: str | None) -> bool:
-    """这条线该在执行而进程没了；`mode` 不参与判断。"""
-    return state == "进程已退出"
+    """这条线该在执行但进程退出或执行中断；`mode` 不参与判断。"""
+    return state in ("进程已退出", "执行中断")
 
 
 def running_lines(repo: Path) -> list[tuple[str, str]]:
@@ -59,6 +60,8 @@ def running_lines(repo: Path) -> list[tuple[str, str]]:
         # **交付模式从 `main` 读，不读分支上那份**，同 `survey` 的理由：
         # 表头是派活方写的，分支要等执行方下一次合 origin/main 才看得到。
         mode = (taskbook_of(git_dir, "main", name)[0] or {}).get("交付模式")
+        if live.get(name, {}).get("state") == "可核对":
+            continue  # 完成/停下的交回已到，等派活方处理，不因尾部错误自动重派。
         if still_running(state, mode):
             out.append((name, state))
     return out
@@ -82,7 +85,7 @@ def restart_resident(check: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """把该在执行而进程没了的那几条线接回来；收拾现场是执行方的活。"""
+    """把该在执行但进程退出或执行中断的那几条线接回来；收拾现场是执行方的活。"""
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="只报告，不动手")
@@ -95,11 +98,11 @@ def main(argv: list[str] | None = None) -> int:
     restart_resident(args.check)
     lines = running_lines(REPO)
     if not lines:
-        print(f"shiftboss recover：{REPO.parent} 没有该在执行而进程没了的线。")
+        print(f"shiftboss recover：{REPO.parent} 没有该在执行但进程退出或执行中断的线。")
         return 0
 
     print(f"shiftboss recover：{REPO.parent}{'（只检查）' if args.check else ''}")
-    print(f"该在执行而进程没了的 {len(lines)} 条：")
+    print(f"该在执行但进程退出或执行中断的 {len(lines)} 条：")
     for name, state in lines:
         print(f"  {name:<40} {state}")
     if args.check:
@@ -107,10 +110,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     print()
+    failed = False
     for name, _state in lines:
-        subprocess.run([sys.executable, "-B", "-m", "shiftboss.dispatch",
-                        name, "--recover"])
-    return 0
+        result = subprocess.run([sys.executable, "-B", "-m", "shiftboss.dispatch",
+                                 name, "--recover"])
+        if result.returncode:
+            print(f"{name} 恢复失败，退出 {result.returncode}；保留现场，不能报已恢复。", file=sys.stderr)
+            failed = True
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

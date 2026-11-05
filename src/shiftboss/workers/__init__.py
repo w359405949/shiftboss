@@ -12,6 +12,7 @@
 - `newest_session(copy, since, previous, previous_steps)`：派出后这个副本上在用的会话号；
 - `step_count(session_id)`：会话已有几步，供恢复判断接上与否；
 - `parked_at(session_id)`：会话停在等输入上的时刻，在干活或读不到为 None；
+- 可选 `failed_at(session_id)`：最新执行以结构化错误结束的时刻；新轮开始或未知返回 None；
 - `model_of(session_id)`：实际使用的模型；
 - `queue_into(session_id, message, alive)`：投消息，返回是否真的投进去（`CAN_QUEUE` 为假的一律 False）；
 - `sandbox_warning(session_id)`：会话权限不是全开时的告警，否则 None。

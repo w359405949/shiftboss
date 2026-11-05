@@ -267,11 +267,8 @@ def session_state(name: str, row: dict | None, entry: dict | None,
     **要「我该干什么」的，拿这一格和 `keeps_going(交付模式)` 自己合**——
     `recover` 就是这么做的。
 
-    **只用门铃和收件箱判，不看进程、不翻会话 rollout。**
-    这条早有结论，写在 `survey()` 里：交付即停是默认，**分支上有还没合并的 push，
-    就说明那个副本已经停下等我了**。2026-09-02 我又违反过一次——改用 rollout 的
-    `task_complete` 当判据，那仍旧是「看会话那一侧」，而且它连「派出去还没开始推」
-    和「跑完停着」都分不开。
+    分支交付仍以 refs 与任务书为准；执行终态只经执行方插件解释，
+    不从终端进程存活或日志正文里的错误词推断。插件确认新轮已开始后，旧失败不再生效。
 
     三档（`row` 不参与，只为调用方同一签名保留）：
 
@@ -287,6 +284,8 @@ def session_state(name: str, row: dict | None, entry: dict | None,
         # 照着它派会往正在干活的副本上再派一轮。**不知道就说不知道**，
         # 下一次派活会把这个字段补上。
         return "停着" if not (entry or {}).get("session_id") else "?（台账缺派出时刻）"
+    if _later(session_failed_at(entry), sent):
+        return "执行中断"
     pushed = last_push(git_dir, name)
     # **这里只用会话时间戳做一次拆分，不用它替代 refs 的判断。**
     # 会话最后一次动静**晚于这一轮派出时刻**、而且停在等输入上，
@@ -336,6 +335,16 @@ def session_parked_at(entry: dict | None) -> str | None:
     from shiftboss.dispatch import executor_of
     from shiftboss.workers import WORKERS
     return WORKERS[executor_of(entry.get("executor"))].parked_at(session_id)
+
+
+def session_failed_at(entry: dict | None) -> str | None:
+    """可选插件能力：只读结构化终态，未提供或未知时保持原有判据。"""
+    if not entry or not entry.get("session_id") or entry.get("closed"):
+        return None
+    from shiftboss.dispatch import executor_of
+    from shiftboss.workers import WORKERS
+    read = getattr(WORKERS[executor_of(entry.get("executor"))], "failed_at", None)
+    return read(entry["session_id"]) if callable(read) else None
 
 
 STALE_HOURS = 2
@@ -402,7 +411,7 @@ def stalled_lines(repo: Path, git_dir: Path,
         # **派出晚于最后一次推送就是「新一轮还没回音」**，与分支上有没有未合并的推送无关。
         waiting = bool(sent) and (not pushed or _later(sent, pushed))
         state = session_state(book.name, live.get(book.name), entry, git_dir)
-        if state == "进程已退出":
+        if state in ("进程已退出", "执行中断"):
             # 进程没了不用等满门槛：立刻报，`shiftboss recover` 接回。
             pass
         elif not waiting and state != "在干活":
@@ -411,13 +420,14 @@ def stalled_lines(repo: Path, git_dir: Path,
         # 「在干活」既盖「派出后还没推」也盖「推过一段、合掉之后还在往下做」；
         # 后者的派出时刻可以很旧而它几分钟前刚推过，只按派出算会报出假的挂住。
         age = hours_since(pushed if _later(pushed, sent) else sent)
-        if state != "进程已退出" and (age is None or age < STALE_HOURS):
+        if state not in ("进程已退出", "执行中断") and (age is None or age < STALE_HOURS):
             continue
         meta = book.meta()
         signs = started_signs(meta.get("你的工作副本", ""), meta.get("分支", ""))
-        if state == "进程已退出":
-            # 不看年龄就报；刚派出、进程尚未起来时也会短暂出现，持续才需 recover。
-            signs = "进程已退出（刚派出时可能短暂出现；持续则 shiftboss recover）；" + signs
+        if state in ("进程已退出", "执行中断"):
+            # 明确失败立即报告，不用等长时间未推送的提醒阈值。
+            signs = ("执行中断（插件确认最新轮错误结束；shiftboss recover）；" if state == "执行中断"
+                     else "进程已退出（刚派出时可能短暂出现；持续则 shiftboss recover）；") + signs
         out.append((book.name, age or 0.0,
                     (meta.get("你的工作副本") or "").split(chr(92))[-1], signs))
     return out
