@@ -11,6 +11,7 @@ from shiftboss.paths import project_root
 
 COMMANDS = {
     "inbox": "inbox",
+    "mistakes": "mistakes",  # 逐条核对处理清单、无损归档私有错题本
     "inspect": "inspect_json",  # 有界查看 JSON 与按真实命令定位验证阶段
     "brief": "brief",       # 派活方每次汇报末尾附的状态摘要
     "ask": "decisions",     # 待用户定夺的事项：登记、列出、记下答复
