@@ -877,7 +877,7 @@ def merge_main_into(copy: Path, branch: str) -> str:
     return f"已把 origin/main 合入副本的 {branch}"
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     """派一份任务书出去
 
     副本路径与分支**从任务书表头读**，不从命令行给；多轮与返工在执行方停下后**恢复原会话**开新一轮，打回满 3 次才换新；执行方还在做本轮时拒派；**副本被另一份没 `--close` 的任务书占着时直接拒派**
@@ -1387,6 +1387,21 @@ def main(argv: list[str] | None = None) -> int:
         pass
     # 分支切没切不在这里判：判据是它推上来的那条分支，收件箱从 refs 现算。
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    # 台账在启动执行方之前读取、启动后写回；只锁 publish 会丢掉并行 close 的更新。
+    # 与 merge/归档共用工作树锁，覆盖读台账到最终保存的整次派发。
+    from shiftboss.state import take_workspace, release_merge_lock
+    args = list(sys.argv[1:] if argv is None else argv)
+    if any(flag in args for flag in ("-h", "--help", "--dry-run")):
+        return _main(args)
+    taken = take_workspace(REPO, "dispatch session transaction")
+    try:
+        return _main(args)
+    finally:
+        if taken:
+            release_merge_lock(REPO)
 
 
 if __name__ == "__main__":

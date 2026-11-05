@@ -203,24 +203,35 @@ def take_workspace(repo: Path, why: str) -> bool:
     path = lock_path(repo)
     deadline = time.time() + LOCK_WAIT_SECONDS
     announced = False
-    while path.exists():
-        text = path.read_text(encoding="utf-8", errors="replace").strip()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        try:
+            with path.open("x", encoding="utf-8") as handle:
+                handle.write(f"pid={os.getpid()} {why} started={time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
+            return True
+        except FileExistsError:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace").strip()
+            except FileNotFoundError:
+                continue
         pid = re.match(r"pid=(\d+)", text)
         if pid and int(pid[1]) == os.getpid():
             return False
-        if not pid or not psutil.pid_exists(int(pid[1])):
-            break
-        if time.time() > deadline:
+        if pid and not psutil.pid_exists(int(pid[1])):
+            try:
+                if path.read_text(encoding="utf-8", errors="replace").strip() == text:
+                    path.unlink()
+            except FileNotFoundError:
+                pass
+            continue
+        # 空文件可能是另一个进程刚 exclusive-create、还没写完；不能当死锁删除。
+        if time.time() >= deadline:
             raise SystemExit(f"派活方工作树被占用超过 {LOCK_WAIT_SECONDS} 秒：{path}\n内容：{text}")
         if not announced:
             print(f"派活方工作树正被占用（{text}），排队等待…", flush=True)
             announced = True
         time.sleep(2)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        f"pid={os.getpid()} {why} started={time.strftime('%Y-%m-%dT%H:%M:%S')}\n",
-        encoding="utf-8")
-    return True
+
 
 
 def acquire_merge_lock(repo: Path, why: str) -> None:
