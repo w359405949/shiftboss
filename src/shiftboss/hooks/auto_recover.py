@@ -99,7 +99,7 @@ def install(repo: Path, path: Path) -> bool:
         for group in groups:
             for handler in group.get("hooks", []):
                 old = handler.get("command", "")
-                if MODULE in old or (event == "UserPromptSubmit" and "-m shiftboss.hooks.claim_dispatcher " in old):
+                if MODULE in old:
                     handler.update(type="command", command=command, timeout=3 if event == "Interrupt" else 15)
                     found = True
         if not found:

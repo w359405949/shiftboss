@@ -139,7 +139,9 @@ class AutoRecoveryHooks(unittest.TestCase):
         installed = json.loads(saved)
         self.assertEqual(installed['description'], 'keep')
         self.assertEqual(installed['hooks']['Stop'], stop)
-        self.assertEqual(len(installed['hooks']['UserPromptSubmit']), 1)
+        self.assertEqual(len(installed['hooks']['UserPromptSubmit']), 2)
+        self.assertEqual(installed['hooks']['UserPromptSubmit'][0]['hooks'][0]['command'],
+                         'python -m shiftboss.hooks.claim_dispatcher --repo x')
         self.assertEqual(installed['hooks']['Interrupt'][0]['hooks'][0]['timeout'], 3)
 
     def test_residents_skip_intentional_stop_and_restore_only_crashed_periodic_lane(self):
