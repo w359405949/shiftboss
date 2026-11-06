@@ -522,9 +522,13 @@ def run_until_idle(command: list[str]) -> tuple[int, str]:
 
 def run_fast_commands(names: list[str]) -> None:
     """项目登记的秒级结构检查；只放静态分析，生成、构建与浏览器检查归常驻验证。"""
+    config.background_fast_commands()  # 与常驻登记共用校验，坏配置不静默跳过。
     for item in config.fast_commands():
         name, run, when = item["name"], item["run"], item.get("when")
         if when and not any(path.startswith(prefix) for path in names if path for prefix in when):
+            continue
+        if item.get("background", False):
+            print(f"结构检查 {name}：已登记常驻验证完整命令", flush=True)
             continue
         command = config.closure_command() if run == "regen.closure_command" else list(run)
         started = time.monotonic()

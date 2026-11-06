@@ -220,6 +220,24 @@ class VerificationAcceptance(unittest.TestCase):
         self.assertEqual(report['stages']['gate-1']['returncode'],0)
         self.assertEqual(report['failures'],[])
 
+    def test_moved_structure_command_runs_in_existing_verifier_and_keeps_rc(self):
+        config=self.repo/'shiftboss.toml'
+        config.write_text(config.read_text()+ '\n[merge]\nfast_commands = [{name="moved", run=["python", "slow_rule.py"], background=true}]\n')
+        rule=self.repo/'slow_rule.py'
+        rule.write_text("raise SystemExit(3)\n")
+        broken=self.commit('moved rule rejects');self.git('push','-q','origin','main')
+        worker=Verifier(self.repo,self.workspace);worker.watch(once=True)
+        report=read_state(worker.directory/'runs'/f'{broken}.json')
+        self.assertEqual(report['stages']['gate-1']['command'], ['python','slow_rule.py'])
+        self.assertEqual(report['stages']['gate-1']['returncode'], 3)
+        self.assertEqual(len(report['failures']),1)
+        rule.write_text("raise SystemExit(0)\n")
+        fixed=self.commit('fix rule input');self.git('push','-q','origin','main')
+        worker.watch(once=True)
+        report=read_state(worker.directory/'runs'/f'{fixed}.json')
+        self.assertEqual(report['stages']['gate-1']['returncode'],0)
+        self.assertEqual(report['failures'],[])
+
     def test_generation_skips_without_generation_input_changes(self):
         """生成输入没动就不重算派生物；动了照常生成。改回无条件生成时 `skipped` 断言失败。"""
         plan=json.loads((self.repo/'regen.json').read_text())
