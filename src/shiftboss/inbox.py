@@ -125,14 +125,14 @@ def survey(repo: Path, git_dir: Path) -> list[dict]:
     has_main = subprocess.run(["git", f"--git-dir={git_dir}", "rev-parse", "--verify", "-q",
                                "refs/heads/main"], capture_output=True).returncode == 0
     refs = _git(git_dir, "for-each-ref", *(["--no-merged=main"] if has_main else []),
-                "--format=%(refname:short)%09%(committerdate:iso-strict)",
+                "--format=%(refname:short)%09%(committerdate:iso-strict)%09%(objectname)",
                 "refs/heads/codex/*").splitlines()
     for entry in refs:
-        if "\t" not in entry:
+        fields = entry.split("\t")
+        if len(fields) != 3:
             continue
-        branch, pushed = entry.split("\t", 1)
+        branch, pushed, tip = fields
         name = branch.split("/", 1)[1]
-        tip = _git(git_dir, "rev-parse", branch).strip()
         # 退回的轮次永远不会被合并，光靠「并没并进 main」判不出「核过没有」。
         if tip in rejected.get(name, []):
             continue
