@@ -474,8 +474,14 @@ def fast_checks(before: str) -> None:
         else:
             continue
         counts[path.suffix] += 1
-    check_js_modules(js_modules)
-    print(f"快速检查 改动 JSON/Python/JS 语法: {counts} {time.monotonic()-started:.3f}s", flush=True)
+    from shiftboss.source_guards import enabled as source_guard_background
+    if source_guard_background(REPO, "syntax"):
+        checked_counts = {suffix: counts[suffix] for suffix in (".json", ".py")}
+        print(f"快速检查 JSON/Python 语法: {checked_counts} {time.monotonic()-started:.3f}s", flush=True)
+        print("JS/TS 语法：已登记常驻验证完整源码闸；本轮前台未执行", flush=True)
+    else:
+        check_js_modules(js_modules)
+        print(f"快速检查 改动 JSON/Python/JS 语法: {counts} {time.monotonic()-started:.3f}s", flush=True)
     started = time.monotonic()
     from shiftboss.named_imports_check import enabled as imports_in_background
     if imports_in_background(REPO):
@@ -484,8 +490,11 @@ def fast_checks(before: str) -> None:
         check_js_imports(names)
         print(f"快速检查 JS 具名导入: {time.monotonic()-started:.3f}s", flush=True)
     started = time.monotonic()
-    duplicate_keys = check_js_duplicate_keys(names)
-    print(f"快速检查 JS 对象重复键: {duplicate_keys} {time.monotonic()-started:.3f}s", flush=True)
+    if source_guard_background(REPO, "duplicate-keys"):
+        print("JS 对象重复键：已登记常驻验证完整源码闸；本轮前台未执行", flush=True)
+    else:
+        duplicate_keys = check_js_duplicate_keys(names)
+        print(f"快速检查 JS 对象重复键: {duplicate_keys} {time.monotonic()-started:.3f}s", flush=True)
     run_fast_commands(names)
     check_new_tests(before)
     assertion_delta(before)

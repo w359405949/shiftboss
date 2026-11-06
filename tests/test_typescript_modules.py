@@ -104,6 +104,72 @@ class TypeScriptModules(unittest.TestCase):
         self.assertEqual(registered[-1][-2:], ['-m', 'shiftboss.named_imports_check'])
         self.assertEqual(verification_gates(registered, self.repo), registered)
 
+    def test_source_guard_switches_register_each_original_rule_once(self):
+        from shiftboss import source_guards
+        from shiftboss.named_imports_check import verification_gates
+        self.assertFalse(source_guards.enabled(self.repo, 'syntax'))
+        self.assertFalse(source_guards.enabled(self.repo, 'duplicate-keys'))
+        gates = [['python', '-m', 'existing']]
+        self.assertEqual(verification_gates(gates, self.repo), gates)
+        config = self.repo / 'shiftboss.toml'
+        original = config.read_text()
+        config.write_text(original + 'source_syntax_background = true\nduplicate_keys_background = true\n')
+        registered = verification_gates(gates, self.repo)
+        self.assertEqual([command[-1] for command in registered[1:]], ['syntax', 'duplicate-keys'])
+        self.assertTrue(all(command[-2] == 'shiftboss.source_guards' for command in registered[1:]))
+        self.assertEqual(verification_gates(registered, self.repo), registered)
+        config.write_text(original + 'source_syntax_background = "yes"\n')
+        with self.assertRaisesRegex(ValueError, 'source_syntax_background'):
+            source_guards.enabled(self.repo, 'syntax')
+
+    def test_background_syntax_checks_unchanged_tracked_sources_and_unique_owner(self):
+        from shiftboss.source_guards import run
+        self.write('src/owner.ts', 'export const value: number = 1;\n')
+        (self.repo / 'src/untracked.ts').write_text('export const invalid: = 1;\n')
+        run(self.repo, 'syntax')
+        self.write('src/owner.ts', 'export const value: = 1;\n')
+        with self.assertRaisesRegex(merge.MergeError, '语法'):
+            run(self.repo, 'syntax')
+        self.write('src/owner.ts', 'export const value: number = 1;\n')
+        self.write('src/owner.js', 'export const value = 1;\n')
+        with self.assertRaisesRegex(merge.MergeError, '双实现'):
+            run(self.repo, 'syntax')
+        (self.repo / 'src/owner.js').unlink()
+        with self.assertRaisesRegex(merge.MergeError, '源码不存在'):
+            run(self.repo, 'syntax')
+
+    def test_background_duplicate_guard_retains_rejection_and_accessor_pair(self):
+        from shiftboss.source_guards import run
+        self.write('src/owner.ts', 'export const row = {value: 1, value: 2};\n')
+        with self.assertRaisesRegex(merge.MergeError, '重复键.*value'):
+            run(self.repo, 'duplicate-keys')
+        self.write('src/owner.ts', 'export const row = {get value(): number {return 1;}, set value(v: number) {}};\n')
+        run(self.repo, 'duplicate-keys')
+        (self.repo / 'src/owner.ts').unlink()
+        (self.repo / 'src/owner.ts').symlink_to(self.repo / 'src/target.ts')
+        with self.assertRaisesRegex(merge.MergeError, '符号链接'):
+            run(self.repo, 'duplicate-keys')
+
+    def test_background_source_transport_keeps_all_inputs_and_last_error(self):
+        from shiftboss.source_guards import run
+        names = [f'src/record-{i:03d}.ts' for i in range(300)]
+        for name in names:
+            (self.repo / name).write_text('export const value = 1;\n')
+        subprocess.run(['git', '-C', str(self.repo), 'add', 'src'], check=True)
+        error = merge.MergeError('last source error')
+        seen = []
+
+        def check(group):
+            seen.extend(group)
+            if names[-1] in group:
+                raise error
+
+        with patch.object(merge, 'check_js_modules', side_effect=check):
+            with self.assertRaises(merge.MergeError) as caught:
+                run(self.repo, 'syntax')
+        self.assertIs(caught.exception, error)
+        self.assertEqual(seen, names)
+
     def test_missing_type_export_and_missing_module_are_rejected(self):
         self.write("src/owner.ts", "export interface Shape {size: number}\n")
         self.write("src/caller.ts", "import type {Absent} from './owner.js';\n")

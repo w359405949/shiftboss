@@ -21,7 +21,8 @@ def verification_gates(gates: list, repo: Path) -> list:
     if enabled(repo) and command not in result:
         result.append(command)
     from shiftboss.background_commands import commands
-    for background in commands(repo):
+    from shiftboss.source_guards import commands as source_guard_commands
+    for background in [*commands(repo), *source_guard_commands(repo)]:
         if background not in result:
             result.append(background)
     return result
