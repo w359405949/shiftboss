@@ -192,20 +192,26 @@ def terminal_event(session_id: str | None) -> tuple[str, object] | None:
         return None
     terminal = None
     current_turn = None
+    trusted = True
     try:
         with roll.open(encoding="utf-8", errors="replace") as stream:
             for line in stream:
                 if not line.strip():
                     continue
-                row = json.loads(line)
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    # 历史坏行不能永久遮掉后续完整的新轮；坏行之后须重新看到开始事件。
+                    current_turn, terminal, trusted = None, None, False
+                    continue
                 if row.get("type") != "event_msg":
                     continue
                 payload = row.get("payload") or {}
                 kind = payload.get("type")
                 turn = payload.get("turn_id") or payload.get("root_turn_id")
                 if kind in ("task_started", "turn_started"):
-                    current_turn, terminal = turn, None
-                elif kind in ("task_complete", "turn_aborted"):
+                    current_turn, terminal, trusted = turn, None, True
+                elif trusted and kind in ("task_complete", "turn_aborted"):
                     if current_turn and turn and current_turn != turn:
                         continue  # 旧轮延迟终态不能结束正在执行的新轮。
                     stamp = row.get("timestamp")

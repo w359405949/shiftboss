@@ -87,6 +87,19 @@ class SessionFailureRecovery(unittest.TestCase):
         self.assertIsNone(codex.parked_at('session-one'))
         self.assertEqual(self.state(), '在干活')
 
+    def test_historical_bad_line_is_superseded_only_by_a_new_start(self):
+        self.write(self.failure, tail='{"type":\n')
+        with self.rollout.open('a') as stream:
+            for row in [event('token_count'), event('task_complete')]:
+                stream.write(json.dumps(row) + '\n')
+        self.assertIsNone(codex.parked_at('session-one'))
+        with self.rollout.open('a') as stream:
+            for row in [event('task_started', RESUMED, turn='two'),
+                        event('task_complete', RESUMED, turn='two')]:
+                stream.write(json.dumps(row) + '\n')
+        self.assertEqual(codex.parked_at('session-one'), RESUMED)
+        self.assertIsNone(codex.failed_at('session-one'))
+
     def test_old_failure_before_dispatch_does_not_interrupt_new_round(self):
         self.write(self.failure)
         self.entry['dispatched_at'] = '2026-11-05T22:00:00+08:00'
