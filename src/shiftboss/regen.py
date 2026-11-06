@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -557,14 +558,40 @@ def branch_check(ref: str) -> int:
         if name and (REPO / name).is_file():
             (worktree / name).write_bytes((REPO / name).read_bytes())
         selected_args = [argument for stage in chosen for argument in ("--stage", stage["name"])]
-        done = subprocess.run([sys.executable, "-B", "-m", "shiftboss.regen", "--steps", *selected_args],
-                              cwd=worktree, capture_output=True, text=True, encoding="utf-8")
+        command = [sys.executable, "-B", "-m", "shiftboss.regen", "--steps", *selected_args]
+        done = subprocess.run(command, cwd=worktree, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace")
         output = done.stdout + done.stderr
+        # 终端只预览末尾；完整回显和失败阶段日志必须先搬出即将删除的检出。
+        from shiftboss.process_output import writer
+        evidence_root = REPO / "out" / CHECKS_DIR / head
+        evidence_root.mkdir(parents=True, exist_ok=True)
+        evidence = Path(tempfile.mkdtemp(prefix="run-", dir=evidence_root))
+        diagnostics = {"directory": str(evidence), "command": command,
+                       "cwd": str(worktree), "returncode": done.returncode}
+        for key, content in (("stdout", done.stdout), ("stderr", done.stderr), ("output", output)):
+            path = evidence / f"{key}.log"
+            with writer(path, REPO) as stream:
+                stream.write(content)
+            diagnostics[key] = str(path)
+        failures = worktree / "out" / "regen-failures"
+        diagnostics["failure_logs"] = []
+        if failures.is_dir():
+            retained = evidence / "out" / "regen-failures"
+            shutil.copytree(failures, retained)
+            diagnostics["failure_logs"] = [
+                {"original": str(path), "retained": str(retained / path.relative_to(failures))}
+                for path in sorted(failures.rglob("*.log")) if path.is_file()]
+        (evidence / "command.json").write_text(
+            json.dumps({"head": head, "base": base, **diagnostics}, ensure_ascii=False, indent=2),
+            encoding="utf-8")
         print("\n".join(output.rstrip().splitlines()[-25:]), flush=True)
+        print(f"完整回显：{diagnostics['output']}；失败日志索引：{evidence / 'command.json'}", flush=True)
     finally:
         git("worktree", "remove", "--force", str(worktree))
     ok = done.returncode == 0
-    record = {"head": head, "base": base, "ok": ok, "stages": [s["name"] for s in chosen],
+    record = {"head": head, "base": base, "ok": ok, "returncode": done.returncode,
+              "diagnostics": diagnostics, "stages": [s["name"] for s in chosen],
               "inputs": sorted({p for p in paths if any(matches_prefix(p, prefix) for s in chosen for prefix in s["inputs"])}),
               "seconds": round(time.time() - started, 1), "at": time.time()}
     target = checks_dir() / f"{head}.json"
