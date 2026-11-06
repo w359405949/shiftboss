@@ -209,7 +209,16 @@ Git Feature Branch Workflow：派活方负责初步检验、合并与派发，�
 
 ### 3.3c 检查的两类
 
-具名导入检查若超过 60 秒，项目可设 `[merge] named_imports_background = true`：同一检查从合入前台移入常驻验证现有工具闸，命令为 `python -B -m shiftboss.named_imports_check`。后台检查 `js_module_prefixes` 内全部 Git 登记的维护源，保留 JS/TS 唯一源、运行／类型导出、缺源及原错误判定；未执行的新源仍未验。开关同时控制前台移出与后台登记；未开启的项目保留原前台检查。
+以下后台开关同时控制原守卫的前台移出与常驻工具闸登记。
+
+| 守卫 | 项目 `[merge]` 开关 | 独立后台入口 |
+| --- | --- | --- |
+| 具名导入 | `named_imports_background` | `python -B -m shiftboss.named_imports_check` |
+| JS/TS 模块语法 | `source_syntax_background` | `python -B -m shiftboss.source_guards syntax` |
+| 对象字面量重复键 | `duplicate_keys_background` | `python -B -m shiftboss.source_guards duplicate-keys` |
+| 默认 | 未登记或 `false` | 保留原前台检查 |
+
+后台各自检查 `js_module_prefixes` 内全部 Git 登记模块，保留原语法、运行／类型导出、对象重复键、唯一源、缺源、符号链接与原错误判定；进度只在实际检查完成后报告，不截断清单。JSON/Python 语法仍在前台；新源未执行时仍未验。
 
 | 类 | 特征 | 在哪跑 |
 | --- | --- | --- |
