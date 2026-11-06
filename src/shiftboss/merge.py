@@ -534,6 +534,10 @@ def check_new_tests(before: str) -> None:
     """未登记的新增测试项拒绝合并；口径见 `shiftboss.testguard`。"""
     from shiftboss import testguard
     old = git("show", f"{before}:{config.plan_file()}", check=False)
+    import tomllib
+    old_config = git('show', f'{before}:{config.CONFIG_NAME}', check=False)
+    previous_prefixes = (tomllib.loads(old_config.stdout).get('verify', {}).get('runtime_prefixes', [])
+                         if old_config.returncode == 0 else [])
     plan = REPO / config.plan_file()
     found = testguard.find(
         lambda *args: git(*args).stdout, before, None, config.assertion_dirs(),
@@ -541,7 +545,8 @@ def check_new_tests(before: str) -> None:
         set(config.approved_tests()),
         untracked=git("ls-files", "--others", "--exclude-standard").stdout.split(),
         read=lambda path: (REPO / path).read_text(encoding="utf-8", errors="replace"),
-        runtime_prefixes=config.load().get("verify", {}).get("runtime_prefixes", []))
+        runtime_prefixes=config.load().get("verify", {}).get("runtime_prefixes", []),
+        previous_runtime_prefixes=previous_prefixes)
     if found:
         raise MergeError(testguard.MESSAGE + "\n  " + "\n  ".join(found))
     banned = testguard.forbidden(

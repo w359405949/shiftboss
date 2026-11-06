@@ -176,10 +176,14 @@ def new_tests(new: str, settings: dict) -> list[str]:
         return []
     plan = settings.get("regen", {}).get("plan", "regen.json")
     shown = lambda ref: (lambda done: None if done.returncode else done.stdout)(git("show", f"{ref}:{plan}"))
+    historical = git('show', f'{base}:{config.CONFIG_NAME}')
+    previous_prefixes = (tomllib.loads(historical.stdout).get('verify', {}).get('runtime_prefixes', [])
+                         if historical.returncode == 0 else [])
     return testguard.find(lambda *args: git(*args).stdout, base, new,
                           list(settings.get("merge", {}).get("assertion_dirs", [])),
                           (shown(base), shown(new)), set(settings.get("verify", {}).get("approved_tests", [])),
-                          runtime_prefixes=settings.get("verify", {}).get("runtime_prefixes", []))
+                          runtime_prefixes=settings.get("verify", {}).get("runtime_prefixes", []),
+                          previous_runtime_prefixes=previous_prefixes)
 
 
 def forbidden(new: str, settings: dict) -> list[str]:

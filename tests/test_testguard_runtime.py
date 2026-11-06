@@ -27,6 +27,17 @@ class RuntimeGateIdentity(unittest.TestCase):
         old = [['node', 'rules.mjs', '--case', 'same']]
         self.assertEqual(self.find(old, [[*PREFIX, 'rules.mjs', '--case', 'same']], [PREFIX]), [])
 
+    def test_retired_prefix_is_read_from_its_own_revision(self):
+        def compare(new):
+            return testguard.find(lambda *args: '', 'base', None, [],
+                                  (json.dumps({'gates': [[*PREFIX, 'rules.mjs', '--case', 'same']]}),
+                                   json.dumps({'gates': [new]})), set(),
+                                  runtime_prefixes=[PREPARED], previous_runtime_prefixes=[PREFIX])
+        self.assertEqual(compare([*PREPARED, 'rules.mjs', '--case', 'same']), [])
+        self.assertTrue(compare([*PREPARED, 'rules.mjs', '--case', 'different']))
+        unknown = PREFIX[:-1] + ['./unregistered.mjs', 'rules.mjs', '--case', 'same']
+        self.assertTrue(compare(unknown))
+
     def test_both_registered_pipeline_commands_keep_identity(self):
         plain = 'node inputs.mjs --constants | python -B inputs.py . | node inputs.mjs --stage-inputs'
         loaded = plain.replace('node ', ' '.join(PREFIX) + ' ')

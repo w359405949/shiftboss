@@ -179,13 +179,18 @@ def plan_commands(plan: dict) -> list[list[str]]:
 
 
 # 一个产物只归一个阶段：阶段若写了别的阶段的产物，就是把那份活塞进了自己，拒绝。
-def merge_catalog(old: dict | None, stages: list[dict], producers: list[dict]) -> dict:
-    """本次重跑阶段的报告换掉旧条目，未重跑的沿用；按计划顺序排列。"""
+def merge_catalog(old: dict | None, stages: list[dict], producers: list[dict], *,
+                  pending: set[str] | None = None) -> dict:
+    """本次报告换掉旧条目；中途保留待执行阶段的真实旧身份，最终仍须全部匹配。"""
     previous = {p.get("stage"): p for p in (old or {}).get("producers") or [] if p.get("stage")}
     fresh = {p["stage"]: p for p in producers}
     merged = []
     for stage in stages:
         entry = fresh.get(stage["name"]) or previous.get(stage["name"])
+        if stage['name'] in (pending or set()) and stage['name'] not in fresh:
+            if entry is not None:
+                merged.append(entry)
+            continue
         if entry is None or entry["command"] != stage["command"]:
             raise ValueError(f"阶段 {stage['name']} 没有与当前命令相符的产物报告；须重跑该阶段")
         merged.append(entry)

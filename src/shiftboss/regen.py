@@ -712,7 +712,8 @@ def _run(args) -> int:
             # 每个阶段报告后即写回产物报告：后续阶段（如运行包清单）按本轮已重跑阶段的新声明与未重跑阶段的旧声明取精确产物，
             # 新增产物当轮即可收录，退役产物当轮即被拒收，不等全部阶段结束。
             def publish_partial(done: list[dict]) -> None:
-                (REPO / CATALOG).write_text(json.dumps(merge_catalog(previous, stages, done), ensure_ascii=False, indent=2) + "\n",
+                pending = {s['name'] for s in chosen} - {p['stage'] for p in done}
+                (REPO / CATALOG).write_text(json.dumps(merge_catalog(previous, stages, done, pending=pending), ensure_ascii=False, indent=2) + "\n",
                                             encoding="utf-8", newline="\n")
             ok = run_all("生成", [s["command"] for s in chosen], outputs=producers, on_output=publish_partial,
                          names=[s["name"] for s in chosen], after=[s.get("after", []) for s in chosen])

@@ -84,7 +84,8 @@ def command_identity(gate: list[str], prefixes: list[list[str]]) -> tuple[str, .
 def find(git: Callable[..., str], before: str, after: str | None, dirs: list[str],
          plans: tuple[str | None, str | None], approved: set[str], untracked: list[str] | None = None,
          read: Callable[[str], str] | None = None,
-         runtime_prefixes: list[list[str]] | None = None) -> list[str]:
+         runtime_prefixes: list[list[str]] | None = None,
+         previous_runtime_prefixes: list[list[str]] | None = None) -> list[str]:
     """`git(*args)` 返回标准输出；`after` 为 None 时比对工作树，`untracked` 为工作树里未跟踪的文件，`read` 读其内容。
 
     `plans` 是改动前后的生成计划文本（读不到为 None）。
@@ -123,7 +124,8 @@ def find(git: Callable[..., str], before: str, after: str | None, dirs: list[str
     if old is not None and new is not None:
         # 按整条闸核对：调用的脚本已登记的闸放行，参数（如规则名）不单独登记。
         before_gates = {tuple(gate) for gate in json.loads(old).get("gates", [])}
-        identities = {command_identity(list(gate), runtime_prefixes or []) for gate in before_gates}
+        historical = runtime_prefixes if previous_runtime_prefixes is None else previous_runtime_prefixes
+        identities = {command_identity(list(gate), historical or []) for gate in before_gates}
         before_tokens = {token for gate in before_gates for token in gate}
         for gate in json.loads(new).get("gates", []):
             if command_identity(gate, runtime_prefixes or []) in identities or any(token in approved for token in gate if token.endswith(SOURCE)):
