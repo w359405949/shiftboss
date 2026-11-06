@@ -116,6 +116,24 @@ class FastMergeAcceptance(unittest.TestCase):
         self.assertFalse((self.repo/'unexpected-generation').exists())
         self.assertEqual(len(self.git('show','-s','--format=%P').split()),2)
         self.assertEqual(self.git('status','--porcelain'),'')
+    def test_generation_input_merges_without_receipt_or_running_producer(self):
+        plan = json.loads((self.repo/'regen.json').read_text())
+        plan.pop('steps')
+        command = ['python', '-B', '-m', 'producer']
+        (self.repo/'producer.py').write_text("from pathlib import Path; Path('unexpected-generation').touch()\n")
+        plan['stages'] = [{'name': 'one', 'command': command,
+                           'inputs': ['value.txt'], 'after': []}]
+        (self.repo/CATALOG).write_text(json.dumps(catalog_document(
+            [{'command': command, 'files': ['one.json', 'two.json']}])))
+        (self.repo/'regen.json').write_text(json.dumps(plan))
+        (self.repo/'value.txt').write_text('changed input')
+        self.commit('change generation input without receipt')
+        self.git('switch', '-q', 'main')
+        p = self.merge()
+        self.assertEqual(p.returncode, 0, p.stdout+p.stderr)
+        self.assertFalse((self.repo/'unexpected-generation').exists())
+        self.assertEqual((self.repo/'value.txt').read_text(), 'changed input')
+
     def test_perf_merge_accepts_explicit_post_publication_browser_boundary(self):
         from shiftboss.taskbook import Taskbook, new
         new(self.repo, 'perf-work', kind='perf', branch='incoming')
