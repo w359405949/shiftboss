@@ -13,12 +13,45 @@ from typing import Callable
 TEST_NAME = re.compile(r'^[+-]\s*(?:(?:test|it|describe)\s*\(\s*([\'"`])(.*?)\1|(?:async\s+)?def\s+(test_\w+)\s*\()')
 FRAMEWORK = re.compile(r'^\+.*(?:from\s+[\'"]node:(?:test|assert)(?:/strict)?[\'"]|require\(\s*[\'"]node:(?:test|assert)'
                        r'|^\+\s*(?:import|from)\s+(?:unit' r'test|py' r'test)\b)')
-SOURCE = (".js", ".mjs", ".cjs", ".py")
+SOURCE = (".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".py")
+
+
+def command_identity(gate: list[str], prefixes: list[list[str]]) -> tuple[str, ...]:
+    """只去掉 main 已登记的精确运行前缀；规则参数与未知加载器不归一化。
+
+    [verify].runtime_prefixes 的每项含原执行器及其受理的加载参数，
+    例如 ["node", "--enable-source-maps", "--import", "./runtime/register.mjs"]。
+    shell 仅处理无引号、替换、重定向或控制语法的字面管道，其余保持原样。
+    """
+    for prefix in prefixes:
+        if (not isinstance(prefix, list) or len(prefix) < 2
+                or not all(isinstance(token, str) and token for token in prefix)
+                or prefix[0].startswith("-")):
+            raise ValueError("verify.runtime_prefixes 每项须为执行器及精确参数组成的非空字符串数组")
+    for prefix in prefixes:
+        if gate[:len(prefix)] == prefix and len(gate) > len(prefix):
+            return tuple([prefix[0], *gate[len(prefix):]])
+    if (len(gate) >= 3 and gate[0] in ("bash", "sh") and gate[-2] == "-c"
+            and re.fullmatch(r"[A-Za-z0-9_./=+,:@%\- \t|]+", gate[-1])
+            and all(part.strip() for part in gate[-1].split("|"))):
+        parts = gate[-1].split("|")
+        for index, part in enumerate(parts):
+            leading = part[:len(part) - len(part.lstrip())]
+            body = part[len(leading):]
+            for prefix in prefixes:
+                literal = " ".join(prefix)
+                if (all(re.fullmatch(r"[A-Za-z0-9_./=+,:@%\-]+", token) for token in prefix)
+                        and body.startswith(literal + " ")):
+                    parts[index] = leading + prefix[0] + body[len(literal):]
+                    break
+        return tuple([*gate[:-1], "|".join(parts)])
+    return tuple(gate)
 
 
 def find(git: Callable[..., str], before: str, after: str | None, dirs: list[str],
          plans: tuple[str | None, str | None], approved: set[str], untracked: list[str] | None = None,
-         read: Callable[[str], str] | None = None) -> list[str]:
+         read: Callable[[str], str] | None = None,
+         runtime_prefixes: list[list[str]] | None = None) -> list[str]:
     """`git(*args)` 返回标准输出；`after` 为 None 时比对工作树，`untracked` 为工作树里未跟踪的文件，`read` 读其内容。
 
     `plans` 是改动前后的生成计划文本（读不到为 None）。
@@ -57,9 +90,10 @@ def find(git: Callable[..., str], before: str, after: str | None, dirs: list[str
     if old is not None and new is not None:
         # 按整条闸核对：调用的脚本已登记的闸放行，参数（如规则名）不单独登记。
         before_gates = {tuple(gate) for gate in json.loads(old).get("gates", [])}
+        identities = {command_identity(list(gate), runtime_prefixes or []) for gate in before_gates}
         before_tokens = {token for gate in before_gates for token in gate}
         for gate in json.loads(new).get("gates", []):
-            if tuple(gate) in before_gates or any(token in approved for token in gate if token.endswith(SOURCE)):
+            if command_identity(gate, runtime_prefixes or []) in identities or any(token in approved for token in gate if token.endswith(SOURCE)):
                 continue
             found += [f"闸里新出现 {token}" for token in gate if token not in before_tokens and token not in approved]
     return found

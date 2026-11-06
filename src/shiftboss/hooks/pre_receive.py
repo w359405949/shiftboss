@@ -178,7 +178,8 @@ def new_tests(new: str, settings: dict) -> list[str]:
     shown = lambda ref: (lambda done: None if done.returncode else done.stdout)(git("show", f"{ref}:{plan}"))
     return testguard.find(lambda *args: git(*args).stdout, base, new,
                           list(settings.get("merge", {}).get("assertion_dirs", [])),
-                          (shown(base), shown(new)), set(settings.get("verify", {}).get("approved_tests", [])))
+                          (shown(base), shown(new)), set(settings.get("verify", {}).get("approved_tests", [])),
+                          runtime_prefixes=settings.get("verify", {}).get("runtime_prefixes", []))
 
 
 def forbidden(new: str, settings: dict) -> list[str]:
