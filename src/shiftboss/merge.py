@@ -26,6 +26,7 @@ from pathlib import Path
 
 from shiftboss import regen
 from shiftboss import config
+from shiftboss.typescript_modules import MODULE_SUFFIXES, TYPESCRIPT_SUFFIXES, module_details, runtime_names, source_module
 from shiftboss.outputs import CATALOG, catalog_files, commit_generated, plan_commands
 
 REPO = project_root()
@@ -140,6 +141,14 @@ def check_js_modules(names: list[str]) -> None:
     """一次起一个 node 进程解析全部改动的 JS 模块；未配置 merge.js_parser 时逐个 `node --check`。"""
     if not names:
         return
+    typed = [name for name in names if Path(name).suffix in TYPESCRIPT_SUFFIXES]
+    if typed:
+        for name, entry in typescript_details(typed).items():
+            if entry["errors"]:
+                raise MergeError("TS 模块语法错误：\n  " + "\n  ".join(entry["errors"]))
+    names = [name for name in names if Path(name).suffix not in TYPESCRIPT_SUFFIXES]
+    if not names:
+        return
     parser = config.js_parser()
     if not parser:
         for name in names:
@@ -159,6 +168,13 @@ def check_js_modules(names: list[str]) -> None:
         raise MergeError(f"JS 语法检查失败：\n{result.stderr.strip()[:600]}")
     if result.stdout.strip():
         raise MergeError("JS 模块语法错误：\n  " + result.stdout.strip()[:1200].replace("\n", "\n  "))
+
+
+def typescript_details(names: list[str]) -> dict:
+    try:
+        return module_details(REPO, names)
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        raise MergeError(str(exc)) from exc
 
 
 def check_js_module(path: Path, name: str) -> None:
@@ -292,14 +308,22 @@ process.stdout.write(found.join('\n'));
 
 # 对象字面量重复键不是语法错误，后者静默覆盖前者；手工解合并冲突时两侧各留一份同名键即如此。
 def check_js_duplicate_keys(names: list[str]) -> str:
+    typed = [name for name in names if name and Path(name).suffix in TYPESCRIPT_SUFFIXES
+             and (REPO / name).is_file()
+             and any(name.startswith(prefix) for prefix in config.js_module_prefixes())]
+    for name, entry in typescript_details(typed).items():
+        if entry["errors"]:
+            raise MergeError("TS 模块语法错误：\n  " + "\n  ".join(entry["errors"]))
+        if entry["duplicates"]:
+            raise MergeError(f"TS 对象字面量重复键：{name}：" + "、".join(entry["duplicates"]))
     parser = config.js_parser()
     if not parser:
-        return "未配置 merge.js_parser，跳过"
-    files = [name for name in names if name and Path(name).suffix in (".js", ".mjs")
+        return f"{len(typed)} TS 文件；未配置 merge.js_parser，JS 跳过"
+    files = [name for name in names if name and Path(name).suffix in (".js", ".mjs", ".cjs")
              and (REPO / name).is_file()
              and any(name.startswith(prefix) for prefix in config.js_module_prefixes())]
     if not files:
-        return "0 文件"
+        return f"{len(typed)} 文件"
     node = shutil.which("node")
     if not node:
         raise MergeError("找不到 node，无法检查 JS 对象重复键")
@@ -313,46 +337,68 @@ def check_js_duplicate_keys(names: list[str]) -> str:
     if result.stdout.strip():
         raise MergeError("JS 对象字面量重复键（后者静默覆盖前者，多为解冲突时两侧各留一份）：\n  "
                          + result.stdout.strip().replace("\n", "\n  "))
-    return f"{len(files)} 文件"
+    return f"{len(files) + len(typed)} 文件"
 
 
 def check_js_imports(names: list[str]) -> None:
-    """改动的 JS 模块与引用它们的模块：相对路径的具名导入须在目标模块中导出。
-
-    合并取一边时，另一边留下的导入或被删的导出只有运行时才报错，语法检查看不出来。
-    """
+    """改动源及读取方的相对具名导入；TS 使用编译器解析运行/类型空间。"""
     prefixes = config.js_module_prefixes()
-    touched = [n for n in names if n.endswith((".js", ".mjs")) and any(n.startswith(p) for p in prefixes)]
-    changed = [n for n in touched if (REPO / n).is_file()]
-    importers = set(changed)
-    # 被删的模块也要找引用方：删了生成器而测试还在导入它，只有这样才查得到。
-    basenames = sorted({Path(name).name for name in touched})
+    touched = [n for n in names if n.endswith(MODULE_SUFFIXES) and any(n.startswith(p) for p in prefixes)]
+    importers = {n for n in touched if (REPO / n).is_file()}
+    basenames = sorted({base for name in touched for base in runtime_names(name)})
     if basenames:
         patterns = [arg for base in basenames for arg in ("-e", base)]
         importers.update(git("grep", "-l", "-F", *patterns, "--", *prefixes, check=False).stdout.split())
-    exports: dict[Path, set[str] | None] = {}
-    missing = []
+    typed_sources = {name for name in importers if Path(name).suffix in TYPESCRIPT_SUFFIXES}
+    records = []
     for name in sorted(importers):
         path = REPO / name
-        if not path.is_file() or path.suffix not in (".js", ".mjs"):
+        if not path.is_file() or path.suffix not in MODULE_SUFFIXES or path.suffix in TYPESCRIPT_SUFFIXES:
             continue
         for group, target in named_imports(path.read_text(encoding="utf-8")):
-            module = (path.parent / target).resolve()
-            if not module.is_file():
-                missing.append(f"{name} → {target}（模块不存在）")
-                continue
+            module = source_module((path.parent / target).resolve())
+            records.append((name, target, module,
+                            [(item.split(" as ")[0].strip(), False) for item in group.split(",") if item.strip()]))
+            if module.is_file() and module.suffix in TYPESCRIPT_SUFFIXES:
+                typed_sources.add(module.relative_to(REPO).as_posix())
+    typed = typescript_details(sorted(typed_sources))
+    for name in sorted(importers):
+        if Path(name).suffix not in TYPESCRIPT_SUFFIXES or name not in typed:
+            continue
+        entry = typed[name]
+        if entry["errors"]:
+            raise MergeError("TS 模块语法错误：\n  " + "\n  ".join(entry["errors"]))
+        for row in entry["imports"]:
+            module = Path(row["resolved"]).resolve() if row["resolved"] else (REPO / name).parent / row["target"]
+            records.append((name, row["target"], module,
+                            [(item["name"], item["typeOnly"]) for item in row["names"]]))
+    exports = {}
+    missing = []
+    for name, target, module, imported_names in records:
+        if not module.is_file():
+            missing.append(f"{name} → {target}（模块不存在）")
+            continue
+        if module.suffix in TYPESCRIPT_SUFFIXES:
+            key = module.relative_to(REPO).as_posix()
+            entry = typed.get(key)
+            if entry is None:
+                entry = typescript_details([key])[key]
+            if entry["errors"]:
+                raise MergeError("TS 模块语法错误：\n  " + "\n  ".join(entry["errors"]))
+            for imported, type_only in imported_names:
+                available = set(entry["values"]) | (set(entry["types"]) if type_only else set())
+                unknown_star = entry["star"] or (type_only and entry["typeStar"])
+                if imported not in available and not unknown_star:
+                    missing.append(f"{name} → {target}：{imported}（{'类型' if type_only else '运行'}导出缺失）")
+        else:
             if module not in exports:
                 exports[module] = js_exports(module)
             exported = exports[module]
-            if exported is None:
-                continue
-            for item in group.split(","):
-                item = item.strip()
-                imported = item.split(" as ")[0].strip()
-                if imported and imported not in exported:
+            for imported, _ in imported_names:
+                if exported is not None and imported not in exported:
                     missing.append(f"{name} → {target}：{imported}")
     if missing:
-        raise MergeError("JS 具名导入在目标模块中没有导出：\n  " + "\n  ".join(missing))
+        raise MergeError("JS/TS 具名导入在目标模块中没有导出：\n  " + "\n  ".join(missing))
 
 
 SLOW_CHECK_SECONDS = 60
@@ -382,7 +428,7 @@ def fast_checks(before: str) -> None:
     print(f"快速检查 配置与产物清单: {len(files)} 路径 {time.monotonic()-started:.3f}s", flush=True)
     started = time.monotonic()
     names = git("diff", "--name-only", "--no-renames", "-z", before).stdout.split("\0")
-    counts = {".json": 0, ".py": 0, ".js": 0, ".mjs": 0}
+    counts = {".json": 0, ".py": 0, **{suffix: 0 for suffix in MODULE_SUFFIXES}}
     js_modules: list[str] = []
     for name in names:
         path = REPO / name
