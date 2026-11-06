@@ -69,6 +69,28 @@ class TypeScriptModules(unittest.TestCase):
         with self.assertRaisesRegex(merge.MergeError, 'two.*缺失'):
             merge.check_js_imports(['src/caller.ts', 'src/one.ts'])
 
+    def test_background_gate_scans_unchanged_readers_and_keeps_original_failure(self):
+        from shiftboss.named_imports_check import run
+        self.write('src/owner.ts', 'export interface Shape {size: number}\n')
+        self.write('src/unchanged.ts', "import {Shape} from './owner.js'; console.log(Shape);\n")
+        with self.assertRaisesRegex(merge.MergeError, '运行.*缺失'):
+            run(self.repo)
+        self.write('src/unchanged.ts', "import type {Shape} from './owner.js';\n")
+        run(self.repo)
+
+    def test_background_switch_registers_exact_rule_without_mutating_old_gates(self):
+        from shiftboss.named_imports_check import enabled, verification_gates
+        gates = [['python', '-m', 'existing']]
+        self.assertFalse(enabled(self.repo))
+        self.assertEqual(verification_gates(gates, self.repo), gates)
+        config = self.repo / 'shiftboss.toml'
+        config.write_text(config.read_text() + 'named_imports_background = true\n')
+        self.assertTrue(enabled(self.repo))
+        registered = verification_gates(gates, self.repo)
+        self.assertEqual(len(gates), 1)
+        self.assertEqual(registered[-1][-2:], ['-m', 'shiftboss.named_imports_check'])
+        self.assertEqual(verification_gates(registered, self.repo), registered)
+
     def test_missing_type_export_and_missing_module_are_rejected(self):
         self.write("src/owner.ts", "export interface Shape {size: number}\n")
         self.write("src/caller.ts", "import type {Absent} from './owner.js';\n")

@@ -580,7 +580,8 @@ class Verifier:
                 report.update(test_files=[],tests=0,skipped=[])
             # unittest gates are included in the discovered suite; other gates still run.
             modules={p[:-3].replace('/','.') for p in report.get('test_files',[])}
-            for number, cmd in enumerate(plan['gates']):
+            from shiftboss.named_imports_check import verification_gates
+            for number, cmd in enumerate(verification_gates(plan['gates'], self.workspace)):
                 if 'unittest' in cmd and set(cmd[cmd.index('unittest')+1:]) and set(cmd[cmd.index('unittest')+1:]) <= modules:
                     continue
                 label=f'gate-{number}'

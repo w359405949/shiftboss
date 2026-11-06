@@ -198,6 +198,28 @@ class VerificationAcceptance(unittest.TestCase):
         self.assertEqual(first['failures'][0]['ticket'],last['failures'][0]['ticket'])
         self.assertEqual(len(list((worker.directory/'logs').glob('*-tests.log'))),2)
 
+    def test_slow_named_import_rule_runs_in_normal_gate_with_actual_failure(self):
+        config=self.repo/'shiftboss.toml'
+        config.write_text(config.read_text()+'\n[merge]\njs_module_prefixes = ["src/"]\nnamed_imports_background = true\n')
+        (self.repo/'src').mkdir()
+        (self.repo/'src/owner.js').write_text('export const value = 1;\n')
+        caller=self.repo/'src/caller.js'
+        caller.write_text("import {missing} from './owner.js';\n")
+        broken=self.commit('named import failure');self.git('push','-q','origin','main')
+        worker=Verifier(self.repo,self.workspace)
+        worker.watch(once=True)
+        report=read_state(worker.directory/'runs'/f'{broken}.json')
+        stage=report['stages']['gate-1']
+        self.assertEqual(stage['returncode'],1)
+        self.assertIn('shiftboss.named_imports_check',str(stage['command']))
+        self.assertEqual(len(report['failures']),1,report)
+        caller.write_text("import {value} from './owner.js';\n")
+        fixed=self.commit('fix named import');self.git('push','-q','origin','main')
+        worker.watch(once=True)
+        report=read_state(worker.directory/'runs'/f'{fixed}.json')
+        self.assertEqual(report['stages']['gate-1']['returncode'],0)
+        self.assertEqual(report['failures'],[])
+
     def test_generation_skips_without_generation_input_changes(self):
         """生成输入没动就不重算派生物；动了照常生成。改回无条件生成时 `skipped` 断言失败。"""
         plan=json.loads((self.repo/'regen.json').read_text())

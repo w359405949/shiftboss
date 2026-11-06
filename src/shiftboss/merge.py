@@ -345,13 +345,13 @@ def check_js_duplicate_keys(names: list[str]) -> str:
     return f"{len(files) + len(typed)} 文件"
 
 
-def check_js_imports(names: list[str]) -> None:
+def check_js_imports(names: list[str], *, include_readers: bool = True) -> None:
     """改动源及读取方的相对具名导入；TS 使用编译器解析运行/类型空间。"""
     prefixes = config.js_module_prefixes()
     touched = [n for n in names if n.endswith(MODULE_SUFFIXES) and any(n.startswith(p) for p in prefixes)]
     importers = {n for n in touched if (REPO / n).is_file()}
     basenames = sorted({base for name in touched for base in runtime_names(name)})
-    if basenames:
+    if basenames and include_readers:
         patterns = [arg for base in basenames for arg in ("-e", base)]
         importers.update(git("grep", "-l", "-F", *patterns, "--", *prefixes, check=False).stdout.split())
     typed_sources = {name for name in importers if Path(name).suffix in TYPESCRIPT_SUFFIXES}
@@ -477,8 +477,12 @@ def fast_checks(before: str) -> None:
     check_js_modules(js_modules)
     print(f"快速检查 改动 JSON/Python/JS 语法: {counts} {time.monotonic()-started:.3f}s", flush=True)
     started = time.monotonic()
-    check_js_imports(names)
-    print(f"快速检查 JS 具名导入: {time.monotonic()-started:.3f}s", flush=True)
+    from shiftboss.named_imports_check import enabled as imports_in_background
+    if imports_in_background(REPO):
+        print("具名导入检查：已登记常驻验证全量闸 shiftboss.named_imports_check", flush=True)
+    else:
+        check_js_imports(names)
+        print(f"快速检查 JS 具名导入: {time.monotonic()-started:.3f}s", flush=True)
     started = time.monotonic()
     duplicate_keys = check_js_duplicate_keys(names)
     print(f"快速检查 JS 对象重复键: {duplicate_keys} {time.monotonic()-started:.3f}s", flush=True)
