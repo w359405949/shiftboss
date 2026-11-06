@@ -36,7 +36,7 @@ _SCRIPT = r"""
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {resolve, relative} from 'node:path';
-import {spawnSync} from 'node:child_process';
+import {SourceTextModule} from 'node:vm';
 const [compiler, root, ...requested] = process.argv.slice(2);
 const ts = createRequire(import.meta.url)(compiler);
 const options = {allowJs: true, moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -71,9 +71,12 @@ function inspect(name, scanImports) {
     const emitted = ts.transpileModule(text, {fileName: file, reportDiagnostics: true,
       compilerOptions: {target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext}});
     runtimeSource = ts.createSourceFile(file + '.js', emitted.outputText, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-    const syntax = spawnSync(process.execPath, ['--input-type=module', '--check'],
-      {input: emitted.outputText, encoding: 'utf8'});
-    if (syntax.status !== 0) entry.errors.push(`${name}: ${(syntax.stderr || syntax.error?.message || 'emitted module syntax failed').slice(0, 900)}`);
+    try {
+      // 使用同一 Node 的模块语法解析；不链接、不求值、不逐文件启动子进程。
+      new SourceTextModule(emitted.outputText, {identifier: file});
+    } catch (error) {
+      entry.errors.push(`${name}: ${String(error.message).slice(0, 900)}`);
+    }
   }
   const localTypes = new Set(source.statements.filter(statement =>
     ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement))
@@ -177,7 +180,7 @@ def module_details(repo: Path, names: list[str]) -> dict:
     with tempfile.TemporaryDirectory() as temp:
         script = Path(temp) / "typescript-modules.mjs"
         script.write_text(_SCRIPT, encoding="utf-8")
-        process = subprocess.run([node, str(script), str(compiler), str(repo), *sorted(set(names))],
+        process = subprocess.run([node, '--experimental-vm-modules', str(script), str(compiler), str(repo), *sorted(set(names))],
                                  cwd=repo, text=True, capture_output=True, encoding="utf-8")
     if process.returncode:
         raise ValueError(f"TypeScript 模块解析失败：{process.stderr.strip()[:1200]}")

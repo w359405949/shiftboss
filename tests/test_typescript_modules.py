@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from shiftboss import merge
+from shiftboss import merge, typescript_modules
 
 
 class TypeScriptModules(unittest.TestCase):
@@ -85,6 +85,21 @@ class TypeScriptModules(unittest.TestCase):
         self.write("src/bad.ts", "export const value: = 1;\n")
         with self.assertRaisesRegex(merge.MergeError, "语法"):
             merge.check_js_modules(["src/bad.ts"])
+
+    def test_batch_checks_emitted_syntax_without_linking_or_executing(self):
+        marker = self.repo / 'executed'
+        self.write('src/first.ts', "import {writeFileSync} from 'node:fs';\n"
+                   + f"writeFileSync({str(marker)!r}, 'wrong');\nexport const value: number = 1;\n")
+        self.write('src/second.ts', "import './not-installed.js'; export const other: number = 2;\n")
+        original = subprocess.run
+        with patch.object(typescript_modules.subprocess, 'run', wraps=original) as launch:
+            result = typescript_modules.module_details(self.repo, ['src/first.ts', 'src/second.ts'])
+        self.assertEqual(launch.call_count, 1)
+        self.assertEqual(result['src/first.ts']['errors'], [])
+        self.assertEqual(result['src/second.ts']['errors'], [])
+        self.assertFalse(marker.exists())
+        self.write('src/duplicate.ts', 'export const value = 1; export const value = 2;\n')
+        self.assertTrue(typescript_modules.module_details(self.repo, ['src/duplicate.ts'])['src/duplicate.ts']['errors'])
         self.write("src/bad.ts", "function outer() {export const value: number = 1;}\n")
         with self.assertRaisesRegex(merge.MergeError, "语法"):
             merge.check_js_modules(["src/bad.ts"])
