@@ -828,7 +828,17 @@ def rerun_tip(remote: Path) -> int:
     holder=lock.read_text(encoding='utf-8').strip() if lock.exists() else ''
     if holder.isdigit() and psutil.pid_exists(int(holder)): raise ValueError('常驻验证还在跑；先 shiftboss verify stop --now')
     runs=state_dir(remote)/'runs'
-    chain=git(remote,'rev-list','--first-parent',f'{last}^',check=False).stdout.split()
+    # 元数据提交可沿用前次结果；必须越过实际执行来源，避免“重验”仍只沿用旧失败。
+    source=last; seen=set()
+    while True:
+        if source in seen: raise ValueError('验证报告的沿用来源形成循环，不能重验')
+        seen.add(source)
+        carried=read_state(runs/f'{source}.json').get('carried_from')
+        if not carried: break
+        if not isinstance(carried,str) or not (runs/f'{carried}.json').is_file():
+            raise ValueError('验证报告缺少实际沿用来源，不能重验')
+        source=carried
+    chain=git(remote,'rev-list','--first-parent',f'{source}^',check=False).stdout.split()
     earlier=next((sha for sha in chain if (runs/f'{sha}.json').is_file()),None)
     if not earlier: raise ValueError('第一父链上找不到更早的报告，无法退回')
     index['last']=earlier; index.pop('active',None)
