@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 from shiftboss import config, merge
+from shiftboss.background_commands import commands
 from shiftboss.named_imports_check import verification_gates
 
 class MovedFastCommands(unittest.TestCase):
@@ -15,4 +16,4 @@ class MovedFastCommands(unittest.TestCase):
     def test_bad_registration_refuses_instead_of_silent_skip(self):
         for bad in [True, 'regen.closure_command', []]:
             with patch.object(config,'fast_commands',return_value=[{'name':'bad','run':bad,'background':True}]):
-                with self.assertRaises(ValueError):config.background_fast_commands()
+                with self.assertRaises(ValueError):commands()
