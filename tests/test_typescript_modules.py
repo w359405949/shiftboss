@@ -78,6 +78,19 @@ class TypeScriptModules(unittest.TestCase):
         self.write('src/unchanged.ts', "import type {Shape} from './owner.js';\n")
         run(self.repo)
 
+    def test_declaration_imports_use_type_space_without_weakening_runtime_readers(self):
+        from shiftboss.named_imports_check import run
+        self.write('src/owner.ts', 'export interface Shape {size: number}\n')
+        self.write('src/contracts.d.ts', "import {Shape} from './owner.js'; export type Entry = Shape;\n")
+        run(self.repo)
+        self.write('src/contracts.d.ts', "import {Missing} from './owner.js'; export type Entry = Missing;\n")
+        with self.assertRaisesRegex(merge.MergeError, 'Missing.*类型.*缺失'):
+            run(self.repo)
+        self.write('src/contracts.d.ts', "import {Shape} from './owner.js'; export type Entry = Shape;\n")
+        self.write('src/runtime.ts', "import {Shape} from './owner.js'; console.log(Shape);\n")
+        with self.assertRaisesRegex(merge.MergeError, 'Shape.*运行.*缺失'):
+            run(self.repo)
+
     def test_background_switch_registers_exact_rule_without_mutating_old_gates(self):
         from shiftboss.named_imports_check import enabled, verification_gates
         gates = [['python', '-m', 'existing']]

@@ -89,7 +89,7 @@ function inspect(name, scanImports) {
         if (target.startsWith('.')) entry.imports.push({target,
           resolved: ts.resolveModuleName(target, file, options, ts.sys).resolvedModule?.resolvedFileName ?? null,
           names: bindings.elements.map(value => ({name: value.propertyName?.text ?? value.name.text,
-            typeOnly: Boolean(clause.isTypeOnly || value.isTypeOnly)}))});
+            typeOnly: Boolean(source.isDeclarationFile || clause.isTypeOnly || value.isTypeOnly)}))});
       }
     }
     if (ts.isExportDeclaration(statement)) {
