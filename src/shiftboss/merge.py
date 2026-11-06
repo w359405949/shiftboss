@@ -141,6 +141,11 @@ def check_js_modules(names: list[str]) -> None:
     """一次起一个 node 进程解析全部改动的 JS 模块；未配置 merge.js_parser 时逐个 `node --check`。"""
     if not names:
         return
+    for name in names:
+        try:
+            source_module(REPO / name)
+        except ValueError as exc:
+            raise MergeError(str(exc)) from exc
     typed = [name for name in names if Path(name).suffix in TYPESCRIPT_SUFFIXES]
     if typed:
         for name, entry in typescript_details(typed).items():
@@ -355,8 +360,15 @@ def check_js_imports(names: list[str]) -> None:
         path = REPO / name
         if not path.is_file() or path.suffix not in MODULE_SUFFIXES or path.suffix in TYPESCRIPT_SUFFIXES:
             continue
+        try:
+            source_module(path)
+        except ValueError as exc:
+            raise MergeError(str(exc)) from exc
         for group, target in named_imports(path.read_text(encoding="utf-8")):
-            module = source_module((path.parent / target).resolve())
+            try:
+                module = source_module((path.parent / target).resolve())
+            except ValueError as exc:
+                raise MergeError(str(exc)) from exc
             records.append((name, target, module,
                             [(item.split(" as ")[0].strip(), False) for item in group.split(",") if item.strip()]))
             if module.is_file() and module.suffix in TYPESCRIPT_SUFFIXES:
@@ -370,6 +382,10 @@ def check_js_imports(names: list[str]) -> None:
             raise MergeError("TS 模块语法错误：\n  " + "\n  ".join(entry["errors"]))
         for row in entry["imports"]:
             module = Path(row["resolved"]).resolve() if row["resolved"] else (REPO / name).parent / row["target"]
+            try:
+                module = source_module(module)
+            except ValueError as exc:
+                raise MergeError(str(exc)) from exc
             records.append((name, row["target"], module,
                             [(item["name"], item["typeOnly"]) for item in row["names"]]))
     exports = {}

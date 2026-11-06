@@ -59,18 +59,18 @@ class TypeScriptModules(unittest.TestCase):
         self.write("src/caller.ts", "import type {Absent} from './owner.js';\n")
         with self.assertRaisesRegex(merge.MergeError, "Absent"):
             merge.check_js_imports(["src/caller.ts"])
+        self.write("src/caller.ts", "import {value} from './absent.js';\n")
+        with self.assertRaisesRegex(merge.MergeError, "模块不存在"):
+            merge.check_js_imports(["src/caller.ts"])
 
     def test_local_type_reexport_is_not_a_value_and_default_name_is_private(self):
         self.write("src/owner.ts", "interface Shape {size: number}; export {Shape}; export default function named(): void {}\n")
         self.write("src/caller.ts", "import type {Shape} from './owner.js';\n")
         merge.check_js_imports(["src/caller.ts"])
         for name in ["Shape", "named"]:
-            self.write("src/caller.js", f"import {{{name}}} from './owner.js';\n")
+            self.write("src/value-caller.js", f"import {{{name}}} from './owner.js';\n")
             with self.assertRaisesRegex(merge.MergeError, name):
-                merge.check_js_imports(["src/caller.js"])
-        self.write("src/caller.ts", "import {value} from './absent.js';\n")
-        with self.assertRaisesRegex(merge.MergeError, "模块不存在"):
-            merge.check_js_imports(["src/caller.ts"])
+                merge.check_js_imports(["src/value-caller.js"])
 
     def test_mts_runtime_specifier_and_pure_declarations(self):
         self.write("src/owner.mts", "export const value: number = 1;\n")
@@ -107,3 +107,13 @@ class TypeScriptModules(unittest.TestCase):
         self.write("src/owner.ts", "export const value: number = 1;\n")
         with self.assertRaisesRegex(merge.MergeError, "typescript_parser"):
             merge.check_js_modules(["src/owner.ts"])
+
+    def test_same_js_ts_implementation_is_rejected_for_both_caller_kinds(self):
+        self.write("src/owner.ts", "export const value: number = 1;\n")
+        self.write("src/owner.js", "export const value = 1;\n")
+        self.write("src/caller.js", "import {value} from './owner.js';\n")
+        with self.assertRaisesRegex(merge.MergeError, "双实现"):
+            merge.check_js_imports(["src/caller.js"])
+        self.write("src/caller.ts", "import {value} from './owner.js';\n")
+        with self.assertRaisesRegex(merge.MergeError, "双实现"):
+            merge.check_js_imports(["src/caller.ts"])

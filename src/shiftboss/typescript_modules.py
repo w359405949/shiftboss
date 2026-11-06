@@ -21,11 +21,14 @@ def runtime_names(name: str) -> set[str]:
 
 
 def source_module(path: Path) -> Path:
-    """保留现存运行源；改名后按 TS 输出扩展名定位源，不制造转发壳。"""
-    if path.is_file():
-        return path
-    extension = {".js": ".ts", ".mjs": ".mts", ".cjs": ".cts"}.get(path.suffix)
-    candidate = path.with_suffix(extension) if extension else path
+    """与执行链一样只接受唯一真实源，拒绝同名 JS/TS 双实现。"""
+    pairs = {".js": ".ts", ".mjs": ".mts", ".cjs": ".cts"}
+    reverse = {typed: runtime for runtime, typed in pairs.items()}
+    logical = path.with_suffix(reverse[path.suffix]) if path.suffix in reverse else path
+    extension = pairs.get(logical.suffix)
+    candidate = logical.with_suffix(extension) if extension else logical
+    if candidate != logical and logical.is_file() and candidate.is_file():
+        raise ValueError(f"同名 JS/TS 双实现：{logical}、{candidate}")
     return candidate if candidate.is_file() else path
 
 
@@ -160,6 +163,8 @@ process.stdout.write(JSON.stringify(result));
 def module_details(repo: Path, names: list[str]) -> dict:
     if not names:
         return {}
+    for name in names:
+        source_module(repo / name)
     parser = config.load(repo).get("merge", {}).get("typescript_parser")
     if not parser:
         raise ValueError("TS 源检查须配置 merge.typescript_parser（项目 TypeScript 编译器路径），不能跳过")
