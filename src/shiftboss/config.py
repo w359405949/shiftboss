@@ -19,13 +19,23 @@ def missing(root: Path | None = None) -> Path | None:
     return None if path.exists() else path
 
 
-@lru_cache(maxsize=None)
 def load(root: Path | None = None) -> dict:
-    path = (root or project_root()) / CONFIG_NAME
-    if not path.exists():
+    """每次读取当前文件；只复用相同路径及相同内容的 TOML 解析。"""
+    path = ((root or project_root()) / CONFIG_NAME).resolve()
+    try:
+        contents = path.read_bytes()
+    except FileNotFoundError:
         return {}
-    with path.open("rb") as handle:
-        return tomllib.load(handle)
+    return _parse_config(path, contents)
+
+
+@lru_cache(maxsize=32)
+def _parse_config(path: Path, contents: bytes) -> dict:
+    return tomllib.loads(contents.decode("utf-8"))
+
+
+load.cache_clear = _parse_config.cache_clear
+
 
 
 def _get(section: str, key: str, default, root: Path | None = None):
