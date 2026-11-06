@@ -227,6 +227,22 @@ def docs_drift(repo: Path) -> list[str]:
     return drift(repo, missing=False)
 
 
+def diagnostic_page_lines(repo: Path, lines: list[str]) -> list[str]:
+    """只读分诊归档不承诺修复；保留红页，只纠正简报的修复失败分类。"""
+    from shiftboss.taskbook import Taskbook
+    result = []
+    for line in lines:
+        parts = line.split("｜", 3)
+        if line.startswith("- 页面红 ") and len(parts) == 4 and parts[1] == "修复无效":
+            book = Taskbook.find(repo, parts[2])
+            meta = book.meta() if book else {}
+            if meta.get("子类型") == "triage" and str(meta.get("调度状态", "")).startswith("已归档"):
+                parts[1] = "已分诊，未修复"
+                line = "｜".join(parts)
+        result.append(line)
+    return result
+
+
 def actionable(review, merged, ready, todos, bell, verify, patrol_lines, automerged=(), stale=(), drifted=(), audit=None, draining=()) -> list[str]:
     """派活方现在就能动手的事项：在等条件的不算。Stop 钩子据此拦下收尾，见 `shiftboss.hooks.show_brief`。"""
     items = []
@@ -331,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     # 常驻验证的三条并行支线（D53）：工具闸、页面、定时。
     from shiftboss import patrol
     verify = verify_lines(repo)
-    patrol_lines = patrol.page_lines(git_dir)
+    patrol_lines = diagnostic_page_lines(repo, patrol.page_lines(git_dir))
     stale, draining = stale_lanes(git_dir), draining_lanes(git_dir)
     out += [f"【常驻验证：{switch('verify', repo)}】", *mark_lanes([*verify, *patrol_lines, *patrol.periodic_lines(git_dir)], repo),
             f"- 自动合入：{switch('automerge', repo)}"]
