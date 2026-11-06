@@ -129,19 +129,23 @@ def validate_stages(plan: dict) -> list[dict] | None:
         raise ValueError("stages 与 steps 不能同时声明")
     names: list[str] = []
     commands: set[tuple[str, ...]] = set()
+    from shiftboss import config
+    from shiftboss.testguard import command_identity
+    prefixes = config.load(REPO).get("verify", {}).get("runtime_prefixes", [])
     for stage in stages:
         name, command = stage.get("name"), stage.get("command")
         if not isinstance(name, str) or not STAGE_NAME.fullmatch(name) or name in names:
             raise ValueError(f"阶段名须唯一且为小写短横线：{name!r}")
-        python = (isinstance(command, list) and len(command) >= 4 and command[:3] == ["python", "-B", "-m"]
-                  and "-m" not in command[4:] and "-c" not in command[3:])
-        node = (isinstance(command, list) and len(command) >= 2 and command[0] == "node"
-                and command[1].endswith((".mjs", ".js")) and not command[1].startswith(("-", "/"))
-                and not any(arg.startswith("-e") or arg in ("-p", "--eval", "--print") for arg in command[1:]))
-        if (not (python or node) or not all(isinstance(arg, str) for arg in command)
-                or any(SHELL_CHARS.search(arg) for arg in command)):
+        valid = isinstance(command, list) and all(isinstance(arg, str) for arg in command)
+        logical = list(command_identity(command, prefixes)) if valid else []
+        python = (len(logical) >= 4 and logical[:3] == ["python", "-B", "-m"]
+                  and "-m" not in logical[4:] and "-c" not in logical[3:])
+        node = (len(logical) >= 2 and logical[0] == "node"
+                and logical[1].endswith((".mjs", ".js")) and not logical[1].startswith(("-", "/"))
+                and not any(arg.startswith("-e") or arg in ("-p", "--eval", "--print") for arg in logical[1:]))
+        if (not (python or node) or any(SHELL_CHARS.search(arg) for arg in logical)):
             raise ValueError(f"{name}: 命令只能是 python -B -m <一个模块> [参数] 或 node <仓库内脚本> [参数]，不串接其他命令")
-        if tuple(command) in commands:
+        if tuple(logical) in commands:
             raise ValueError(f"{name}: 与其他阶段命令重复")
         inputs = stage.get("inputs")
         if not isinstance(inputs, list) or not inputs or not all(isinstance(p, str) and p for p in inputs):
@@ -150,7 +154,7 @@ def validate_stages(plan: dict) -> list[dict] | None:
         if not isinstance(after, list) or not set(after) <= set(names):
             raise ValueError(f"{name}: after 只能引用排在它前面的阶段：{after}")
         names.append(name)
-        commands.add(tuple(command))
+        commands.add(tuple(logical))
     return stages
 
 
@@ -332,7 +336,10 @@ def run_all(label: str, cmds: list[list[str]], *, stop_on_failure: bool = False,
             env[REPORT_ENV] = str(report_path)
         try:
             # Node 生产端没有 Python 的审计钩子：它只声明产物，写了什么由这里前后对照工作树独立观察。
-            before = changed_files() if report_path and command[0] == "node" else None
+            from shiftboss import config
+            from shiftboss.testguard import command_identity
+            logical = command_identity(command, config.load(REPO).get("verify", {}).get("runtime_prefixes", []))
+            before = changed_files() if report_path and logical[0] == "node" else None
             if outputs is not None:
                 proc = run_producer(cmd, env)
             else:

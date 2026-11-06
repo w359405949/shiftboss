@@ -16,29 +16,62 @@ FRAMEWORK = re.compile(r'^\+.*(?:from\s+[\'"]node:(?:test|assert)(?:/strict)?[\'
 SOURCE = (".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".py")
 
 
+def prepared_runtime(prefix: list[str]) -> tuple[str, list[str]] | None:
+    """主线精确登记的 Bash 准备边界；末项为 exec 消费者的 $0 身份。
+
+    准备正文不从待检命令推断，也不单独授权；仅完整匹配已登记前缀时生效。
+    管道可复用同一准备正文一次，但其余各腿仍须是原有字面命令。
+    """
+    if prefix[:4] != ["bash", "-o", "pipefail", "-c"] or len(prefix) != 6:
+        return None
+    script, executable = prefix[4:]
+    if not script.endswith(' "$@"') or ' && exec ' not in script:
+        return None
+    preparation, invocation = script[:-len(' "$@"')].rsplit(' && exec ', 1)
+    if not preparation or not re.fullmatch(r"[A-Za-z0-9_./=+,:@%\- \t]+", invocation):
+        return None
+    runtime = invocation.split()
+    if not runtime or runtime[0] != executable or executable != "node":
+        return None
+    return preparation, runtime
+
+
 def command_identity(gate: list[str], prefixes: list[list[str]]) -> tuple[str, ...]:
     """只去掉 main 已登记的精确运行前缀；规则参数与未知加载器不归一化。
 
     [verify].runtime_prefixes 的每项含原执行器及其受理的加载参数，
     例如 ["node", "--enable-source-maps", "--import", "./runtime/register.mjs"]。
-    shell 仅处理无引号、替换、重定向或控制语法的字面管道，其余保持原样。
+    Bash 准备前缀须精确登记，末项给出原执行器；未登记 shell 不归一化。
+    管道只剥离该精确准备正文，其余无引号、替换或控制语法的各腿保留。
     """
     for prefix in prefixes:
         if (not isinstance(prefix, list) or len(prefix) < 2
                 or not all(isinstance(token, str) and token for token in prefix)
                 or prefix[0].startswith("-")):
             raise ValueError("verify.runtime_prefixes 每项须为执行器及精确参数组成的非空字符串数组")
+        if prefix[0] in ("bash", "sh") and prepared_runtime(prefix) is None:
+            raise ValueError("shell 运行前缀须为精确登记的准备正文、exec 与原 Node 身份")
     for prefix in prefixes:
         if gate[:len(prefix)] == prefix and len(gate) > len(prefix):
-            return tuple([prefix[0], *gate[len(prefix):]])
+            prepared = prepared_runtime(prefix)
+            return tuple([prepared[1][0] if prepared else prefix[0], *gate[len(prefix):]])
+    script = gate[-1] if gate else ""
+    literal_prefixes = []
+    stripped_preparation = False
+    for prefix in prefixes:
+        prepared = prepared_runtime(prefix)
+        literal_prefixes.append(prepared[1] if prepared else prefix)
+        if prepared and not stripped_preparation and script.startswith(prepared[0] + " && "):
+            script = script[len(prepared[0] + " && "):]
+            stripped_preparation = True
     if (len(gate) >= 3 and gate[0] in ("bash", "sh") and gate[-2] == "-c"
-            and re.fullmatch(r"[A-Za-z0-9_./=+,:@%\- \t|]+", gate[-1])
-            and all(part.strip() for part in gate[-1].split("|"))):
-        parts = gate[-1].split("|")
+            and re.fullmatch(r"[A-Za-z0-9_./=+,:@%\- \t|]+", script)
+            and all(part.strip() for part in script.split("|"))):
+        parts = script.split("|")
         for index, part in enumerate(parts):
             leading = part[:len(part) - len(part.lstrip())]
             body = part[len(leading):]
-            for prefix in prefixes:
+            for prefix in literal_prefixes:
                 literal = " ".join(prefix)
                 if (all(re.fullmatch(r"[A-Za-z0-9_./=+,:@%\-]+", token) for token in prefix)
                         and body.startswith(literal + " ")):
