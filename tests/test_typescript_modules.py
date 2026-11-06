@@ -54,6 +54,21 @@ class TypeScriptModules(unittest.TestCase):
         with self.assertRaisesRegex(merge.MergeError, "运行.*缺失"):
             merge.check_js_imports(["src/caller.ts"])
 
+    def test_import_owners_are_batched_and_next_check_reads_changed_exports(self):
+        for name in ('one', 'two', 'three'):
+            self.write(f'src/{name}.ts', f'export const {name}: number = 1;\n')
+        self.write('src/caller.ts', "import {one} from './one.js';\n")
+        self.write('src/one.ts', "import {two} from './two.js';\n"
+                   "import {three} from './three.js';\nexport const one: number = 1;\n")
+        with patch.object(merge, 'typescript_details', wraps=merge.typescript_details) as parse:
+            merge.check_js_imports(['src/caller.ts', 'src/one.ts'])
+        self.assertEqual(parse.call_count, 2)
+        self.assertEqual(set(parse.call_args_list[1].args[0]),
+                         {'src/two.ts', 'src/three.ts'})
+        self.write('src/two.ts', 'export const changed: number = 1;\n')
+        with self.assertRaisesRegex(merge.MergeError, 'two.*缺失'):
+            merge.check_js_imports(['src/caller.ts', 'src/one.ts'])
+
     def test_missing_type_export_and_missing_module_are_rejected(self):
         self.write("src/owner.ts", "export interface Shape {size: number}\n")
         self.write("src/caller.ts", "import type {Absent} from './owner.js';\n")

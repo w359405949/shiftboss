@@ -388,6 +388,13 @@ def check_js_imports(names: list[str]) -> None:
                 raise MergeError(str(exc)) from exc
             records.append((name, row["target"], module,
                             [(item["name"], item["typeOnly"]) for item in row["names"]]))
+    # TS callers discover additional export owners after the first parse. Parse
+    # those owners together, rather than launching a compiler per import edge.
+    pending = {module.relative_to(REPO).as_posix() for _, _, module, _ in records
+               if module.is_file() and module.suffix in TYPESCRIPT_SUFFIXES
+               and module.relative_to(REPO).as_posix() not in typed}
+    if pending:
+        typed.update(typescript_details(sorted(pending)))
     exports = {}
     missing = []
     for name, target, module, imported_names in records:
@@ -396,9 +403,7 @@ def check_js_imports(names: list[str]) -> None:
             continue
         if module.suffix in TYPESCRIPT_SUFFIXES:
             key = module.relative_to(REPO).as_posix()
-            entry = typed.get(key)
-            if entry is None:
-                entry = typescript_details([key])[key]
+            entry = typed[key]
             if entry["errors"]:
                 raise MergeError("TS 模块语法错误：\n  " + "\n  ".join(entry["errors"]))
             for imported, type_only in imported_names:
