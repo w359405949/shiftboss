@@ -32,6 +32,21 @@ class DiagnosticPageSummary(unittest.TestCase):
     def test_active_triage_is_not_treated_as_completed(self):
         self.assertEqual(self.classify({'子类型': 'triage', '调度状态': '待派'}), [self.line])
 
+    def test_archived_audit_only_sweep_is_not_a_failed_product_repair(self):
+        meta = {'子类型': 'sweep', '类别': '核对', '调度状态': '已归档',
+                '写入范围': ['shiftboss/plans/owner/']}
+        rows = self.classify(meta)
+        self.assertEqual(rows, ['- 页面红 3｜已分诊，未修复｜owner｜route-a、route-b、route-c'])
+        self.assertEqual(brief.actionable([], [], [], [], [], [], rows), [])
+
+    def test_sweep_with_product_or_unknown_scope_remains_actionable(self):
+        for scopes in ([], ['engine/'], ['shiftboss/plans/other/'],
+                       ['shiftboss/plans/owner/', 'engine/fix.js'],
+                       ['shiftboss/plans/owner/../../engine/'], 'shiftboss/plans/owner/'):
+            with self.subTest(scopes=scopes):
+                self.assertEqual(self.classify({'子类型': 'sweep', '类别': '核对',
+                    '调度状态': '已归档', '写入范围': scopes}), [self.line])
+
     def test_unowned_new_red_and_other_work_are_never_hidden(self):
         lines = ['- 页面红 1｜无人负责｜new-route', '- 工具闸红｜source｜无人负责']
         with patch('shiftboss.taskbook.Taskbook.find') as find:

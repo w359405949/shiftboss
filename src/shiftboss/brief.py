@@ -236,7 +236,12 @@ def diagnostic_page_lines(repo: Path, lines: list[str]) -> list[str]:
         if line.startswith("- 页面红 ") and len(parts) == 4 and parts[1] == "修复无效":
             book = Taskbook.find(repo, parts[2])
             meta = book.meta() if book else {}
-            if meta.get("子类型") == "triage" and str(meta.get("调度状态", "")).startswith("已归档"):
+            scopes = meta.get("写入范围") or []
+            readonly_sweep = (meta.get("子类型") == "sweep" and meta.get("类别") == "核对"
+                and isinstance(scopes, list) and bool(scopes)
+                and all(isinstance(scope, str) and ".." not in scope.split("/")
+                    and scope.startswith(f"shiftboss/plans/{parts[2]}/") for scope in scopes))
+            if (meta.get("子类型") == "triage" or readonly_sweep) and str(meta.get("调度状态", "")).startswith("已归档"):
                 parts[1] = "已分诊，未修复"
                 line = "｜".join(parts)
         result.append(line)
