@@ -34,6 +34,16 @@ def bell_lines() -> list[str]:
     return lines
 
 
+def recovery_lines(git_dir) -> list[str]:
+    """自动恢复失败必须在简报可见，不能只留后台日志。"""
+    from shiftboss.state import read_state
+    directory = config.control_dir(git_dir)
+    report = read_state(directory / "auto-recover.json")
+    if report.get("status") == "failed":
+        return [f"- 自动恢复失败｜退出 {report.get('returncode')}｜{directory / 'auto-recover.log'}"]
+    return []
+
+
 def publication_lines(git_dir) -> list[str]:
     """最近一次发布（派生物与源一致）的提交，及 main 领先它几个第一父链提交：发布落后时先排除这一因。
 
@@ -334,7 +344,7 @@ def main(argv: list[str] | None = None) -> int:
     if slowest := patrol.slowest_lines(git_dir):
         out += ["【性能】", *slowest]
     bell = bell_lines()
-    out += ["【门铃】", *bell, f"- 空闲审查：{switch('idle_audit', repo)}", f"- 会话恢复：{switch('session_recover', repo)}",
+    out += ["【门铃】", *bell, f"- 空闲审查：{switch('idle_audit', repo)}", f"- 会话恢复：{switch('session_recover', repo)}", *recovery_lines(git_dir),
             "【机器】", *machine_lines(git_dir)]
     automerged = automerge.unreviewed(git_dir)
     from shiftboss import idle_audit

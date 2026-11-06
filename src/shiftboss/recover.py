@@ -25,11 +25,29 @@ from __future__ import annotations
 from shiftboss.paths import project_root
 
 import argparse
+from contextlib import contextmanager
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = project_root()
+
+
+@contextmanager
+def recovery_lock(repo: Path):
+    """手工入口与事件入口共用进程锁；崩溃自动释放，不以遗留文件判忙。"""
+    from shiftboss.config import control_dir
+    from shiftboss.inbox import origin_git_dir
+    from shiftboss.doorbell import lock_nowait
+    directory = control_dir(origin_git_dir(repo), repo)
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / "recovery.lock").open("a+b") as handle:
+        try:
+            lock_nowait(handle)
+        except OSError:
+            yield False
+        else:
+            yield True
 
 def still_running(state: str, mode: str | None) -> bool:
     """这条线该在执行但进程退出或执行中断；`mode` 不参与判断。"""
@@ -70,18 +88,26 @@ def running_lines(repo: Path) -> list[tuple[str, str]]:
 def restart_resident(check: bool) -> None:
     """常驻验证与常驻巡检：旧锁在、进程没了＝重启前在跑、被中断；没有锁的不起（那是有意停的）。"""
     import psutil
-    from shiftboss import patrol, verify
-    for title, lock, argv in (
-            ("常驻验证", verify.state_dir(verify.origin(REPO)) / "worker.lock", ["shiftboss.verify", "start", "--publish"]),
-            ("常驻巡检", patrol.state_dir(verify.origin(REPO)) / "worker.lock", ["shiftboss.patrol", "start"])):
-        if not lock.exists():
+    from shiftboss import config, native, patrol, verify
+    remote = verify.origin(REPO)
+    for title, directory, lock_name, stop_name, key, module, command, workspace in (
+            ("常驻验证", verify.state_dir(remote), "worker.lock", "stop", "verify", "shiftboss.verify", "watch", "verify"),
+            ("常驻巡检", patrol.state_dir(remote), "worker.lock", "stop", "patrol", "shiftboss.patrol", "watch", patrol.NAME),
+            ("定时支线", patrol.state_dir(remote), "periodic.lock", "periodic-stop", "periodic", "shiftboss.patrol", "periodic", patrol.NAME)):
+        lock = directory / lock_name
+        if not lock.exists() or (directory / stop_name).exists() or not config.automation(key, REPO):
             continue
         holder = lock.read_text(encoding="utf-8").strip()
         if holder.isdigit() and psutil.pid_exists(int(holder)):
             continue
         print(f"{title} PID {holder or '无'} 已不在{'（只检查）' if check else '，重起'}")
         if not check:
-            subprocess.run([sys.executable, "-B", "-m", *argv], cwd=REPO)
+            # 每次只起意外退出的这一条，不能借 start 顺带复活有意停止的兄弟支线。
+            argv = [sys.executable, "-B", "-m", module, command, "--repo", str(REPO),
+                    "--workspace", str(config.copies_dir(remote) / workspace)]
+            if key == "verify":
+                argv.append("--publish")
+            print(f"{title} 已起：PID {native.spawn(argv, str(REPO))}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -90,22 +116,35 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="只报告，不动手")
     args = ap.parse_args(argv)
+    from shiftboss.state import require_dispatcher
+    require_dispatcher()
     from shiftboss import config
     if not args.check and not config.automation("session_recover", REPO):
         print("自动任务「会话恢复」已关（shiftboss.toml [automation] session_recover），只报告不动手")
         args.check = True
 
-    restart_resident(args.check)
+    if args.check:
+        return run(True)
+    with recovery_lock(REPO) as acquired:
+        if not acquired:
+            print("已有恢复任务在执行，本次不重复启动。")
+            return 0
+        return run(False)
+
+
+def run(check: bool, output=None) -> int:
+    """调用方已取得恢复锁；所有入口复用同一收件箱判据。"""
+    restart_resident(check)
     lines = running_lines(REPO)
     if not lines:
         print(f"shiftboss recover：{REPO.parent} 没有该在执行但进程退出或执行中断的线。")
         return 0
 
-    print(f"shiftboss recover：{REPO.parent}{'（只检查）' if args.check else ''}")
+    print(f"shiftboss recover：{REPO.parent}{'（只检查）' if check else ''}")
     print(f"该在执行但进程退出或执行中断的 {len(lines)} 条：")
     for name, state in lines:
         print(f"  {name:<40} {state}")
-    if args.check:
+    if check:
         print("\n--check，没有接回。去掉它就逐条 resume。")
         return 0
 
@@ -113,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     failed = False
     for name, _state in lines:
         result = subprocess.run([sys.executable, "-B", "-m", "shiftboss.dispatch",
-                                 name, "--recover"])
+                                 name, "--recover"], stdout=output, stderr=output, cwd=REPO)
         if result.returncode:
             print(f"{name} 恢复失败，退出 {result.returncode}；保留现场，不能报已恢复。", file=sys.stderr)
             failed = True

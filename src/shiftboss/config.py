@@ -41,7 +41,7 @@ AUTOMATION = (
     ("automerge", "自动合入", "定时支线", "满足条件的交回由巡检合并、推送、归档"),
     ("todo_bell", "待办提醒", "门铃", "待办条件满足时敲门铃"),
     ("idle_audit", "空闲审查", "门铃", "连续两次门铃无事可做且 main 前进时提议全项目审查"),
-    ("session_recover", "会话恢复", "SessionStart 钩子（recover）", "重启被中断的常驻进程、接回进程没了的执行方"),
+    ("session_recover", "会话恢复", "SessionStart／Interrupt／UserPromptSubmit 钩子", "按收件箱状态接回意外退出的原会话；主动取消和停机不恢复"),
 )
 
 

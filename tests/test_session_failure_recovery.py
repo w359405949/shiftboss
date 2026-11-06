@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import nullcontext, redirect_stdout, redirect_stderr
 from unittest.mock import patch
 
 from shiftboss import dispatch, inbox, recover, config
@@ -22,6 +22,10 @@ def event(kind, stamp=FAILED, turn='one', **extra):
 
 class SessionFailureRecovery(unittest.TestCase):
     def setUp(self):
+        for mock in (patch.object(recover, 'recovery_lock', return_value=nullcontext(True)),
+                     patch('shiftboss.state.require_dispatcher')):
+            mock.start()
+            self.addCleanup(mock.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.rollout = Path(self.temp.name) / 'rollout.jsonl'
