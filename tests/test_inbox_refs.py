@@ -45,3 +45,28 @@ class SurveyRefBatchTests(unittest.TestCase):
         result = self.survey('malformed\ncodex/missing\tdate\t' + 'e' * 40, {}, {}, has_main=False)
         self.assertEqual(result[0]['state'], '没有任务书')
         self.assertEqual(result[0]['tip'], 'e' * 40)
+
+
+class DeliverySessionNoteTests(unittest.TestCase):
+    def test_progress_delivery_does_not_hide_parked_session(self):
+        row = {"name": "live", "signal": "进展"}
+        with patch.object(inbox, 'session_state', return_value='停着'):
+            note = inbox.delivery_session_note(row, {"session_id": "session"}, Path('/bare'))
+        self.assertIn('会话停在等输入', note)
+        self.assertIn('须续派或说明等待', note)
+
+    def test_running_session_is_reported_without_resume_instruction(self):
+        with patch.object(inbox, 'session_state', return_value='在干活'):
+            note = inbox.delivery_session_note({"name": "live", "signal": "进展"}, {}, Path('/bare'))
+        self.assertEqual(note, '会话：在干活')
+
+    def test_closed_and_unstarted_sessions_do_not_trigger_resume(self):
+        with patch.object(inbox, 'session_state') as state:
+            self.assertEqual(inbox.delivery_session_note({"name": "live"}, {"closed": True}, Path('/bare')), '会话已关闭')
+            self.assertEqual(inbox.delivery_session_note({"name": "live"}, None, Path('/bare')), '未派会话')
+        state.assert_not_called()
+
+    def test_stopped_delivery_keeps_ordinary_review_state(self):
+        with patch.object(inbox, 'session_state', return_value='停着'):
+            note = inbox.delivery_session_note({"name": "live", "signal": "停下"}, {}, Path('/bare'))
+        self.assertEqual(note, '会话：停着')

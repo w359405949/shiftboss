@@ -311,6 +311,18 @@ def session_state(name: str, row: dict | None, entry: dict | None,
     return "做完了没推" if stopped else "在干活"
 
 
+def delivery_session_note(row: dict, entry: dict | None, git_dir: Path) -> str:
+    """Keep branch delivery signals distinct from the plugin's current session state."""
+    if entry is None:
+        return "未派会话"
+    if entry.get("closed"):
+        return "会话已关闭"
+    state = session_state(row["name"], row, entry, git_dir)
+    if state == "停着" and row.get("signal") == "进展":
+        return "会话停在等输入（交回标进展；须续派或说明等待）"
+    return "会话：" + state
+
+
 def _later(a: str | None, b: str | None) -> bool:
     """`a` 是否晚于 `b`。**必须解析成时刻再比，不能比字符串**——
     台账写的是本地带偏移（`+08:00`），会话 rollout 写的是 `Z`，
@@ -821,8 +833,9 @@ def main(argv: list[str] | None = None) -> int:
               "不要 sleep、重复读门铃日志或轮询收件箱。后台任务继续执行。")
     report_merged_idle(repo, git_dir, rows)
     from shiftboss.dispatch import load_sessions
+    ledger = load_sessions()
     print("\n".join(stale_derived_warning(repo, git_dir)
-                        + unattended_warning(repo, git_dir, load_sessions())))
+                        + unattended_warning(repo, git_dir, ledger)))
     stalled = stalled_lines(repo, git_dir, live)
     if stalled:
         print(f"\n在干活、超过 {STALE_HOURS:g} 小时没动静或进程已退出的 {len(stalled)} 条"
@@ -836,7 +849,8 @@ def main(argv: list[str] | None = None) -> int:
         group = [r for r in rows if r["state"] == state]
         if not group:
             continue
-        print(f"\n{state} {len(group)} 条：")
+        title = "分支进展" if state == "进行中" else state
+        print(f"\n{title} {len(group)} 条：")
         for r in group:
             mark = "" if r["total"] == 0 else f"{r['ticked']}/{r['total']} 完成"
             if r["pending"]:
@@ -848,9 +862,10 @@ def main(argv: list[str] | None = None) -> int:
             from shiftboss.dispatch import keeps_going
             busy = "连做" if keeps_going(r["mode"]) else "单轮"
             print(f"  {r['name']:<40} {mark:<20} {r['pushed'][:16]}"
-                  f"  {r['copy'].split(chr(92))[-1]:<18} {busy}{seen}")
-    print("\n**「单轮」= 它推完就停了，等你核完再派下一轮。** 核完别忘了派，"
-          "不然它就一直空转。")
+                  f"  {r['copy'].split(chr(92))[-1]:<18} {busy}{seen}"
+                  f"  {delivery_session_note(r, ledger.get(r['name']), git_dir)}")
+    print("\n分支进展来自交回标记；是否正在执行看每行会话状态。"
+          "交回标进展而会话停着的，核对后正常续派；确有前置则说明等待。")
     return 0
 
 
