@@ -537,7 +537,7 @@ def claim_reason(remote: Path, reason: str, taskbook: str) -> None:
     print(f"已按原因认领「{reason}」→ {taskbook}（该线归档后失效）")
 
 
-def red_state(remote: Path, item: dict, claimed: dict | None) -> tuple[str, str]:
+def red_state(remote: Path, item: dict, claimed: dict | None, *, route: str | None = None) -> tuple[str, str]:
     """→ (状态词, 负责线)。只有「无人负责」与「修复无效」要开线；「待发布」等常驻验证发布。"""
     if not claimed or claimed.get("first") != item["first"]:
         taskbook = rule_taskbook(remote, item.get("reasons") or reason_lines(item["log"]), item["first"])
@@ -545,6 +545,10 @@ def red_state(remote: Path, item: dict, claimed: dict | None) -> tuple[str, str]
             return "无人负责", ""
         claimed = {"taskbook": taskbook, "first": item["first"]}
     taskbook = claimed["taskbook"]
+    from shiftboss import page_followups
+    reviewed = read_state(page_followups.store(remote)) or {}
+    if route is not None and page_followups.matches(reviewed.get(route), item):
+        return "已审，待新证据", taskbook
     info = owner(remote, taskbook)
     if info is None:
         return "任务书缺失", taskbook
@@ -580,7 +584,7 @@ def page_lines(remote: Path, detail: bool = False) -> list[str]:
     groups: dict[tuple[str, str], list[str]] = {}
     reds = sorted(state.get("red", {}).items(), key=lambda pair: pair[1]["first"])
     for route, item in reds:
-        groups.setdefault(red_state(remote, item, claims.get(route)), []).append(route)
+        groups.setdefault(red_state(remote, item, claims.get(route), route=route), []).append(route)
     # 摘要只列前几条路由，全量见 `shiftboss patrol status`。
     shown = 5
     for (word, taskbook), routes in groups.items():
