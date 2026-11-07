@@ -425,11 +425,15 @@ def check_js_imports(names: list[str], *, include_readers: bool = True) -> None:
 SLOW_CHECK_SECONDS = 60
 
 
-def fast_checks(before: str) -> None:
+def fast_checks(before: str, *, task: str | None = None) -> None:
     """Only structural checks; freshness and semantic correctness belong to verification.
 
     合并必须保持快速：这里只放语法、配置与产物清单这类秒级结构检查；规则扫描、生成、浏览器等可能卡住的检查一律放常驻验证。
     """
+    from shiftboss.task_checks import commands
+    book, _ = commands(REPO, task)
+    if book:
+        print(f"快速检查任务：{book.name}（任务书清单）", flush=True)
     started = time.monotonic()
     generation_plan()
     # 未归层的测试文件会让常驻验证的生成阶段整体失败；在引入它的那次合并就拦下。
@@ -495,7 +499,7 @@ def fast_checks(before: str) -> None:
     else:
         duplicate_keys = check_js_duplicate_keys(names)
         print(f"快速检查 JS 对象重复键: {duplicate_keys} {time.monotonic()-started:.3f}s", flush=True)
-    run_fast_commands(names)
+    run_fast_commands(names, task=book.name if book else None)
     check_new_tests(before)
     assertion_delta(before)
 
@@ -529,13 +533,17 @@ def run_until_idle(command: list[str]) -> tuple[int, str]:
         return code, output.read()
 
 
-def run_fast_commands(names: list[str]) -> None:
+def run_fast_commands(names: list[str], *, task: str | None = None) -> None:
     """项目登记的秒级结构检查；只放静态分析，生成、构建与浏览器检查归常驻验证。"""
     from shiftboss.background_commands import commands
     commands()  # 与常驻登记共用校验，坏配置不静默跳过。
-    for item in config.fast_commands():
+    from shiftboss.task_checks import commands as task_commands, matches
+    book, items = task_commands(REPO, task)
+    for item in items:
         name, run, when = item["name"], item["run"], item.get("when")
-        if when and not any(path.startswith(prefix) for path in names if path for prefix in when):
+        if not matches(item, names):
+            if book:
+                print(f"快速检查 {name}：本次改动未命中 when，未执行", flush=True)
             continue
         if item.get("background", False):
             print(f"结构检查 {name}：已登记常驻验证完整命令", flush=True)
@@ -630,7 +638,7 @@ def assertion_delta(before: str) -> None:
               "没有交代就是放宽，按合同退回。", flush=True)
 
 
-def finish(before: str) -> None:
+def finish(before: str, *, task: str | None = None) -> None:
     """
     仍有冲突会拒绝。
     """
@@ -639,7 +647,10 @@ def finish(before: str) -> None:
     if git("ls-files", "--unmerged").stdout:
         raise MergeError("仍有未解决的冲突")
     target = git("rev-parse", "MERGE_HEAD").stdout.strip()
-    fast_checks(before)
+    from shiftboss.task_checks import task_for_target
+    book = task_for_target(REPO, target, task)
+    chosen = book.name if book else None
+    fast_checks(before, task=chosen) if chosen else fast_checks(before)
     git("add", "--all")
     show(git("commit", "--no-edit"))
     if git("status", "--porcelain=v1", "--untracked-files=all").stdout:
@@ -1353,6 +1364,7 @@ def main(argv: list[str] | None = None) -> int:
     """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("ref", nargs="?", help="合入当前分支的单个 ref（先自行 fetch）")
+    ap.add_argument("--task", help="明确本次合入所用的任务快检清单；默认按提交归属识别")
     ap.add_argument("--finish", metavar="BEFORE", help="用新进程检查并提交已经解决冲突的合并")
     ap.add_argument("--regen", metavar="BEFORE",
                     help="合并时生成失败、修好后重试：按 BEFORE..HEAD 的改动重新生成并快进并入派生物")
@@ -1397,7 +1409,7 @@ def main(argv: list[str] | None = None) -> int:
             if not os.environ.get("MM_WORKFLOW_MERGE"):
                 acquire_lock("finish")
                 holding = True
-            finish(args.finish)
+            finish(args.finish, task=args.task) if args.task else finish(args.finish)
             clear_merge_failed(REPO)
             return 0
         if not args.ref:
@@ -1409,6 +1421,12 @@ def main(argv: list[str] | None = None) -> int:
         files = derived_files()
         before = git("rev-parse", "HEAD").stdout.strip()
         target = git("rev-parse", "--verify", "--end-of-options", f"{args.ref}^{{commit}}").stdout.strip()
+        from shiftboss.task_checks import task_for_target, selected
+        already_present = git("merge-base", "--is-ancestor", target, "HEAD", check=False).returncode == 0
+        task_book = None if already_present else task_for_target(REPO, target, args.task)
+        chosen = task_book.name if task_book else None
+        if task_book:
+            selected(REPO, task_book)  # 坏清单在 Git 合并前拒绝，不能留下待完成合并。
         # 没 fetch 时远端跟踪 ref 可能还停在核对退回的旧 tip 上；退回过的提交一律不合。
         from shiftboss.inbox import load_rejected, origin_git_dir
         try:
@@ -1482,8 +1500,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         # A merge may replace this module, its dependencies or the configuration.
         # Never keep evaluating the pre-merge implementation against the new tree.
-        result = subprocess.run([sys.executable, "-B", "-m", "shiftboss.merge",
-                                 "--finish", before], cwd=REPO)
+        finish_command = [sys.executable, "-B", "-m", "shiftboss.merge", "--finish", before]
+        if chosen:
+            finish_command += ["--task", chosen]
+        result = subprocess.run(finish_command, cwd=REPO)
         if result.returncode:
             raise MergeError(f"合并后快速检查/提交失败（退出码 {result.returncode}）")
         return 0

@@ -74,6 +74,7 @@ def dependency_list(value) -> list[str]:
     return [item for item in re.split(r"[,，、\s]+", str(value or "")) if item and item != "—"]
 
 
+FAST_CHECKS_KEY = "快速检查"
 SCOPE_KEY = "写入范围"
 EFFORT_KEY = "推理强度"
 
@@ -421,6 +422,7 @@ def new(repo: Path, name: str, *, copy: str = "", kind: str, branch: str = "") -
         "分支": branch or f"codex/{name}",
         "你的工作副本": copy_path(repo, copy) if copy else "",
         "轮次": 0,
+        FAST_CHECKS_KEY: None,
     }
     meta.update(json.loads((template / META).read_text(encoding="utf-8")))
     directory.mkdir(parents=True)
@@ -556,6 +558,7 @@ def main(argv=None) -> int:
     ap.add_argument("--kind", choices=KINDS, default=None,
                     help="new：子类型（shiftboss/templates/ 下的目录名）；见 TEMPLATE.md 开头那张表")
     ap.add_argument("--apply", action="store_true", help="migrate：真切；不加只打印怎么切")
+    ap.add_argument("--checks", action="store_true", help="show：列出本任务交付前快检的实际命令")
     ap.add_argument("--file", choices=["contract", "rounds", "delivery"], default=None,
                     help="show：打印该文件全文；在办与归档都按名字找到，引用处只写任务书名")
     args = ap.parse_args(argv)
@@ -577,7 +580,7 @@ def main(argv=None) -> int:
         if not pairs:
             print("set 要 --field 键=值")
             return 2
-        for key in (SCOPE_KEY, *DEPENDENCY_KEYS):
+        for key in (SCOPE_KEY, FAST_CHECKS_KEY, *DEPENDENCY_KEYS):
             if key in pairs:
                 try:
                     pairs[key] = dependency_list(pairs[key])
@@ -615,6 +618,13 @@ def main(argv=None) -> int:
                 if missing:
                     print(f"{key}里的任务书不存在（条件写成 publish:<提交> 等）：{'、'.join(missing)}")
                     return 2
+        if FAST_CHECKS_KEY in pairs:
+            from shiftboss.task_checks import selected
+            try:
+                selected(repo, book, pairs[FAST_CHECKS_KEY])
+            except ValueError as error:
+                print(str(error))
+                return 2
         book.set_meta(**pairs)
         print(f"{args.name}：" + "；".join(f"{k} → {v}" for k, v in pairs.items()))
         return 0
@@ -625,6 +635,14 @@ def main(argv=None) -> int:
     if book is None:
         print(f"没有这份任务书：{args.name}")
         return 2
+    if args.checks:
+        from shiftboss.task_checks import describe
+        try:
+            print(describe(repo, book.name))
+        except ValueError as error:
+            print(str(error))
+            return 2
+        return 0
     if args.file:
         if not book.is_dir:
             print(f"{book.name} 是单文件布局：{book.path.relative_to(repo)}")
@@ -637,6 +655,12 @@ def main(argv=None) -> int:
     print(f"{book.name}  布局={'目录' if book.is_dir else '单文件'}  "
           f"归档={book.archived}  轮次标题级别={book.round_level()}  路径={book.path.relative_to(repo)}")
     print(json.dumps(book.meta(), ensure_ascii=False, indent=2))
+    if not book.archived:
+        from shiftboss.task_checks import describe
+        try:
+            print(describe(repo, book.name))
+        except ValueError as error:
+            print(f"快速检查清单待补：{error}")
     return 0
 
 

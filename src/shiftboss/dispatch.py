@@ -1196,6 +1196,14 @@ def _main(argv: list[str] | None = None) -> int:
               + "背景里写「用户原话：「……」」原样引用；查不到原话的是派活方推断，写成「派活方定」。")
         return 2
 
+    from shiftboss.task_checks import describe
+    try:
+        check_plan = describe(REPO, book.name)
+    except ValueError as error:
+        print(f"派活拒绝：{error}")
+        return 2
+    print(check_plan)
+
     # 额度有限，先看还有没有位置。**和下面那条工作树检查一样，必须紧挨着派活命令。**
     denied = over_quota(args.taskbook, ledger, executor)
     if denied:
@@ -1244,6 +1252,8 @@ def _main(argv: list[str] | None = None) -> int:
         # （它进去看得见 contract / rounds / delivery 各是谁的），单文件给那个 .md。
         taskbook=book.rel(REPO) + ("/" if book.is_dir else ""))
 
+    prompt += (f"\n交付前按任务书表头「快速检查」执行 `shiftboss check --task {book.name}`；"
+               f"用 `shiftboss taskbook show {book.name} --checks` 查看实际命令。\n")
     print(f"任务书 : {args.taskbook}（状态 {status}）")
     print(f"执行方 : {executor}")
     print(f"副本   : {copy}")
