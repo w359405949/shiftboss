@@ -386,8 +386,20 @@ def check_js_imports(names: list[str], *, include_readers: bool = True) -> None:
                 module = source_module(module)
             except ValueError as exc:
                 raise MergeError(str(exc)) from exc
-            records.append((name, row["target"], module,
-                            [(item["name"], item["typeOnly"]) for item in row["names"]]))
+            imported = [(item["name"], item["typeOnly"]) for item in row["names"]]
+            if module.name.endswith((".d.ts", ".d.mts", ".d.cts")):
+                # TS resolves an adjacent declaration for types; it cannot stand
+                # in for the implementation named by a runtime import.
+                values = [item for item in imported if not item[1]]
+                if values:
+                    try:
+                        runtime = source_module(((REPO / name).parent / row["target"]).resolve())
+                    except ValueError as exc:
+                        raise MergeError(str(exc)) from exc
+                    records.append((name, row["target"], runtime, values))
+                imported = [item for item in imported if item[1]]
+            if imported:
+                records.append((name, row["target"], module, imported))
     # TS callers discover additional export owners after the first parse. Parse
     # those owners together, rather than launching a compiler per import edge.
     pending = {module.relative_to(REPO).as_posix() for _, _, module, _ in records

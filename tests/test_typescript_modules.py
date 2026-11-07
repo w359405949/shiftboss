@@ -91,6 +91,40 @@ class TypeScriptModules(unittest.TestCase):
         with self.assertRaisesRegex(merge.MergeError, 'Shape.*运行.*缺失'):
             run(self.repo)
 
+    def test_adjacent_declarations_do_not_replace_runtime_export_owner(self):
+        for runtime, declaration in [('js', 'ts'), ('mjs', 'mts')]:
+            with self.subTest(runtime=runtime):
+                self.write(f'src/library.{runtime}',
+                           "throw new Error('must not execute'); export function parse() {}\n")
+                self.write(f'src/library.d.{declaration}',
+                           'export declare function parse(): void; export interface Options {size: number}\n'
+                           'export declare function missing(): void;\n')
+                self.write('src/caller.ts',
+                           f"import {{parse as read, type Options}} from './library.{runtime}';\n")
+                merge.check_js_imports(['src/caller.ts'], include_readers=False)
+                self.write('src/caller.ts', f"import {{missing}} from './library.{runtime}';\n")
+                with self.assertRaisesRegex(merge.MergeError, 'missing'):
+                    merge.check_js_imports(['src/caller.ts'], include_readers=False)
+                self.write('src/caller.ts', f"import {{Options}} from './library.{runtime}';\n")
+                with self.assertRaisesRegex(merge.MergeError, 'Options'):
+                    merge.check_js_imports(['src/caller.ts'], include_readers=False)
+                self.write('src/caller.ts', f"import type {{Absent}} from './library.{runtime}';\n")
+                with self.assertRaisesRegex(merge.MergeError, 'Absent.*类型.*缺失'):
+                    merge.check_js_imports(['src/caller.ts'], include_readers=False)
+
+    def test_declarations_cannot_stand_in_for_missing_or_duplicate_runtime_sources(self):
+        self.write('src/library.d.mts', 'export declare function parse(): void;\n')
+        self.write('src/caller.ts', "import type {parse} from './library.mjs';\n")
+        merge.check_js_imports(['src/caller.ts'], include_readers=False)
+        self.write('src/caller.ts', "import {parse} from './library.mjs';\n")
+        with self.assertRaisesRegex(merge.MergeError, '模块不存在'):
+            merge.check_js_imports(['src/caller.ts'], include_readers=False)
+        self.write('src/library.mjs', 'export const parse = () => {};\n')
+        merge.check_js_imports(['src/caller.ts'], include_readers=False)
+        self.write('src/library.mts', 'export function parse(): void {}\n')
+        with self.assertRaisesRegex(merge.MergeError, '双实现'):
+            merge.check_js_imports(['src/caller.ts'], include_readers=False)
+
     def test_background_switch_registers_exact_rule_without_mutating_old_gates(self):
         from shiftboss.named_imports_check import enabled, verification_gates
         gates = [['python', '-m', 'existing']]
