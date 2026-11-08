@@ -2,6 +2,38 @@
 
 恢复由事件触发，调用现有 `recover`；不靠派活方读日志后手动敲「继续」。
 
+## 压缩后的规则与当前工作
+
+Codex 的 `SessionStart` 在 `source=compact` 时于压缩后的下一次模型请求前运行，
+`source=resume` 对应恢复会话。上下文刷新与异常任务恢复是两个处理器：前者重读规则，
+后者接回异常退出的任务，互不以对方成功作为验收结论。
+
+```sh
+python -m shiftboss.hooks.context_refresh --repo /absolute/project --install-hooks /absolute/workspace/.codex/hooks.json
+```
+
+安装幂等并保留现有处理器，只在 `compact|resume` 上运行；不同时登记 `PostCompact`，
+以免一次压缩重复注入。范围限定为已认领甲方及项目根或父目录，执行副本不读取甲方私有状态。
+处理器每次从磁盘读取 `AGENTS.md`、项目 `README.md` 和协作规则第 2.1、5.1、2.0、4.3 节，
+将原文与未关闭任务的当前任务书入口、待办及正常验证阶段一并作为 `additionalContext` 返回。
+不另外维护手写交接摘要，不扫描历史会话、归档日志或运行耗时收件箱。
+
+恢复后的首个工作步骤须读当前相关任务的合同、最新轮次与交回，并用 `inbox list`、`brief`
+核对实际现场后再合并、派发、归档或清理。台账未关闭不等于实际执行，阶段快照不代表产品通过；
+最新用户指令优先，旧门铃按当前台账去重。尚未注入的文档、缺失章节与读取失败明确列出，
+不切掉半条规则，也不把读不到当作没有约束。
+
+上下文输出上限为 16000 UTF-8 字节，宿主设置有限的 `additionalContextLimit`；
+超出部分保留权威入口，相关操作前再读取，避免把整个历史重新放回上下文。
+`control/context-refresh.json` 只记录事件、文件身份和未完整注入项，`emitted` 仅表示处理器已输出，
+不证明宿主实际加载或模型已遵守。安装不修改 hook 信任记录；尚未获宿主信任时不能报自动生效。
+有限验收见 `tests/test_context_refresh_hooks.py`：压缩／恢复触发、实时重读、角色隔离、
+状态损坏可见、输出有界与幂等安装均须成立。
+
+事件协议依据：[OpenAI Hooks 文档](https://learn.chatgpt.com/docs/hooks)。
+
+## 自动任务恢复事件
+
 | 事件 | 自动行为 |
 | --- | --- |
 | `SessionStart`（startup、resume、clear、compact） | 登记的甲方检查并接回意外退出的后台任务 |
