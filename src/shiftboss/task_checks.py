@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 from shiftboss import config
-from shiftboss.taskbook import Taskbook, FAST_CHECKS_KEY, dependency_list
+from shiftboss.taskbook import Taskbook, FAST_CHECKS_KEY, EXTRA_CHECKS_KEY, dependency_list, extra_check_list
 
 
 class TaskChecksError(ValueError):
@@ -125,6 +125,8 @@ def resolve(repo: Path, task: str | None = None) -> Taskbook | None:
 
 def commands(repo: Path, task: str | None = None) -> tuple[Taskbook | None, list[dict]]:
     book = resolve(repo, task)
+    if book:
+        extra_check_list(book.meta().get(EXTRA_CHECKS_KEY, []))
     return book, selected(repo, book) if book else list(registry(repo).values())
 
 
@@ -146,4 +148,15 @@ def describe(repo: Path, task: str | None = None, paths: list[str] | None = None
         lines.append(f'- {item["name"]}（{where}）：{command}')
     if not items:
         lines.append('无额外项目快检脚本（快速检查：[]）。')
+    if book:
+        meta = book.meta()
+        extras = extra_check_list(meta.get(EXTRA_CHECKS_KEY, []))
+        lines.append('专项检查（开发中按需执行，不由交付快检自动运行）：')
+        if extras:
+            lines.extend('- ' + item for item in extras)
+        else:
+            lines.append('无；仅执行交付快检。' if EXTRA_CHECKS_KEY in meta else
+                         '旧任务未声明，按不追加处理；需要时由派活方补录。')
+        lines.append('清单外不自行追加严格类型/Program、反例或运行矩阵；'
+                     '完成标准与已有红不自动增加检查。临时排查只定位实际问题，不扩成交付判据。')
     return '\n'.join(lines)

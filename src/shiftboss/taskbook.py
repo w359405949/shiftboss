@@ -75,8 +75,21 @@ def dependency_list(value) -> list[str]:
 
 
 FAST_CHECKS_KEY = "快速检查"
+EXTRA_CHECKS_KEY = "专项检查"
 SCOPE_KEY = "写入范围"
 EFFORT_KEY = "推理强度"
+
+
+def extra_check_list(value) -> list[str]:
+    """保留每项的入口、参数范围与停止条件；不按空白拆成检查名。"""
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value):
+        raise ValueError("专项检查须为非空说明组成的 JSON 字符串数组；无额外检查填 []")
+    result = [item.strip() for item in value]
+    if len(result) != len(set(result)):
+        raise ValueError("专项检查不能重复登记")
+    return result
 
 
 def out_of_scope(name: str, meta: dict, paths: list[str]) -> list[str]:
@@ -423,6 +436,7 @@ def new(repo: Path, name: str, *, copy: str = "", kind: str, branch: str = "") -
         "你的工作副本": copy_path(repo, copy) if copy else "",
         "轮次": 0,
         FAST_CHECKS_KEY: None,
+        EXTRA_CHECKS_KEY: [],
     }
     meta.update(json.loads((template / META).read_text(encoding="utf-8")))
     directory.mkdir(parents=True)
@@ -558,7 +572,7 @@ def main(argv=None) -> int:
     ap.add_argument("--kind", choices=KINDS, default=None,
                     help="new：子类型（shiftboss/templates/ 下的目录名）；见 TEMPLATE.md 开头那张表")
     ap.add_argument("--apply", action="store_true", help="migrate：真切；不加只打印怎么切")
-    ap.add_argument("--checks", action="store_true", help="show：列出本任务交付前快检的实际命令")
+    ap.add_argument("--checks", action="store_true", help="show：列出交付快检与本任务允许的专项检查")
     ap.add_argument("--file", choices=["contract", "rounds", "delivery"], default=None,
                     help="show：打印该文件全文；在办与归档都按名字找到，引用处只写任务书名")
     args = ap.parse_args(argv)
@@ -580,6 +594,12 @@ def main(argv=None) -> int:
         if not pairs:
             print("set 要 --field 键=值")
             return 2
+        if EXTRA_CHECKS_KEY in pairs:
+            try:
+                pairs[EXTRA_CHECKS_KEY] = extra_check_list(pairs[EXTRA_CHECKS_KEY])
+            except (ValueError, TypeError) as error:
+                print(f"{EXTRA_CHECKS_KEY}列表参数无效：{error}")
+                return 2
         for key in (SCOPE_KEY, FAST_CHECKS_KEY, *DEPENDENCY_KEYS):
             if key in pairs:
                 try:
