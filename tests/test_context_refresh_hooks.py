@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -78,6 +79,52 @@ class ContextRefreshHooks(unittest.TestCase):
         self.assertIn('inbox list', text)
         state.write_state(self.control / 'verification/index.json', {'active': {'commit': 'later', 'stage': 'generate'}})
         self.assertIn('later', self.context())
+
+    def test_phase_is_prioritized_and_reread_after_compact_and_resume(self):
+        phase = self.control / 'PHASE.md'
+        phase.write_text('# TS 转写推进\n目标：成批交付，不逐 helper 造样本。\n')
+        first = self.context()
+        self.assertIn(phase.read_text().strip(), first)
+        self.assertLess(first.index('[当前阶段目标：'), first.index('[台账未关闭'))
+        phase.write_text('# 下一阶段\n目标：核实际发布。\n')
+        second = self.context({**self.payload, 'source': 'resume'})
+        self.assertNotIn('不逐 helper 造样本', second)
+        self.assertIn('核实际发布', second)
+        record = state.read_state(self.control / 'context-refresh.json')['phase']
+        self.assertEqual(record['sha256'], hashlib.sha256(phase.read_bytes()).hexdigest())
+        self.assertTrue(record['fullyEmitted'])
+
+    def test_cleared_or_deleted_phase_does_not_reuse_a_previous_goal(self):
+        phase = self.control / 'PHASE.md'
+        phase.write_text('# Old strategy\n')
+        self.assertIn('Old strategy', self.context())
+        phase.write_text('')
+        self.assertNotIn('Old strategy', self.context())
+        self.assertEqual(state.read_state(self.control / 'context-refresh.json')['phase']['status'], 'cleared')
+        phase.unlink()
+        self.assertNotIn('Old strategy', self.context())
+        self.assertEqual(state.read_state(self.control / 'context-refresh.json')['phase']['status'], 'unset')
+
+    def test_large_phase_keeps_an_explicit_full_read_requirement_not_a_partial_strategy(self):
+        phase = self.control / 'PHASE.md'
+        phase.write_text('phase-complete-rule-' * 2000)
+        text = self.context()
+        self.assertNotIn('phase-complete-rule-', text)
+        self.assertIn(str(phase), text)
+        self.assertIn('先读取全文', text)
+        self.assertLessEqual(len(text.encode()), context_refresh.MAX_BYTES)
+        record = state.read_state(self.control / 'context-refresh.json')
+        self.assertFalse(record['phase']['fullyEmitted'])
+        self.assertIn('当前阶段目标：' + str(phase), record['omitted'])
+
+    def test_phase_read_failure_is_explicit(self):
+        (self.control / 'PHASE.md').write_bytes(b'\xff')
+        text = self.context()
+        self.assertIn('阶段目标', text)
+        self.assertIn('读取失败', text)
+        record = state.read_state(self.control / 'context-refresh.json')
+        self.assertEqual(record['phase']['status'], 'error')
+        self.assertTrue(any('PHASE.md' in error for error in record['errors']))
 
     def test_large_documents_are_explicitly_omitted_not_half_rules(self):
         sentinel = 'important-complete-rule-'

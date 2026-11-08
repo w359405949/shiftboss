@@ -11,6 +11,7 @@ import shlex
 import subprocess
 import sys
 
+from shiftboss import phase
 from shiftboss.hooks.auto_recover import authorized
 from shiftboss.state import read_state, write_state
 
@@ -34,6 +35,8 @@ def build(repo: Path, directory: Path) -> tuple[str, dict]:
     """只读取一次磁盘现场；超限保留原文件入口，不切掉半条规则。"""
     parts = [
         "ShiftBoss 上下文恢复：以下内容重新读取自当前磁盘，不采用压缩摘要中的旧状态。\n"
+        f"当前阶段目标见 {directory / phase.NAME}；本次原件未完整注入时，先读取全文。"
+        "阶段结束或用户调整时更新或清空它，不沿用旧阶段策略。"
         "继续合并、派发、归档或清理前：先读取 AGENTS.md、README.md 与本次相关任务的"
         "当前 contract／最新轮次／delivery；运行一次 inbox list（读全含⚠）和 brief，"
         "涉及异常恢复再用 recover --check。以下台账未关闭不等于实际在跑，"
@@ -41,12 +44,26 @@ def build(repo: Path, directory: Path) -> tuple[str, dict]:
     ]
     record = {"documents": [], "omitted": [], "errors": []}
 
-    def add(label: str, text: str) -> None:
+    def add(label: str, text: str) -> bool:
         block = f"\n\n[{label}]\n{text}"
         if len(("".join(parts) + block).encode("utf-8")) <= MAX_BYTES - 1000:
             parts.append(block)
+            return True
         else:
             record["omitted"].append(label)
+            return False
+
+    # 阶段目标先于台账和规则正文，避免任务多时把当前工作取舍挤出上下文。
+    current = phase.read(directory)
+    record["phase"] = current.identity()
+    if current.status == "active":
+        record["documents"].append({"path": str(current.path), "sha256": current.sha256})
+        record["phase"]["fullyEmitted"] = add(f"当前阶段目标：{current.path}", current.text.strip())
+    elif current.status == "error":
+        record["errors"].append(f"{current.path}：{current.error}")
+        add("当前阶段目标", f"读取失败：{current.path}；相关操作前重新读取，不按旧摘要推断目标。")
+    else:
+        add("当前阶段目标", f"{current.path}：{'未设置' if current.status == 'unset' else '已清空'}；不沿用旧阶段目标。")
 
     # 先保留小的实时入口；不在钩子中启动耗时收件箱或探测执行方。
     sessions = read_state(directory / "sessions.json")

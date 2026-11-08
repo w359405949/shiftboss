@@ -12,13 +12,17 @@ from pathlib import Path
 
 import psutil
 
-from shiftboss import config, decisions, doorbell, inbox
+from shiftboss import config, decisions, doorbell, inbox, phase
 from shiftboss.paths import project_root
 
 
 
 def clock(epoch: float) -> str:
     return datetime.fromtimestamp(epoch).strftime("%H:%M")
+
+
+def phase_lines(git_dir) -> list[str]:
+    return phase.summary(phase.read(config.control_dir(git_dir)))
 
 
 def bell_lines() -> list[str]:
@@ -186,7 +190,7 @@ def stale_lanes(git_dir: Path) -> list[str]:
     import shiftboss
     # 只由派活方命令行调用、常驻进程不导入的模块改了不算；执行方启动器（workers/）只有派活与收件箱用。
     派活侧 = {"brief", "dispatch", "todo", "inbox", "decisions", "puzzle", "need", "check", "bootstrap",
-             "docs_install", "recover", "cli", "native", "idle_audit", "doorbell"}
+             "docs_install", "recover", "cli", "native", "idle_audit", "doorbell", "phase"}
     package = Path(shiftboss.__file__).parent
     newest = max(path.stat().st_mtime for path in package.rglob("*.py")
                  if path.stem not in 派活侧
@@ -290,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
     repo = project_root()
     git_dir = inbox.origin_git_dir(repo)
     rows, ledger, _active, _live = inbox.status_rows(repo, git_dir)
-    out = []
+    out = phase_lines(git_dir)
     # 待你定始终显示：空时写「无」，用户据此区分「确实没有」与「没显示出来」。
     asks = decisions.pending(repo)
     out.append(f"【待你定】{len(asks)}" if asks else "【待你定】：无")
