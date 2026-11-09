@@ -2,6 +2,12 @@
 
 恢复由事件触发，调用现有 `recover`；不靠派活方读日志后手动敲「继续」。
 
+闭包命令失败时，`regen` 将本次完整 stdout／stderr、实际命令、源码提交与退出码保存到
+`control/verification/closure-failures/<唯一运行目录>/result.json`，日志使用项目输出协议。
+没有 origin 的独立源码目录写入自身 `out/generation-checks/closure-failures/`。
+报错同时显示首段与尾段并引用该原件；先读该次原件定位首错误，不凭下游 JSON 尾栈猜因，
+也不为恢复已保存的输出重新执行整条闭包。后续失败使用新目录，不覆盖旧结果。
+
 ## 压缩后的规则与当前工作
 
 阶段性的目标、优先级与检查取舍放在甲方私有 `control/PHASE.md`，不放项目架构文档，

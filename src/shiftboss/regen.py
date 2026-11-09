@@ -189,7 +189,34 @@ def with_closure(stages: list[dict], root: Path | None = None) -> list[dict]:
         command = [sys.executable, *command[1:]]
     done = subprocess.run(command, cwd=root or REPO, capture_output=True, text=True, encoding="utf-8", timeout=600)
     if done.returncode:
-        raise ValueError(f"闭包命令失败（{' '.join(command)}）：{done.stderr.strip()[-500:]}")
+        from shiftboss import process_output
+        from shiftboss.verify import origin
+        cwd = root or REPO
+        remote = subprocess.run(["git", "remote", "get-url", "origin"], cwd=cwd,
+                                capture_output=True, text=True)
+        directory = (config.control_dir(origin(cwd), cwd) / "verification" / "closure-failures"
+                     if remote.returncode == 0 else cwd / "out" / "generation-checks" / "closure-failures")
+        directory.mkdir(parents=True, exist_ok=True)
+        # Every failure owns its original output; a later retry cannot overwrite it.
+        record = Path(tempfile.mkdtemp(prefix=f"{time.time_ns()}-", dir=directory))
+        outputs = {}
+        for name, text in (("stdout", done.stdout), ("stderr", done.stderr)):
+            data = text.encode("utf-8")
+            path = record / f"{name}.log"
+            with process_output.writer(path, cwd) as output:
+                output.write(data)
+            outputs[name] = {"path": str(path), "bytes": len(data),
+                             "sha256": hashlib.sha256(data).hexdigest()}
+        source = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd,
+                                capture_output=True, text=True)
+        (record / "result.json").write_text(json.dumps({
+            "command": command, "cwd": str(cwd), "returncode": done.returncode,
+            "source": source.stdout.strip() if source.returncode == 0 else None,
+            "outputs": outputs,
+        }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        error = done.stderr.strip() or done.stdout.strip()
+        preview = error if len(error) <= 1500 else error[:1000] + "\n…\n" + error[-500:]
+        raise ValueError(f"闭包命令失败（{' '.join(command)}）：{preview}\n完整原件：{record / 'result.json'}")
     closure = json.loads(done.stdout)
     unknown = set(closure) - {stage["name"] for stage in stages}
     if unknown:
