@@ -187,8 +187,15 @@ def with_closure(stages: list[dict], root: Path | None = None) -> list[dict]:
         return stages
     if command[0] == "python":
         command = [sys.executable, *command[1:]]
-    done = subprocess.run(command, cwd=root or REPO, capture_output=True, text=True, encoding="utf-8", timeout=600)
-    if done.returncode:
+    timed_out = None
+    try:
+        done = subprocess.run(command, cwd=root or REPO, capture_output=True, text=True, encoding="utf-8", timeout=600)
+        stdout, stderr, returncode = done.stdout, done.stderr, done.returncode
+    except subprocess.TimeoutExpired as error:
+        timed_out = error
+        # TimeoutExpired retains raw bytes even when run(text=True) was used.
+        stdout, stderr, returncode = error.stdout or b"", error.stderr or b"", None
+    if timed_out is not None or returncode:
         from shiftboss import process_output
         from shiftboss.verify import origin
         cwd = root or REPO
@@ -200,8 +207,8 @@ def with_closure(stages: list[dict], root: Path | None = None) -> list[dict]:
         # Every failure owns its original output; a later retry cannot overwrite it.
         record = Path(tempfile.mkdtemp(prefix=f"{time.time_ns()}-", dir=directory))
         outputs = {}
-        for name, text in (("stdout", done.stdout), ("stderr", done.stderr)):
-            data = text.encode("utf-8")
+        for name, text in (("stdout", stdout), ("stderr", stderr)):
+            data = text if isinstance(text, bytes) else text.encode("utf-8")
             path = record / f"{name}.log"
             with process_output.writer(path, cwd) as output:
                 output.write(data)
@@ -210,14 +217,20 @@ def with_closure(stages: list[dict], root: Path | None = None) -> list[dict]:
         source = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd,
                                 capture_output=True, text=True)
         (record / "result.json").write_text(json.dumps({
-            "command": command, "cwd": str(cwd), "returncode": done.returncode,
+            "command": command, "cwd": str(cwd), "returncode": returncode,
+            "timed_out": timed_out is not None,
+            "timeout_seconds": timed_out.timeout if timed_out is not None else None,
             "source": source.stdout.strip() if source.returncode == 0 else None,
             "outputs": outputs,
         }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        error = done.stderr.strip() or done.stdout.strip()
+        error = stderr.strip() or stdout.strip()
+        if isinstance(error, bytes):
+            error = error.decode("utf-8", errors="replace")
         preview = error if len(error) <= 1500 else error[:1000] + "\n…\n" + error[-500:]
+        if timed_out is not None:
+            raise ValueError(f"闭包命令超时（{timed_out.timeout} 秒，{' '.join(command)}）：{preview}\n完整原件：{record / 'result.json'}") from timed_out
         raise ValueError(f"闭包命令失败（{' '.join(command)}）：{preview}\n完整原件：{record / 'result.json'}")
-    closure = json.loads(done.stdout)
+    closure = json.loads(stdout)
     unknown = set(closure) - {stage["name"] for stage in stages}
     if unknown:
         raise ValueError(f"闭包命令给出未知阶段：{sorted(unknown)}")

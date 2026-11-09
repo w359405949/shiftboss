@@ -11,6 +11,35 @@ from shiftboss import process_output, regen
 
 
 class ClosureFailureEvidence(unittest.TestCase):
+    def test_timeout_keeps_partial_raw_output_and_has_no_exit_code(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            command = [sys.executable, "-c",
+                       "import sys,time; print('STARTED',flush=True); "
+                       "sys.stderr.buffer.write(b'FIRST_DIAGNOSTIC\\n\\xc3'); "
+                       "sys.stderr.flush(); time.sleep(30)"]
+            run = subprocess.run
+
+            def short_timeout(args, **kwargs):
+                if args == command:
+                    kwargs["timeout"] = 1
+                return run(args, **kwargs)
+
+            with patch("shiftboss.config.closure_command", return_value=command), \
+                    patch("shiftboss.regen.subprocess.run", side_effect=short_timeout), \
+                    patch.object(process_output, "adapter", return_value=None):
+                with self.assertRaisesRegex(ValueError, "闭包命令超时") as failure:
+                    regen.with_closure([], root)
+            path, = (root / "out/generation-checks/closure-failures").glob("*/result.json")
+            result = json.loads(path.read_text())
+            self.assertTrue(result["timed_out"])
+            self.assertEqual(result["timeout_seconds"], 1)
+            self.assertIsNone(result["returncode"])
+            self.assertEqual(Path(result["outputs"]["stdout"]["path"]).read_bytes(), b"STARTED\n")
+            self.assertEqual(Path(result["outputs"]["stderr"]["path"]).read_bytes(), b"FIRST_DIAGNOSTIC\n\xc3")
+            self.assertIn("FIRST_DIAGNOSTIC", str(failure.exception))
+            self.assertIn(str(path), str(failure.exception))
+
     def test_original_error_and_outputs_survive_later_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
