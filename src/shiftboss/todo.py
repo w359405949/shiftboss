@@ -12,7 +12,7 @@
     省略              立即可做
 
 用法：
-    shiftboss todo add "要做的事" [--when publish:abc123] [--line 任务书名]
+    shiftboss todo add "要做的事" [--when publish:abc123] [--line 任务书名,另一任务书名]
     shiftboss todo done <编号>
     shiftboss todo list
 """
@@ -63,7 +63,7 @@ def add(remote: Path, text: str, when: str | None = None, line: str | None = Non
                   *(int(item["id"][1:]) for item in items)]) + 1
     item = {"id": f"T{number}", "text": text, "when": when, "created": time.time(), "notified": False}
     if line:
-        item["line"] = line
+        item["line"] = ",".join(dict.fromkeys(name.strip() for name in line.split(",") if name.strip()))
     items.append(item)
     save(remote, items, number)
     return item["id"]
@@ -129,10 +129,10 @@ def condition(remote: Path, repo: Path, when: str | None) -> tuple[bool, str]:
 
 
 def line_waits(repo: Path, remote: Path, name: str) -> list[str]:
-    """关联到该线、条件未满足的待办：状态摘要据此把线列入排队，不算待核对（如读取方等生成器段发布）。"""
+    """关联到该线的提醒；一项可关联多线，不阻止核对新交回。"""
     waits = []
     for item in load(remote):
-        if item.get("line") == name:
+        if name in (item.get("line") or "").split(","):
             ok, wait = condition(remote, repo, item.get("when"))
             if not ok:
                 waits.append(f"{item['id']} {wait}")
@@ -164,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=["add", "done", "list"])
     parser.add_argument("value", nargs="?", help="add：要做的事；done：编号")
     parser.add_argument("--when", help="触发条件，见上")
-    parser.add_argument("--line", help="关联的任务书名：条件未满足时状态摘要把该线列入排队")
+    parser.add_argument("--line", help="关联的任务书名，多个用逗号分隔；提醒未到期不阻止核对新交回")
     args = parser.parse_args(argv)
     from shiftboss.verify import origin
     repo = project_root()
