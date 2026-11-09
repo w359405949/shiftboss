@@ -65,6 +65,17 @@ class CurrentPhase(unittest.TestCase):
         self.assertIn('- 更新于｜未填写（不是实时进度）', lines)
         self.assertTrue(all(len(line) < 200 for line in lines[:-1]))
 
+    def test_focus_and_immediate_priority_remain_a_short_dispatcher_summary(self):
+        self.path.write_text('# 类型集成\n目标：完成严格验收。\n'
+                             '重心：公共类型对齐，各领域并行收敛。\n'
+                             '当务之急：恢复检查链路。\n\n'
+                             '内部执行策略和逐项任务不放简报。\n')
+        lines = phase.summary(phase.read(self.control))
+        self.assertIn('- 重心｜公共类型对齐，各领域并行收敛。', lines)
+        self.assertIn('- 当务之急｜恢复检查链路。', lines)
+        self.assertNotIn('- 目标｜完成严格验收。', lines)
+        self.assertNotIn('内部执行策略', '\n'.join(lines))
+
     def test_invalid_or_oversized_document_is_visible_not_an_empty_goal(self):
         for raw in (b'\xff', b'x' * (phase.MAX_DOCUMENT_BYTES + 1)):
             with self.subTest(bytes=len(raw)):

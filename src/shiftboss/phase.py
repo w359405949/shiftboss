@@ -60,8 +60,12 @@ def summary(current: Phase) -> list[str]:
         return value if len(value) <= 160 else value[:159] + "…"
 
     result = [f"【当前阶段】{short(title)}"]
-    if goal := field("目标"):
+    if focus := field("重心"):
+        result.append(f"- 重心｜{short(focus)}")
+    elif goal := field("目标"):
         result.append(f"- 目标｜{short(goal)}")
+    if priority := field("当务之急"):
+        result.append(f"- 当务之急｜{short(priority)}")
     if progress := field("进度"):
         result.append(f"- 进度｜{short(progress)}")
         result.append(f"- 更新于｜{short(field('更新时间') or '未填写（不是实时进度）')}")
