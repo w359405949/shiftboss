@@ -69,10 +69,25 @@ def derived_files() -> list[str]:
     """产物清单按它自己记录的步骤读：它只由常驻验证的完整生成刷新，与当前步骤是否一致归常驻验证管。"""
     catalog = json.loads((REPO / CATALOG).read_text(encoding="utf-8"))
     files = catalog_files(catalog, [p["command"] for p in catalog.get("producers") or []])
+    missing = []
     for name in files:
         output = REPO / name
-        if not output.is_file() or output.is_symlink() or output.resolve() != output:
+        if output.is_file() and not output.is_symlink() and output.resolve() == output:
+            continue
+        if output.exists() or output.is_symlink() or output.resolve() != output:
             raise MergeError(f"生产端声明的产物不存在或不是普通文件：{name}；请重新生成")
+        missing.append(name)
+    if missing:
+        # 生成后的清单可以落后于源码中的产物迁移。只有清单所在版本确实
+        # 跟踪过、而当前 Git 索引已明确删除的文件才是退休产物；工作区丢失、
+        # 从未提交的声明和非普通文件仍拒绝，不能把缺文件一概当生成滞后。
+        tracked = set(git("ls-files", "-z", "--", *missing).stdout.split("\0"))
+        revision = git("log", "-1", "--format=%H", "--", CATALOG).stdout.strip()
+        for name in missing:
+            if (name in tracked or not revision
+                    or git("cat-file", "-e", f"{revision}:{name}", check=False).returncode):
+                raise MergeError(f"生产端声明的产物不存在或不是普通文件：{name}；请重新生成")
+        print(f"产物清单待后台刷新：{len(missing)} 个旧产物已由 Git 明确删除", flush=True)
     return files
 
 
