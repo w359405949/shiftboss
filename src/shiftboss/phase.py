@@ -43,19 +43,29 @@ def read(directory: Path) -> Phase:
 
 
 def summary(current: Phase) -> list[str]:
-    """简报只显示标题、目标与原件入口，完整策略仍在阶段文档。"""
+    """摘要保留进度的原始更新时间，不用简报生成时间冒充重新估算。"""
     if current.status in ("unset", "cleared"):
         return ["【当前阶段】：未设置" if current.status == "unset" else "【当前阶段】：已清空"]
     if current.status == "error":
         return ["【当前阶段】：读取失败", f"- {current.path}｜{current.error}"]
     lines = [line.strip() for line in current.text.splitlines() if line.strip()]
     title = lines[0].lstrip("# ")
-    goal = next((line.split(separator, 1)[1].strip()
-                 for line in lines for separator in ("：", ":")
-                 if line.startswith("目标" + separator)), "")
+
+    def field(name: str) -> str:
+        return next((line.split(separator, 1)[1].strip()
+                     for line in lines for separator in ("：", ":")
+                     if line.startswith(name + separator)), "")
 
     def short(value: str) -> str:
         return value if len(value) <= 160 else value[:159] + "…"
 
-    return [f"【当前阶段】{short(title)}", *([f"- 目标｜{short(goal)}"] if goal else []),
-            f"- 完整文档｜{current.path}"]
+    result = [f"【当前阶段】{short(title)}"]
+    if goal := field("目标"):
+        result.append(f"- 目标｜{short(goal)}")
+    if progress := field("进度"):
+        result.append(f"- 进度｜{short(progress)}")
+        result.append(f"- 更新于｜{short(field('更新时间') or '未填写（不是实时进度）')}")
+        if basis := field("依据"):
+            result.append(f"- 依据｜{short(basis)}")
+    result.append(f"- 完整文档｜{current.path}")
+    return result

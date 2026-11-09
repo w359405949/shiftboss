@@ -37,6 +37,34 @@ class CurrentPhase(unittest.TestCase):
         self.path.unlink()
         self.assertEqual(phase.summary(phase.read(self.control)), ['【当前阶段】：未设置'])
 
+    def test_progress_keeps_its_observation_time_and_rereads_updates(self):
+        self.path.write_text('# 类型集成\n目标：并行收敛。\n'
+                             '进度：约 5%–10%（估算）\n'
+                             '更新时间：2026-11-09 23:57 +08:00\n'
+                             '依据：已接收首轮集成批次，尚无修后全量结果。\n')
+        with patch.object(config, 'control_dir', return_value=self.control):
+            first = brief.phase_lines(self.root / 'hub.git')
+            self.assertIn('- 进度｜约 5%–10%（估算）', first)
+            self.assertIn('- 更新于｜2026-11-09 23:57 +08:00', first)
+            self.assertIn('- 依据｜已接收首轮集成批次，尚无修后全量结果。', first)
+            os.utime(self.path, (1, 1))
+            self.assertEqual(brief.phase_lines(self.root / 'hub.git'), first)
+            self.path.write_text('# 发布验收\n目标：核结果。\n'
+                                 '进度: 约 20%（估算）\n'
+                                 '更新时间: 2026-11-10 01:00 +08:00\n依据: 新一轮实际结果。\n')
+            updated = brief.phase_lines(self.root / 'hub.git')
+            self.assertIn('- 进度｜约 20%（估算）', updated)
+            self.assertIn('- 更新于｜2026-11-10 01:00 +08:00', updated)
+            self.assertNotIn('23:57', '\n'.join(updated))
+            self.path.write_text('# 下一阶段\n目标：新目标。\n')
+            self.assertNotIn('进度｜', '\n'.join(brief.phase_lines(self.root / 'hub.git')))
+
+    def test_progress_without_time_is_explicit_and_summary_fields_are_bounded(self):
+        self.path.write_text('# 阶段\n进度：' + '估' * 1000 + '\n依据：' + '据' * 1000)
+        lines = phase.summary(phase.read(self.control))
+        self.assertIn('- 更新于｜未填写（不是实时进度）', lines)
+        self.assertTrue(all(len(line) < 200 for line in lines[:-1]))
+
     def test_invalid_or_oversized_document_is_visible_not_an_empty_goal(self):
         for raw in (b'\xff', b'x' * (phase.MAX_DOCUMENT_BYTES + 1)):
             with self.subTest(bytes=len(raw)):
