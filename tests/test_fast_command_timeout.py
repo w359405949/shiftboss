@@ -66,3 +66,15 @@ class FastCommandTimeout(unittest.TestCase):
               redirect_stdout(io.StringIO())):
             merge.run_fast_commands(['src/a.ts'])
         run.assert_called_once_with(['custom'])
+
+    def test_explicit_compiler_wait_does_not_request_automatic_background_migration(self):
+        item = {'name': 'compiler', 'run': ['compiler'], 'idle_timeout_seconds': 0}
+        output = io.StringIO()
+        with (patch('shiftboss.background_commands.commands', return_value=[]),
+              patch.object(task_checks, 'commands', return_value=(None, [item])),
+              patch.object(merge, 'run_until_idle', return_value=(0, '')),
+              patch.object(merge.time, 'monotonic', side_effect=[0, 120]),
+              redirect_stdout(output)):
+            merge.run_fast_commands(['src/a.ts'])
+        self.assertIn('120.000s', output.getvalue())
+        self.assertNotIn('移入常驻验证', output.getvalue())

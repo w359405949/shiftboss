@@ -592,7 +592,7 @@ def run_fast_commands(names: list[str], *, task: str | None = None) -> None:
         spent = time.monotonic() - started
         print(f"快速检查 {name}: {spent:.3f}s", flush=True)
         # 开发线只跑秒级检查；做了才发现慢的，挪进常驻验证的闸（README 3.3c 例外），不在开发线排队限量。
-        if spent > SLOW_CHECK_SECONDS:
+        if spent > SLOW_CHECK_SECONDS and item.get('idle_timeout_seconds') != 0:
             print(f"  ⚠ {name} 超过 {SLOW_CHECK_SECONDS} 秒：按 README 3.3c 移入常驻验证的闸", flush=True)
 
 
