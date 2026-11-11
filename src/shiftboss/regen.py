@@ -473,6 +473,41 @@ def checks_dir() -> Path:
     return config.control_dir(origin(REPO)) / CHECKS_DIR
 
 
+def closure_input_identity(paths: list[Path]) -> list:
+    """读取显式环境输入的实际字节与完整目录成员，不以 mtime/大小代替内容。"""
+    entries = []
+    def file_entry(path: Path, name: str) -> list:
+        if not path.is_file():
+            raise ValueError(f"闭包环境输入不是文件：{path}")
+        with path.open('rb') as stream:
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        return ['file', name, str(path.resolve(strict=True)), digest]
+    def fail(error):
+        raise error
+    for path in paths:
+        if path.is_file():
+            entries.append([str(path), file_entry(path, '.')])
+        elif path.is_dir():
+            members = []
+            seen = set()
+            for directory, directories, files in os.walk(path, followlinks=True, onerror=fail):
+                current = Path(directory)
+                target = current.resolve(strict=True)
+                members.append(['directory', current.relative_to(path).as_posix(), str(target)])
+                if target in seen:
+                    directories[:] = []
+                    continue
+                seen.add(target)
+                directories.sort()
+                for name in sorted(files):
+                    file = current / name
+                    members.append(file_entry(file, file.relative_to(path).as_posix()))
+            entries.append([str(path), members])
+        else:
+            raise ValueError(f"闭包环境输入不存在：{path}；缺少环境包时请用户自行安装")
+    return entries
+
+
 def closure_identity(stages: list[dict]) -> str | None:
     """只忽略项目已声明的非生成路径；不拿上次闭包文件表推断新输入。
 
@@ -500,7 +535,8 @@ def closure_identity(stages: list[dict]) -> str | None:
             entries.append(entry.hex())
     identity = {"schema": 2, "root": str(REPO.resolve()), "stages": stages,
                 "command": config.closure_command(REPO), "python": sys.executable,
-                "skip": skip, "entries": entries}
+                "skip": skip, "entries": entries,
+                "environmentInputs": closure_input_identity(config.closure_inputs(REPO))}
     return hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
 
 

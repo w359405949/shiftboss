@@ -336,6 +336,62 @@ class ClosureCache(unittest.TestCase):
         self.assertEqual(list(self.cache.glob("*.json")), [])
         self.assertIn("sources/first.py", regen.closure_stages(self.stages)[0]["inputs"])
 
+    def external_environment(self):
+        environment = Path(self.temp.name) / 'external'
+        (environment / 'lib').mkdir(parents=True)
+        (environment / 'compiler.js').write_text('version = 1;\n')
+        (environment / 'lib/one.d.ts').write_text('declare const one: number;\n')
+        (self.root / '.gitignore').write_text('.local.json\n')
+        (self.root / '.local.json').write_text(json.dumps({'packages': str(environment)}))
+        (self.root / 'shiftboss.toml').write_text(
+            '[project]\nlocal_config=".local.json"\n[regen]\n'
+            'closure_inputs=[".local.json", {local="packages", path="."}]\n')
+        self.commit()
+        return environment
+
+    def test_external_content_and_member_changes_invalidate_without_git_changes(self):
+        environment = self.external_environment()
+        regen.closure_stages(self.stages)
+        (environment / 'compiler.js').write_text('version = 2;\n')
+        regen.closure_stages(self.stages)
+        (environment / 'lib/two.d.ts').write_text('declare const two: number;\n')
+        regen.closure_stages(self.stages)
+        (environment / 'lib/one.d.ts').unlink()
+        regen.closure_stages(self.stages)
+        self.assertEqual(self.git('status', '--porcelain'), '')
+        self.assertEqual(self.executions.call_count, 4)
+
+    def test_ignored_machine_configuration_switch_invalidates_external_cache(self):
+        environment = self.external_environment()
+        regen.closure_stages(self.stages)
+        other = Path(self.temp.name) / 'other'
+        other.mkdir()
+        (other / 'compiler.js').write_text((environment / 'compiler.js').read_text())
+        (self.root / '.local.json').write_text(json.dumps({'packages': str(other)}))
+        regen.closure_stages(self.stages)
+        self.assertEqual(self.git('status', '--porcelain'), '')
+        self.assertEqual(self.executions.call_count, 2)
+
+    def test_environment_change_during_analysis_does_not_store_cache(self):
+        environment = self.external_environment()
+        real_closure = self.executions._mock_wraps
+        def mutate(stages):
+            result = real_closure(stages)
+            (environment / 'compiler.js').write_text('version = 2;\n')
+            return result
+        with patch.object(regen, 'with_closure', side_effect=mutate):
+            regen.closure_stages(self.stages)
+        self.assertEqual(list(self.cache.glob('*.json')), [])
+
+    def test_missing_external_input_errors_instead_of_reusing_cache(self):
+        environment = self.external_environment()
+        regen.closure_stages(self.stages)
+        self.executions.reset_mock()
+        (self.root / '.local.json').write_text(json.dumps({'packages': str(environment / 'missing')}))
+        with self.assertRaisesRegex(ValueError, '环境输入不存在'):
+            regen.closure_stages(self.stages)
+        self.executions.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

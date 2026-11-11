@@ -150,32 +150,51 @@ def parser_path(name: str, root: Path | None = None) -> Path | None:
     value = _get("merge", name, None, repo)
     if value is None:
         return None
+    return configured_path(value, repo, f"merge.{name}")
+
+
+def configured_path(value, root: Path, label: str) -> Path:
+    """显式路径或 {local, path} 本机配置声明；只解析，不安装或推断环境。"""
+    repo = root.resolve()
     if isinstance(value, str) and value.strip():
         return (repo / value).resolve()
     if not isinstance(value, dict) or set(value) != {"local", "path"}:
-        raise ValueError(f"merge.{name} 须为路径或 {{local, path}} 声明")
+        raise ValueError(f"{label} 须为路径或 {{local, path}} 声明")
     key, suffix = value["local"], value["path"]
     if not isinstance(key, str) or not key.strip() or not isinstance(suffix, str) or not suffix.strip():
-        raise ValueError(f"merge.{name} 的 local/path 须为非空字符串")
+        raise ValueError(f"{label} 的 local/path 须为非空字符串")
     relative = Path(suffix)
     if relative.is_absolute() or ".." in relative.parts:
-        raise ValueError(f"merge.{name}.path 须为环境根内的相对路径")
+        raise ValueError(f"{label}.path 须为环境根内的相对路径")
     local_file = local_config_file(repo)
     if not isinstance(local_file, str) or not local_file.strip():
-        raise ValueError(f"merge.{name} 须先登记 project.local_config")
+        raise ValueError(f"{label} 须先登记 project.local_config")
     local_path = (repo / local_file).resolve()
     try:
         local = json.loads(local_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise ValueError(f"无法读取解析器本机配置 {local_path}：{exc}") from exc
+        raise ValueError(f"无法读取本机配置 {local_path}：{exc}") from exc
     environment = local.get(key) if isinstance(local, dict) else None
     if not isinstance(environment, str) or not environment.strip() or not Path(environment).is_absolute():
         raise ValueError(f"{local_path} 的 {key} 须为绝对环境目录；缺少环境包时请用户自行安装")
     base = Path(environment).resolve()
     path = (base / relative).resolve()
     if not path.is_relative_to(base):
-        raise ValueError(f"merge.{name}.path 实际解析到了环境根之外")
+        raise ValueError(f"{label}.path 实际解析到了环境根之外")
     return path
+
+
+def closure_inputs(root: Path | None = None) -> list[Path]:
+    """regen.closure_inputs：Git 之外实际影响闭包的文件或目录。
+
+    列表项沿 configured_path 的显式路径/{local,path} 协议；内容、路径及目录
+    增删进入既有闭包缓存身份。需包含本机配置时显式列出该 JSON；不自动读环境目录。
+    """
+    repo = (root or project_root()).resolve()
+    items = _get("regen", "closure_inputs", [], repo)
+    if not isinstance(items, list):
+        raise ValueError("regen.closure_inputs 须为显式路径声明列表")
+    return [configured_path(value, repo, "regen.closure_inputs") for value in items]
 
 
 def assertion_dirs(root: Path | None = None) -> list[str]:
