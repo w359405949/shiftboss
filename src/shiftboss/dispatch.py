@@ -455,6 +455,20 @@ def close_session(copy_win: str) -> bool:
     return bool(processes)
 
 
+def restart_interrupted_session(name: str, copy_win: str, entry: dict,
+                                git_dir: Path, *, dry_run: bool = False) -> None:
+    """Restart only a confirmed failed TUI; retain its session and working tree."""
+    from shiftboss.inbox import session_state
+    if (entry.get('closed') or not entry.get('session_id')
+            or not same_dir(entry.get('copy', ''), copy_win)):
+        raise ValueError('拒绝：故障重建须保留本线未关闭的原会话与原副本。')
+    actual = session_state(name, None, entry, git_dir)
+    if actual != '执行中断':
+        raise ValueError(f'拒绝：只有插件确认执行中断才可重建终端，当前为 {actual}。')
+    if not dry_run:
+        close_session(copy_win)
+
+
 def close_line(name: str, copy_win: str, ledger: dict) -> None:
     """Shared --close / merge semantics; preserve session identity and rollout."""
     entry = ledger.get(name) or {}
@@ -897,6 +911,8 @@ def _main(argv: list[str] | None = None) -> int:
                     help="强制开新会话（丢掉历史），并把返工计数清零。")
     ap.add_argument("--recover", action="store_true",
                     help="断电/崩溃后恢复：resume 原会话，**不碰工作树**（脏的正是要救的）")
+    ap.add_argument("--restart-interrupted", action="store_true",
+                    help="仅配合 --recover：插件确认执行中断后重建故障终端，保留原会话/工作树/轮次；结束该终端子命令")
     ap.add_argument("--close", action="store_true",
                     help="核完了：关闭会话并标 closed；台账会话号和 rollout 留着，可 resume。")
     ap.add_argument("--quota", type=int, metavar="N",
@@ -906,6 +922,10 @@ def _main(argv: list[str] | None = None) -> int:
                     help="本轮的执行方（缺省 codex）；与表头副本不在同一池时自动换到该执行方的空闲副本。"
                          "也是 --quota 作用的执行方。--recover 沿用台账里的执行方。")
     args = ap.parse_args(argv)
+
+    if args.restart_interrupted and (not args.recover or args.close or args.fresh
+                                     or args.quota is not None):
+        ap.error('--restart-interrupted 仅与 --recover 配合，不与关闭、新会话或配额变更合用')
 
     from shiftboss.state import require_dispatcher
     require_dispatcher()
@@ -1123,6 +1143,16 @@ def _main(argv: list[str] | None = None) -> int:
                                capture_output=True, text=True).stdout.strip()
         print(f"恢复 {args.taskbook}：会话 {old_id}，"
               f"工作树{'有 ' + str(len(dirty.splitlines())) + ' 个未提交改动（会交给它自己收）' if dirty else '干净'}")
+        if args.restart_interrupted:
+            from shiftboss.inbox import origin_git_dir
+            try:
+                restart_interrupted_session(args.taskbook, copy_win, entry, origin_git_dir(REPO),
+                                            dry_run=args.dry_run)
+            except ValueError as exc:
+                print(exc)
+                return 2
+            if not args.dry_run:
+                print('故障终端已停止；其子命令记为恢复中取消/未完成，原会话、工作树与轮次保留。')
         if args.dry_run:
             print("--dry-run，没有恢复。")
             return 0
@@ -1406,12 +1436,21 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if any(flag in args for flag in ("-h", "--help", "--dry-run")):
         return _main(args)
-    taken = take_workspace(REPO, "dispatch session transaction")
-    try:
-        return _main(args)
-    finally:
-        if taken:
-            release_merge_lock(REPO)
+    from contextlib import nullcontext
+    recovery = nullcontext(True)
+    if '--restart-interrupted' in args:
+        from shiftboss.recover import recovery_lock
+        recovery = recovery_lock(REPO)
+    with recovery as acquired:
+        if not acquired:
+            print('已有恢复任务在执行，不重复重建故障终端。')
+            return 2
+        taken = take_workspace(REPO, "dispatch session transaction")
+        try:
+            return _main(args)
+        finally:
+            if taken:
+                release_merge_lock(REPO)
 
 
 if __name__ == "__main__":
