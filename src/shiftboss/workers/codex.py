@@ -295,6 +295,14 @@ def parked_in_queue(session_id: str, message: str) -> bool:
     return False
 
 
+def _queue_command_output(result) -> None:
+    for value in (result.stdout, result.stderr):
+        if isinstance(value, bytes):
+            value = value.decode('utf-8', errors='replace')
+        if value:
+            print(value, end='' if value.endswith('\n') else '\n')
+
+
 def queue_into(session_id: str, message: str, alive=None) -> bool:
     """往活着的会话里投一条（只供 `--recover` 接回意外中断的本轮），**返回是否真的投进去了**。
 
@@ -343,10 +351,16 @@ def queue_into(session_id: str, message: str, alive=None) -> bool:
     # 已经提交推送了——外面看见的是「派活命令没反应」，台账却还没更新，
     # 掐掉重来就会把交代写第二遍。卡住等同于投不进去，交给下面 resume 那一档。
     try:
-        subprocess.run([str(resolve_codex()), "queue", "--thread", session_id,
+        result = subprocess.run([str(resolve_codex()), "queue", "--thread", session_id,
                         "--message", message], capture_output=True, text=True,
                        timeout=30)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
+        print('codex queue 未在命令时限内结束；投递未确认。')
+        _queue_command_output(exc)
+        return False
+    if result.returncode:
+        print(f'codex queue 退出 {result.returncode}；投递未确认。')
+        _queue_command_output(result)
         return False
     for _ in range(30):
         time.sleep(1)
