@@ -446,38 +446,31 @@ def stalled_lines(repo: Path, git_dir: Path,
 
 
 def started_signs(copy: str, branch: str) -> str:
-    """这条线到底**动手了没有**——只看副本里的工作产物，不看会话。
+    """只读描述分支与工作树，不以已有产物认证会话正在执行。
 
-    **「工作树干净」不等于「在慢慢干」。** 2026-09-10 我因为这个把一条根本没起来的
-    线放过了一整轮心跳：它一个小时没建目标分支、`out/` 里最新的东西还是我派活时
-    自己写的 `STATUS.md`，而我看它工作树干净就当成「在跑浏览器合同，慢是正常的」。
-    同一时刻另外三条线的副本都有几十个脏文件——**对照之下差别很明显，
-    我只是没去看**。
-
-    两条判据都是执行方的产物，和 `session_state` 同一套口径
-    （分支与工作树看得见，会话那一侧看不见）：
-
-    - **目标分支建了没有**：第 0 步就该切过去，没建就是没开始。
-    - **工作树动了没有**：改了东西自然有脏文件。
-
-    两条都没有 → 多半真没起来，`--fresh` 重派；有任何一条 → 它在干活，别打断。
+    Git读取失败或超时保持未知，不能解释为分支未建或工作树干净。
+    只有成功确认分支不存在且工作树干净，才提示可能未启动。
     """
     if not copy:
         return "副本未知"
-    def git_in(*args: str) -> str:
+    def git_in(*args: str) -> subprocess.CompletedProcess[str] | None:
         try:
-            return subprocess.run(["git", "-C", copy, *args], capture_output=True,
-                                  text=True, timeout=20).stdout.strip()
+            return subprocess.run(["git", "--no-optional-locks", "-C", copy, *args],
+                                  capture_output=True, text=True, timeout=20)
         except (OSError, subprocess.SubprocessError):
-            return ""
-    on_branch = bool(branch) and git_in("rev-parse", "--verify", "--quiet", branch)
-    dirty = len([line for line in git_in("status", "--porcelain").splitlines() if line])
+            return None
+    revision = git_in("rev-parse", "--verify", "--quiet", branch) if branch else None
+    on_branch = (True if revision.returncode == 0 and revision.stdout.strip() else
+                 False if revision.returncode == 1 else None) if revision is not None else None
+    status = git_in("status", "--porcelain")
+    dirty = (len([line for line in status.stdout.splitlines() if line])
+             if status is not None and status.returncode == 0 else None)
     stale = stale_index_lock(copy)
-    if not on_branch and not dirty:
+    if on_branch is False and dirty == 0:
         return "**目标分支未建、工作树干净——多半没起来**" + (f"；{stale}" if stale else "")
     return "、".join(filter(None, [
-        "目标分支已建" if on_branch else "目标分支未建",
-        f"{dirty} 个脏文件" if dirty else "工作树干净", stale]))
+        "分支状态未取得" if on_branch is None else "目标分支已建" if on_branch else "目标分支未建",
+        "工作树状态未取得" if dirty is None else f"{dirty} 个脏文件" if dirty else "工作树干净", stale]))
 
 
 STALE_LOCK_MINUTES = 10
