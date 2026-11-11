@@ -168,10 +168,9 @@ def module_details(repo: Path, names: list[str]) -> dict:
         return {}
     for name in names:
         source_module(repo / name)
-    parser = config.load(repo).get("merge", {}).get("typescript_parser")
-    if not parser:
+    compiler = config.parser_path("typescript_parser", repo)
+    if compiler is None:
         raise ValueError("TS 源检查须配置 merge.typescript_parser（项目 TypeScript 编译器路径），不能跳过")
-    compiler = (repo / parser).resolve()
     if not compiler.is_file():
         raise ValueError(f"TypeScript 编译器不存在：{compiler}")
     node = shutil.which("node")

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import tomllib
+import json
 from functools import lru_cache
 from pathlib import Path
 
@@ -131,8 +132,50 @@ def consumer_paths(root: Path | None = None) -> list[str]:
 
 
 def js_parser(root: Path | None = None) -> str | None:
-    """合并时检查对象重复键所用的 acorn ES 模块路径（相对项目根）；不配则跳过该项。"""
-    return _get("merge", "js_parser", None, root)
+    """合并时的 Acorn 路径；声明格式见 parser_path，不配则保持原跳过行为。"""
+    path = parser_path("js_parser", root)
+    return str(path) if path is not None else None
+
+
+def parser_path(name: str, root: Path | None = None) -> Path | None:
+    """解析 merge.js_parser/typescript_parser 的实际文件路径。
+
+    字符串路径相对项目根（绝对路径保持）；项目外环境使用
+    `{local = "本机配置键", path = "环境内相对文件"}`，从 project.local_config
+    指定的 JSON 读取绝对环境根。缺文件、缺键和坏声明均报错，不回退或安装包。
+    """
+    if name not in ("js_parser", "typescript_parser"):
+        raise ValueError(f"未登记的解析器：{name}")
+    repo = (root or project_root()).resolve()
+    value = _get("merge", name, None, repo)
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip():
+        return (repo / value).resolve()
+    if not isinstance(value, dict) or set(value) != {"local", "path"}:
+        raise ValueError(f"merge.{name} 须为路径或 {{local, path}} 声明")
+    key, suffix = value["local"], value["path"]
+    if not isinstance(key, str) or not key.strip() or not isinstance(suffix, str) or not suffix.strip():
+        raise ValueError(f"merge.{name} 的 local/path 须为非空字符串")
+    relative = Path(suffix)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"merge.{name}.path 须为环境根内的相对路径")
+    local_file = local_config_file(repo)
+    if not isinstance(local_file, str) or not local_file.strip():
+        raise ValueError(f"merge.{name} 须先登记 project.local_config")
+    local_path = (repo / local_file).resolve()
+    try:
+        local = json.loads(local_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"无法读取解析器本机配置 {local_path}：{exc}") from exc
+    environment = local.get(key) if isinstance(local, dict) else None
+    if not isinstance(environment, str) or not environment.strip() or not Path(environment).is_absolute():
+        raise ValueError(f"{local_path} 的 {key} 须为绝对环境目录；缺少环境包时请用户自行安装")
+    base = Path(environment).resolve()
+    path = (base / relative).resolve()
+    if not path.is_relative_to(base):
+        raise ValueError(f"merge.{name}.path 实际解析到了环境根之外")
+    return path
 
 
 def assertion_dirs(root: Path | None = None) -> list[str]:
