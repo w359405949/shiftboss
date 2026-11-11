@@ -244,7 +244,7 @@ def ensure_push_guard(bare: Path, check: bool) -> bool:
 
 def ensure_commit_guard(repo: Path, copies: list[Path], check: bool, *,
                         include_repo: bool = True) -> bool:
-    """每个工作副本都要装 pre-commit：合并在飞时拦住别的提交。
+    """安装 pre-commit：阻止提交未完成合并，并自动调用登记的任务快检。
 
     拦的是这一种事故：`shiftboss.merge` 还在跑闸，同一个副本里有人（多半是我自己）
     为了别的事跑了一次 `git commit`。**提交的是整个索引，而 MERGE_HEAD 还在**，

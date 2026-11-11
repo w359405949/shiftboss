@@ -1,4 +1,4 @@
-"""提交守卫：`shiftboss.merge` 在飞的时候，这个工作副本里任何**别的** git commit 都是灾难。
+"""提交守卫：防止提交未完成合并，并自动执行任务登记的前台快检。
 
 提交的是整个索引，不是你 `git add` 的那几个路径，而 `MERGE_HEAD` 还在，
 于是那次提交直接变成合并提交——闸一步没跑完，回显却一切正常。
@@ -6,13 +6,30 @@
 这是唯一能拦住它的地方。装它的代码在 `shiftboss.bootstrap`（hook 不进 git），
 装的时候配一个 sh 外壳，由它以绝对路径起当前解释器。
 
-**只在锁文件真的存在时才拦。** 自己出意外要放行——守卫把所有提交都挡住，
-比它偶尔漏掉一次更糟。
+合并锁守卫只在锁文件存在时拦截；登记快检的非零与配置异常都拒绝提交。
+按暂存路径触发本任务现有前台命令，不另建检查清单或执行后台验证。
 """
 
 import os
 import subprocess
 import sys
+
+
+def registered_checks() -> int:
+    """按本次暂存路径触发原登记命令；普通报告不触发源码编译。"""
+    try:
+        changed = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "--no-renames", "-z"],
+            capture_output=True, text=True, check=True)
+        names = [name for name in changed.stdout.split("\0") if name]
+        if not names:
+            return 0
+        from shiftboss.merge import run_fast_commands
+        run_fast_commands(names)
+    except (Exception, KeyboardInterrupt) as error:
+        print(f"[拒绝提交] 登记快速检查未通过：{error}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def git_dir() -> str | None:
@@ -43,7 +60,7 @@ def main() -> int:
         return 1
     lock = os.path.join(root, "shiftboss-merge-in-flight")
     if not os.path.isfile(lock):
-        return 0
+        return registered_checks()
     with open(lock, encoding="utf-8", errors="replace") as handle:
         body = handle.read()
     print("[拒绝提交] 这个工作副本里有一次 shiftboss.merge 在飞：", file=sys.stderr)
