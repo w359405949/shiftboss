@@ -114,3 +114,5 @@ DESIGN.md           设计
 派活方用 `shiftboss taskbook set <任务名> --field '快速检查=["检查名"]'` 选取项目 `merge.fast_commands` 中的前台项，无额外项目脚本填 `[]`。未选择的任务拒派，未知名、重复项和后台项拒绝写入。
 
 `shiftboss taskbook show <任务名> --checks` 显示登记的实际命令；`shiftboss check --list` 显示本次改动下会运行或跳过的项，不执行脚本。`shiftboss check` 按当前分支识别任务，合并按冻结提交识别任务；有多个归属时用 `--task <任务名>` 指定。共同结构守卫始终保留，项目项还须命中自己的 `when`；后台完整检查沿原登记运行。
+
+前台登记项可用 `idle_timeout_seconds` 指定非负整数秒数；省略保留原无输出守卫，`0` 表示不设无输出超时，等待真实退出。普通 tsc 编译项设为 `0`，不设总时长限制；自写工具继续使用原守卫。

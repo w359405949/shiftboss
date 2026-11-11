@@ -20,6 +20,9 @@ def registry(repo: Path) -> dict[str, dict]:
             raise TaskChecksError('merge.fast_commands 每项必须是具名检查对象')
         if not isinstance(item.get('background', False), bool):
             raise TaskChecksError('merge.fast_commands.background 必须是布尔值')
+        idle_timeout = item.get('idle_timeout_seconds')
+        if 'idle_timeout_seconds' in item and (type(idle_timeout) is not int or idle_timeout < 0):
+            raise TaskChecksError('merge.fast_commands.idle_timeout_seconds 必须是非负整数；0 表示不设无输出超时')
         name = item.get('name')
         run = item.get('run')
         if not isinstance(name, str) or not name.strip() or name in result:
@@ -146,6 +149,10 @@ def describe(repo: Path, task: str | None = None, paths: list[str] | None = None
         run = item['run']
         command = run if isinstance(run, str) else shlex.join(run)
         lines.append(f'- {item["name"]}（{where}）：{command}')
+        if 'idle_timeout_seconds' in item:
+            seconds = item['idle_timeout_seconds']
+            lines.append('  无输出超时：关闭；等待命令真实退出。' if seconds == 0 else
+                         f'  无输出超时：{seconds} 秒。')
     if not items:
         lines.append('无额外项目快检脚本（快速检查：[]）。')
     if book:

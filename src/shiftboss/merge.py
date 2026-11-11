@@ -534,12 +534,17 @@ def fast_checks(before: str, *, task: str | None = None) -> None:
 FAST_IDLE_KILL = 10 * 60  # 快速检查单项连续无输出多久判卡死
 
 
-def run_until_idle(command: list[str]) -> tuple[int, str]:
-    """跑到结束；不设总时长，连续 FAST_IDLE_KILL 秒无输出才判卡死（用户定：以输出是否持续区分慢与卡死）。"""
+def run_until_idle(command: list[str], *, idle_timeout_seconds: int | None = None) -> tuple[int, str]:
+    """等真实退出；自写工具默认保留无输出守卫，显式 0 关闭该守卫。"""
     import tempfile
+    idle_limit = FAST_IDLE_KILL if idle_timeout_seconds is None else idle_timeout_seconds
     with tempfile.TemporaryFile("w+", encoding="utf-8") as output:
         process = subprocess.Popen(command, cwd=REPO, stdout=output, stderr=subprocess.STDOUT, text=True,
                                    start_new_session=True)
+        if idle_limit == 0:
+            code = process.wait()
+            output.seek(0)
+            return code, output.read()
         last_size, last_change = -1, time.monotonic()
         while True:
             try:
@@ -550,10 +555,10 @@ def run_until_idle(command: list[str]) -> tuple[int, str]:
                 size = os.fstat(output.fileno()).st_size
                 if size != last_size:
                     last_size, last_change = size, time.monotonic()
-                elif time.monotonic() - last_change > FAST_IDLE_KILL:
+                elif time.monotonic() - last_change > idle_limit:
                     os.killpg(process.pid, 9)
                     process.wait()
-                    output.write(f"\n连续 {FAST_IDLE_KILL // 60} 分钟没有新输出，判为卡死，已结束。\n")
+                    output.write(f"\n连续 {idle_limit // 60} 分钟没有新输出，判为卡死，已结束。\n")
                     code = 124
                     break
         output.seek(0)
@@ -577,7 +582,10 @@ def run_fast_commands(names: list[str], *, task: str | None = None) -> None:
             continue
         command = config.closure_command() if run == "regen.closure_command" else list(run)
         started = time.monotonic()
-        code, text = run_until_idle(command)
+        if "idle_timeout_seconds" in item:
+            code, text = run_until_idle(command, idle_timeout_seconds=item["idle_timeout_seconds"])
+        else:
+            code, text = run_until_idle(command)
         if code:
             tail = "\n".join(text.strip().splitlines()[-12:])
             raise MergeError(f"快速检查 {name} 失败（退出码 {code}）：\n{tail}")
