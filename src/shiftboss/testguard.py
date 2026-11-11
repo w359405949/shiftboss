@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from typing import Callable
 
@@ -14,6 +15,39 @@ TEST_NAME = re.compile(r'^[+-]\s*(?:(?:test|it|describe)\s*\(\s*([\'"`])(.*?)\1|
 FRAMEWORK = re.compile(r'^\+.*(?:from\s+[\'"]node:(?:test|assert)(?:/strict)?[\'"]|require\(\s*[\'"]node:(?:test|assert)'
                        r'|^\+\s*(?:import|from)\s+(?:unit' r'test|py' r'test)\b)')
 SOURCE = (".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".py")
+
+
+def approved_runtime_prefixes(git: Callable[..., str], task: str, new: str,
+                             configuration: str, registered: list[list[str]]) -> list[list[str]]:
+    """Only main's explicit approval may authorize an exact candidate configuration.
+
+    The approval is data on main, never a declaration from the pushed branch.
+    Only runtime preparation identity changes; payloads still pass find().
+    """
+    directory = f"shiftboss/plans/{task}/inputs/"
+    paths = git('ls-tree', '-r', '--name-only', 'refs/heads/main', '--', directory).splitlines()
+    text = git('show', f'{new}:{configuration}')
+    digest = hashlib.sha256(text.encode('utf-8')).hexdigest()
+    for path in paths:
+        if not path.startswith(directory + 'user-approved-') or not path.endswith('.json'):
+            continue
+        try:
+            packet = json.loads(git('show', f'refs/heads/main:{path}'))
+            approval = packet.get('runtimePrefixApproval', {})
+            decision = packet.get('decision', {})
+            if (approval.get('schema') != 'shiftboss/approved-runtime-prefix/v1'
+                    or packet.get('task') != task or not decision.get('answer')
+                    or task not in decision.get('line', '').split(',')
+                    or approval.get('configuration') != configuration
+                    or approval.get('sha256') != digest
+                    or packet.get('files', {}).get(configuration) != digest):
+                continue
+            prefixes = approval['prefixes']
+            command_identity([], prefixes)  # Validate exact registered preparation syntax.
+            return list(registered) + [prefix for prefix in prefixes if prefix not in registered]
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+    return registered
 
 
 def prepared_runtime(prefix: list[str]) -> tuple[str, list[str]] | None:

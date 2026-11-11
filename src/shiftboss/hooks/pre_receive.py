@@ -168,7 +168,7 @@ def ignored_additions(new: str) -> list[str]:
     return ignored_paths(shown.stdout, sorted({line for line in added.stdout.splitlines() if line}))
 
 
-def new_tests(new: str, settings: dict) -> list[str]:
+def new_tests(new: str, settings: dict, task: str | None = None) -> list[str]:
     """分支自与 main 分叉以来未登记的新增测试项。"""
     from shiftboss import testguard
     base = git("merge-base", "refs/heads/main", new).stdout.strip()
@@ -179,10 +179,14 @@ def new_tests(new: str, settings: dict) -> list[str]:
     historical = git('show', f'{base}:{config.CONFIG_NAME}')
     previous_prefixes = (tomllib.loads(historical.stdout).get('verify', {}).get('runtime_prefixes', [])
                          if historical.returncode == 0 else [])
+    prefixes = settings.get('verify', {}).get('runtime_prefixes', [])
+    if task:
+        prefixes = testguard.approved_runtime_prefixes(
+            lambda *args: git(*args).stdout, task, new, config.CONFIG_NAME, prefixes)
     return testguard.find(lambda *args: git(*args).stdout, base, new,
                           list(settings.get("merge", {}).get("assertion_dirs", [])),
                           (shown(base), shown(new)), set(settings.get("verify", {}).get("approved_tests", [])),
-                          runtime_prefixes=settings.get("verify", {}).get("runtime_prefixes", []),
+                          runtime_prefixes=prefixes,
                           previous_runtime_prefixes=previous_prefixes)
 
 
@@ -245,7 +249,7 @@ def main() -> int:
                 print(f"  {item}", file=sys.stderr)
             trespassed = True
             continue
-        if added := new_tests(new, settings):
+        if added := new_tests(new, settings, name):
             from shiftboss.testguard import MESSAGE
             print(f"拒收 {ref}：" + MESSAGE, file=sys.stderr)
             for item in added:

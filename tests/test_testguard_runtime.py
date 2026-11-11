@@ -1,5 +1,6 @@
 """已登记运行方式不新增闸；未知加载器、规则参数和 TS 测试仍受守卫约束。"""
 import json
+import hashlib
 import unittest
 import contextlib
 import io
@@ -15,6 +16,46 @@ PREFIX = ['node', '--enable-source-maps', '--import', './runtime/register.mjs']
 PREPARE = '(cd engine/typescript && node --input-type=module - --bootstrap < register.mts)'
 RUNTIME = ['node', '--enable-source-maps', '--import', './out/typescript/bootstrap/register.mjs']
 PREPARED = ['bash', '-o', 'pipefail', '-c', PREPARE + ' && exec ' + ' '.join(RUNTIME) + ' "$@"', 'node']
+
+
+class ApprovedRuntimePreparation(unittest.TestCase):
+    def lookup(self, *, approved=True, altered=False, pending=False):
+        task = 'environment-fixture'
+        path = f'shiftboss/plans/{task}/inputs/user-approved-fixture.json'
+        configuration = 'fixed configuration\n'
+        digest = hashlib.sha256(configuration.encode()).hexdigest()
+        packet = {'task': task, 'decision': {'answer': None if pending else 'approved', 'line': task},
+                  'files': {'shiftboss.toml': digest}, 'runtimePrefixApproval': {
+                      'schema': 'shiftboss/approved-runtime-prefix/v1', 'configuration': 'shiftboss.toml',
+                      'sha256': digest, 'prefixes': [PREPARED]}}
+        def git(*args):
+            if args[0] == 'ls-tree':
+                self.assertEqual(args[3], 'refs/heads/main')
+                return path + '\n' if approved else ''
+            if args[1] == 'tip:shiftboss.toml':
+                return configuration + ('changed' if altered else '')
+            self.assertEqual(args[1], 'refs/heads/main:' + path)
+            return json.dumps(packet)
+        return testguard.approved_runtime_prefixes(git, task, 'tip', 'shiftboss.toml', [PREFIX])
+
+    def test_exact_main_approval_preserves_payload_checks(self):
+        prefixes = self.lookup()
+        self.assertIn(PREPARED, prefixes)
+        old = json.dumps({'gates': [[*PREFIX, 'rules.mjs', '--case', 'same']]})
+        for payload, rejected in [(['rules.mjs', '--case', 'same'], False),
+                                  (['rules.mjs', '--case', 'different'], True),
+                                  (['new-test.mjs'], True)]:
+            found = testguard.find(lambda *args: '', 'base', 'tip', [],
+                                  (old, json.dumps({'gates': [[*PREPARED, *payload]]})), set(),
+                                  runtime_prefixes=prefixes, previous_runtime_prefixes=[PREFIX])
+            self.assertEqual(bool(found), rejected)
+
+    def test_candidate_config_change_does_not_reuse_approval(self):
+        self.assertEqual(self.lookup(altered=True), [PREFIX])
+
+    def test_pending_or_branch_only_approval_cannot_authorize_prefix(self):
+        self.assertEqual(self.lookup(pending=True), [PREFIX])
+        self.assertEqual(self.lookup(approved=False), [PREFIX])
 
 
 class RuntimeGateIdentity(unittest.TestCase):
