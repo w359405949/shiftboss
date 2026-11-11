@@ -78,3 +78,26 @@ class FastCommandTimeout(unittest.TestCase):
             merge.run_fast_commands(['src/a.ts'])
         self.assertIn('120.000s', output.getvalue())
         self.assertNotIn('移入常驻验证', output.getvalue())
+
+    def test_complete_compiler_failure_is_available_to_the_delivery_log(self):
+        item = {'name': 'compiler', 'run': ['compiler'], 'idle_timeout_seconds': 0}
+        diagnostics = ''.join(f'file-{index}.ts(1,1): error TS2322: exact diagnostic {index}\n'
+                              for index in range(40))
+        with (patch('shiftboss.background_commands.commands', return_value=[]),
+              patch.object(task_checks, 'commands', return_value=(None, [item])),
+              patch.object(merge, 'run_until_idle', return_value=(2, diagnostics)),
+              self.assertRaises(merge.MergeError) as caught):
+            merge.run_fast_commands(['src/a.ts'])
+        self.assertEqual(str(caught.exception), '快速检查 compiler 失败（退出码 2）：\n' + diagnostics)
+
+    def test_custom_tool_failure_retains_its_existing_bounded_summary(self):
+        item = {'name': 'custom', 'run': ['custom']}
+        diagnostics = ''.join(f'line-{index}\n' for index in range(40))
+        with (patch('shiftboss.background_commands.commands', return_value=[]),
+              patch.object(task_checks, 'commands', return_value=(None, [item])),
+              patch.object(merge, 'run_until_idle', return_value=(2, diagnostics)),
+              self.assertRaises(merge.MergeError) as caught):
+            merge.run_fast_commands(['src/a.ts'])
+        self.assertNotIn('line-0\n', str(caught.exception))
+        self.assertIn('line-28\n', str(caught.exception))
+        self.assertIn('line-39', str(caught.exception))

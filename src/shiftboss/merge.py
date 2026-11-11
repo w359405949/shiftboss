@@ -587,8 +587,8 @@ def run_fast_commands(names: list[str], *, task: str | None = None) -> None:
         else:
             code, text = run_until_idle(command)
         if code:
-            tail = "\n".join(text.strip().splitlines()[-12:])
-            raise MergeError(f"快速检查 {name} 失败（退出码 {code}）：\n{tail}")
+            details = text if item.get("idle_timeout_seconds") == 0 else "\n".join(text.strip().splitlines()[-12:])
+            raise MergeError(f"快速检查 {name} 失败（退出码 {code}）：\n{details}")
         spent = time.monotonic() - started
         print(f"快速检查 {name}: {spent:.3f}s", flush=True)
         # 开发线只跑秒级检查；做了才发现慢的，挪进常驻验证的闸（README 3.3c 例外），不在开发线排队限量。
