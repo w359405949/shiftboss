@@ -46,6 +46,7 @@ def _get(section: str, key: str, default, root: Path | None = None):
 
 # 自动任务开关：每项自动行为在触发前读 `[automation]`；没写的按开。键、名称、触发者与用途。
 AUTOMATION = (
+    ("delivery_progress", "交付推进提醒", "brief", "按Git统计连续仅报告合入，达到阈值在简报警告"),
     ("verify", "常驻验证", "verify start", "工具闸支线：按提交生成、发布、跑闸"),
     ("patrol", "巡检", "verify start／patrol start", "页面支线：逐页核对已发布的提交"),
     ("periodic", "定时", "verify start／patrol start", "定时支线：演示构建、ROM 冒烟等定时重活"),
@@ -60,6 +61,14 @@ def automation(key: str, root: Path | None = None) -> bool:
     if key not in {item[0] for item in AUTOMATION}:
         raise KeyError(f"未登记的自动任务：{key}")
     return bool(_get("automation", key, True, root))
+
+
+def report_only_warning_after(root: Path | None = None) -> int:
+    """简报连续仅报告合入的告警阈值；只提醒，不阻塞提交或重跑检查。"""
+    value = _get("brief", "report_only_warning_after", 5, root)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError("brief.report_only_warning_after 必须为正整数")
+    return value
 
 
 def plan_file(root: Path | None = None) -> str:

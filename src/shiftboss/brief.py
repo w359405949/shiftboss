@@ -12,7 +12,7 @@ from pathlib import Path
 
 import psutil
 
-from shiftboss import config, decisions, doorbell, inbox, phase
+from shiftboss import config, decisions, doorbell, inbox, phase, delivery_progress
 from shiftboss.paths import project_root
 
 
@@ -295,6 +295,7 @@ def main(argv: list[str] | None = None) -> int:
     git_dir = inbox.origin_git_dir(repo)
     rows, ledger, _active, _live = inbox.status_rows(repo, git_dir)
     out = phase_lines(git_dir)
+    out += delivery_progress.summary(repo, git_dir)
     # 待你定始终显示：空时写「无」，用户据此区分「确实没有」与「没显示出来」。
     asks = decisions.pending(repo)
     out.append(f"【待你定】{len(asks)}" if asks else "【待你定】：无")
