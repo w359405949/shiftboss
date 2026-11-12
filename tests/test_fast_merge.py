@@ -338,7 +338,7 @@ class FastMergeAcceptance(unittest.TestCase):
             self.assertIn('## ⚠ 还没做完、但现在没人在做：算不出', result.stdout)
             self.assertIn('origin 尚无 refs/heads/main', result.stdout)
             self.assertIn('probe', result.stdout)  # Rest of the inbox still renders.
-            self.assertIn('进行中' if command == 'list' else '共 1 份在办任务书', result.stdout)
+            self.assertIn('分支进展 1 条' if command == 'list' else '共 1 份在办任务书', result.stdout)
         # A non-repository is a genuine read failure, not the missing-ref case.
         from shiftboss import inbox
         invalid = Path(self.temp.name)/'not-a-repository'; invalid.mkdir()
@@ -352,14 +352,16 @@ class FastMergeAcceptance(unittest.TestCase):
         self.git('remote', 'add', 'origin', str(remote))
         plans = self.repo/'shiftboss/plans'; plans.mkdir(parents=True)
 
-        def task(name, status):
+        def task(name, status, dependency=None):
             (plans/f'{name}.md').write_text(
                 f'| 状态 | `{status}` |\n| 分支 | `codex/{name}` |\n'
-                f'| 你的工作副本 | `{self.repo}` |\n', encoding='utf-8')
+                f'| 你的工作副本 | `{self.repo}` |\n'
+                + (f'| 派发前置 | `{dependency}` |\n' if dependency else ''), encoding='utf-8')
 
         for name, status in [('unfinished', '在办'), ('deliberately-idle', '低频'),
                              ('pushed', '在办')]:
             task(name, status)
+        task('waiting', '待派', dependency='deliberately-idle')
         self.commit('taskbooks'); self.git('push', '-q', 'origin', 'main')
         self.git('push', '-q', 'origin', 'main:codex/unfinished', 'main:codex/deliberately-idle')
         self.git('switch', '-q', '-c', 'codex/pushed')
@@ -391,6 +393,7 @@ class FastMergeAcceptance(unittest.TestCase):
             self.assertIn('`unfinished`', warning)
             self.assertNotIn('`deliberately-idle`', warning)
             self.assertNotIn('`pushed`', warning)
+            self.assertNotIn('`waiting`', warning)
             self.assertIn('在跑 1/3 条，空位 2 条', warning)
         task('unfinished', '已归档')
         self.assertEqual(section('list'), '')

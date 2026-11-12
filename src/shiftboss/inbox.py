@@ -556,11 +556,13 @@ def unattended_warning(repo: Path, git_dir: Path, ledger: dict) -> list[str]:
     """
     pending = None
     unattended = []
-    from shiftboss.taskbook import Taskbook
+    from shiftboss.taskbook import Taskbook, unmet_dependencies
     for book in Taskbook.iter_active(repo):
         meta = book.meta()
         status = meta.get("调度状态", "")
         if status not in ("在办", "待派"):
+            continue
+        if unmet_dependencies(repo, book, "派发前置"):
             continue
         entry = ledger.get(book.name)
         if entry is not None and not entry.get("closed"):
@@ -583,15 +585,11 @@ def unattended_warning(repo: Path, git_dir: Path, ledger: dict) -> list[str]:
     if not unattended:
         return []
     capacity, full = capacity_text(ledger)
-    # **「满载」和「有线空转」可以同时成立**，因为会话关了不等于活做完了。
-    # 这两句并排放着时，令人安心的那句会盖过要人动手的那句，于是空转的线一直空转。
-    # 所以额度满、却仍有没人做的活时，把这个组合直接说出来，不让读的人自己拼。
     if full:
         capacity = (f"{capacity}——但下面这 {len(unattended)} 条没人在做。"
-                    f"额度满不等于都在干活：要么先把某条 `--close` 腾位置，"
-                    f"要么确认它们确实该等")
+                    "按目标与优先级决定后续安排，不为腾额度关闭健康会话")
     lines = ["", f"## ⚠ 还没做完、但现在没人在做的 {len(unattended)} 条", "",
-             f"**{capacity}。** 请现算基线、补齐这一轮的交代后派下一轮；这里只提醒，不自动派活。", ""]
+             f"**{capacity}。** 请确认应续派、等待还是归档；配额只是上限，不必填满，也不为并行拆任务。这里只提醒，不自动派活。", ""]
     lines.extend(f"- `{name}`（`{copy}`）：{status}" for name, status, copy in unattended)
     return lines + [""]
 
