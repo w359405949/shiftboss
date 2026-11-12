@@ -3,7 +3,7 @@
 用户要求每次总结都能直接看到在办任务与门铃状态，用来与后台实际情况对照；由钩子现算现显示，不经派活方转述。
 摘要首行「该你处理」不空时拦下收尾，把该行交回派活方先处理；只在出现新事项时拦（新类别、计数变大或多出名字），
 事项减少或不变不再拦：处理不了的事项与正在逐条消化的事项（如后台逐条派发）不反复拦。
-钩子自身出错时不显示，不挡回复。
+钩子自身出错时明确返回非零，由宿主入口展示失败，不把空输出当成功。
 """
 from __future__ import annotations
 
@@ -81,5 +81,6 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except SystemExit:
         raise
-    except BaseException:
-        raise SystemExit(0)
+    except Exception as exc:
+        print(f"ShiftBoss 简报失败：{type(exc).__name__}: {exc}", file=sys.stderr)
+        raise SystemExit(1)

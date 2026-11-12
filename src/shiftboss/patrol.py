@@ -496,23 +496,26 @@ def claim_rules(remote: Path) -> dict[str, dict]:
     return read_state(state_dir(remote) / "claim-rules.json") or {}
 
 
-def rule_taskbook(remote: Path, reasons: list[str], first: str | None = None) -> str:
+def rule_taskbook(remote: Path, reasons: list[str], first: str | None = None, *, _reads=None) -> str:
     """失败原因只有一种种类、且规则键等于该种类或出现在某条原因原文里时返回负责线。
     归档线在首见之后合并的先认（这红已修，照常走待发布／待复扫／修复无效），否则取在办线；同类内按键长从长到短。
     不给 `first` 即只问规则是否仍在生效。"""
     kinds = {reason.split(":", 1)[0].strip() for reason in reasons}
     if len(kinds) != 1:
         return ""
-    rules = claim_rules(remote)
+    read = _reads or (lambda _key, load: load())
+    rules = read('rules', lambda: claim_rules(remote))
     keys = sorted((key for key in rules if key in kinds or any(key in reason for reason in reasons)), key=len, reverse=True)
     candidates = [rule["taskbook"] for key in keys for rule in [rules[key], *rules[key].get("previous", [])]]
-    infos = {taskbook: owner(remote, taskbook) for taskbook in candidates}
+    infos = {taskbook: read(('owner', taskbook), lambda name=taskbook: owner(remote, name))
+             for taskbook in candidates}
     if first is not None:
         for taskbook in candidates:
             info = infos[taskbook]
             if not info or not info["archived"] or not info["merge"]:
                 continue
-            merged_at = git(remote, "show", "-s", "--format=%cI", info["merge"], check=False).stdout.strip()
+            merged_at = read(('merge-date', info['merge']),
+                             lambda: git(remote, "show", "-s", "--format=%cI", info["merge"], check=False).stdout.strip())
             if merged_at and first < merged_at[:19]:
                 return taskbook
     return next((taskbook for taskbook in candidates if infos[taskbook] and not infos[taskbook]["archived"]), "")
@@ -537,32 +540,35 @@ def claim_reason(remote: Path, reason: str, taskbook: str) -> None:
     print(f"已按原因认领「{reason}」→ {taskbook}（该线归档后失效）")
 
 
-def red_state(remote: Path, item: dict, claimed: dict | None, *, route: str | None = None) -> tuple[str, str]:
+def red_state(remote: Path, item: dict, claimed: dict | None, *, route: str | None = None, _reads=None) -> tuple[str, str]:
     """→ (状态词, 负责线)。只有「无人负责」与「修复无效」要开线；「待发布」等常驻验证发布。"""
+    read = _reads or (lambda _key, load: load())
     if not claimed or claimed.get("first") != item["first"]:
-        taskbook = rule_taskbook(remote, item.get("reasons") or reason_lines(item["log"]), item["first"])
+        taskbook = rule_taskbook(remote, item.get("reasons") or reason_lines(item["log"]), item["first"], _reads=read)
         if not taskbook:
             return "无人负责", ""
         claimed = {"taskbook": taskbook, "first": item["first"]}
     taskbook = claimed["taskbook"]
     from shiftboss import page_followups
-    reviewed = read_state(page_followups.store(remote)) or {}
+    reviewed = read('reviewed', lambda: read_state(page_followups.store(remote)) or {})
     if route is not None and page_followups.matches(reviewed.get(route), item):
         return "已审，待新证据", taskbook
-    info = owner(remote, taskbook)
+    info = read(('owner', taskbook), lambda: owner(remote, taskbook))
     if info is None:
         return "任务书缺失", taskbook
     if not info["archived"]:
         return "在修", taskbook
     if not info["merge"]:
         return "已归档", taskbook
-    scanned = git(remote, "merge-base", "--is-ancestor", info["merge"], item["commit"], check=False).returncode == 0
+    def ancestor(older, newer):
+        return read(('ancestor', older, newer),
+                    lambda: git(remote, "merge-base", "--is-ancestor", older, newer, check=False).returncode == 0)
+    scanned = ancestor(info["merge"], item["commit"])
     if not scanned:
         return "待复扫", taskbook
     # 页面读取已发布的派生物：修复已在所扫提交里、但最近一次发布还不含它时，修复尚未生效，不算无效；
     # 发布已含修复、但所扫提交早于这次发布时，等下一遍复扫。
-    published = (verify.index_of(remote) or {}).get("last_consistent")
-    ancestor = lambda older, newer: git(remote, "merge-base", "--is-ancestor", older, newer, check=False).returncode == 0
+    published = read('published', lambda: (verify.index_of(remote) or {}).get("last_consistent"))
     if not published or not ancestor(info["merge"], published):
         return "待发布", taskbook
     return ("修复无效" if ancestor(published, item["commit"]) else "待复扫"), taskbook
@@ -579,18 +585,22 @@ def page_lines(remote: Path, detail: bool = False) -> list[str]:
     lines = [f"- 页面｜{running}｜第 {state.get('pass', 0)} 遍 "
              f"{state.get('position', 0)}/{state.get('total', '?')}｜main@{(state.get('commit') or '')[:12]}"]
     if state.get("error"):
-        lines.append(f"- 页面出错｜{state['error'][:120]}")
+        lines.append(f"- 页面出错｜{state['error']}")
     claims = read_state(directory / "claims.json") or {}
     groups: dict[tuple[str, str], list[str]] = {}
     reds = sorted(state.get("red", {}).items(), key=lambda pair: pair[1]["first"])
+    # Reuse identical reads only within this render; the next summary reads
+    # fresh ownership/publication. Keep every route and the original verdicts.
+    reads = {}
+    def read(key, load):
+        if key not in reads:
+            reads[key] = load()
+        return reads[key]
     for route, item in reds:
-        groups.setdefault(red_state(remote, item, claims.get(route), route=route), []).append(route)
-    # 摘要只列前几条路由，全量见 `shiftboss patrol status`。
-    shown = 5
+        groups.setdefault(red_state(remote, item, claims.get(route), route=route, _reads=read), []).append(route)
     for (word, taskbook), routes in groups.items():
         names = [route.removeprefix("/?view=") for route in routes]
-        lines.append(f"- 页面红 {len(routes)}｜{word}" + (f"｜{taskbook}" if taskbook else "") + "｜" + "、".join(names[:shown])
-                     + (f" 等 {len(names)} 条" if len(names) > shown else ""))
+        lines.append(f"- 页面红 {len(routes)}｜{word}" + (f"｜{taskbook}" if taskbook else "") + "｜" + "、".join(names))
     if detail:
         for route, item in reds:
             lines.append(f"  {route}｜首见 {item['first'][5:16].replace('T', ' ')}｜{item['log']}")

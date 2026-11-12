@@ -94,3 +94,9 @@ python -m shiftboss.hooks.auto_recover --repo /absolute/project --install-hooks 
 `tests/test_auto_recover_hooks.py` 与 `tests/test_session_failure_recovery.py` 固定验证：事件确实调用恢复、原会话与脏文件保持、完成和用户取消不恢复、身份和目录边界、重复事件与手工入口互斥、失败可见且后续限频重试、主动停机不复活、安装幂等且保留其他 hook。
 
 运行事实保存在控制目录：`auto-recover.json` 记录触发事件、PID、开始、结束与退出码；`auto-recover.log` 保留恢复命令的真实输出，超过 2 MB 轮换上一份。失败同时进入简报。`completed` 只说明本轮恢复命令成功，不证明产品、任务验收或页面通过。
+
+## Stop 简报
+
+Codex Stop 入口使用 `python -B -m shiftboss.hooks.codex_stop --repo <项目> --state-dir <项目hook状态目录>`；已有本地启动器可直接转交该模块，不另留一份简报实现。只处理登记的甲方及其项目目录，同一轮完整简报只显示一次，因待办继续执行时留到最终收尾显示。成功正文不截断；生成超时、非零退出或空/损坏响应必须明确显示失败，不能当作没有待办。`shiftboss-stop-runs.jsonl` 记录收到、投递、完成或失败，完整失败输出保存 `shiftboss-stop-last-error.json`。
+
+页面归属和提交祖先的相同读取只在一次简报内复用，下次重新读取；不跨轮缓存执行状态或用旧快照冒充当前结果，不减少页面、原因或待办。此优化只读取已有结果，不启动页面、工具闸、构建或编译。定向回归见 `tests/test_codex_stop_hook.py`、`tests/test_page_summary_reads.py`。
