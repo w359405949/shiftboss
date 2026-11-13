@@ -1051,29 +1051,22 @@ def producer_first_reason(target: str, outputs_unchanged: bool) -> str | None:
 
 
 def guarded_check_paths() -> list[str]:
-    """检查本身：快速检查运行的脚本、经用户同意登记的测试项、测试目录与基线文件。"""
+    """检查路径与推送守卫复用同一分类。"""
     from shiftboss import config
-    paths = {arg for item in config.fast_commands() for arg in item.get("run", [])
-             if re.search(r"\.(mjs|js|py)$", arg) and "/" in arg}
-    paths |= {entry.split("::", 1)[0] for entry in config.approved_tests() if "/" in entry}
-    paths |= {d.rstrip("/") + "/" for d in config.assertion_dirs()}
-    paths |= set(config.check_paths())
-    return sorted(paths)
+    from shiftboss.permissions import check_paths
+    return check_paths(config.load(REPO))
 
 
 def check_hits(changed: list[str]) -> list[str]:
-    """改动路径中属于检查本身（检查脚本、测试或基线）的部分。"""
-    guarded = guarded_check_paths()
-    return [path for path in changed
-            if any(path == g or (g.endswith("/") and path.startswith(g)) for g in guarded)
-            or re.search(r"(^|/)[^/]*baseline[^/]*\.json$", path)]
+    from shiftboss import config
+    from shiftboss.permissions import check_hits as classify
+    return classify(changed, config.load(REPO))
 
 
 def check_change_reason(target: str, reviewed: bool) -> str | None:
     """分支改了检查本身时拒绝，派活方核对后以 --checks-reviewed 合入。
 
-    合并时跑的是合并后的检查，被改松的检查会用改松的逻辑放行自己；写入范围授予 engine/tools/ 的线
-    （生成器治理诸线）在规则上能改检查脚本与基线，只靠派活方读交回发现不了。
+    合并时跑的是合并后的检查，检查改动须明确核对，不以业务源码开放替代检查授权。
     """
     if reviewed:
         return None
@@ -1095,41 +1088,6 @@ def check_change_reason(target: str, reviewed: bool) -> str | None:
     stat = git("diff", "--stat", f"{base}...{target}", "--", *hits).stdout.rstrip()
     return (f"{target[:12]} 改了检查本身（检查脚本、测试或基线）：\n{stat}\n"
             "核对这些改动是任务书要求的、没有放松既有断言后，加 --checks-reviewed 合入")
-
-
-def merge_scope_reason(target: str) -> str | None:
-    """要合的提交属于声明了写入范围的在办线时，列出它自分叉以来写到范围外的路径并拒绝。"""
-    from shiftboss.taskbook import Taskbook, out_of_scope
-    if git("merge-base", "--is-ancestor", target, "HEAD", check=False).returncode == 0:
-        return None
-    for book in Taskbook.iter_active(REPO):
-        branch = book.meta().get("分支", f"codex/{book.name}")
-        for ref in (f"origin/{branch}", branch):
-            if git("rev-parse", "--verify", "--quiet", ref, check=False).returncode == 0:
-                if git("merge-base", "--is-ancestor", target, ref, check=False).returncode == 0:
-                    # 按自分叉点起的净改动算：经合并带进来的 main（含本地尚未拉取的派生物提交）不算，
-                    # 先写后撤回的也不算。
-                    base = "origin/main" if git("merge-base", "--is-ancestor", "HEAD", "origin/main",
-                                                check=False).returncode == 0 else "HEAD"
-                    changed = sorted({line for line in git("diff", "--name-only", "--no-renames",
-                                                           f"{base}...{target}").stdout.splitlines() if line})
-                    # 三点 diff 在多个共同祖先中任取一个，会把已合入 main 的另一个祖先误算为本线改动。
-                    # 仅在此情形读取 Git 的真实干净合并树；冲突或旧 Git 不支持时保留原拒绝路径。
-                    if len(git("merge-base", "--all", base, target).stdout.splitlines()) > 1:
-                        merged = git("merge-tree", "--write-tree", base, target, check=False)
-                        if merged.returncode == 0:
-                            tree = merged.stdout.splitlines()[0]
-                            changed = sorted(set(git("diff", "--name-only", "--no-renames",
-                                                     base, tree).stdout.splitlines()))
-                    # 合入后内容与 base 相同的路径（经合并 main 带来、或改回原样）不算净改动。
-                    same = set(git("diff", "--name-only", "--no-renames", base, target).stdout.splitlines())
-                    changed = [path for path in changed if path in same]
-                    if outside := out_of_scope(book.name, book.meta(), changed):
-                        return (f"{book.name} 写到了写入范围外的 {len(outside)} 个路径（表头「写入范围」）："
-                                + "、".join(outside[:20]) + ("……" if len(outside) > 20 else ""))
-                    return None
-                break
-    return None
 
 
 def generation_input_reason(target: str, reviewed: bool = False, *, base: str | None = None) -> str | None:
@@ -1474,8 +1432,6 @@ def main(argv: list[str] | None = None) -> int:
             raise MergeError(moving)
         if waiting := merge_dependency_reason(target):
             raise MergeError(waiting)
-        if outside := merge_scope_reason(target):
-            raise MergeError(outside)
         # 交给巡检的合并在其独立副本里执行下方所有守卫；此处先返回，
         # 避免派活方只为得知“等待自动合入”而同步计算整个生成输入闭包。
         if queued := automerge_pending_reason(target, args.manual):

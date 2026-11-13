@@ -92,23 +92,6 @@ def extra_check_list(value) -> list[str]:
     return result
 
 
-def out_of_scope(name: str, meta: dict, paths: list[str]) -> list[str]:
-    """表头声明了写入范围时，改动里落在范围外的路径；未声明则不限。
-
-    范围是目录前缀（以 / 结尾）或 glob；本线自己的任务书目录总在范围内。
-    分领域放代码后，越界写入多半是把别处的功能带回了旧版本，合并与推送都据此拒收。
-    """
-    import fnmatch
-    patterns = dependency_list(meta.get(SCOPE_KEY))
-    if not patterns:
-        return []
-    own = f"{PLANS_DIR}/{name}/"
-    def inside(path: str) -> bool:
-        return path.startswith(own) or any(
-            path.startswith(item) if item.endswith("/") else fnmatch.fnmatchcase(path, item) for item in patterns)
-    return [path for path in paths if not inside(path)]
-
-
 def ignored_paths(gitignore: str, paths: list[str]) -> list[str]:
     """新增路径里被根 `.gitignore` 忽略的：被忽略的目录（如 `out/`）是一次性产物，强行提交会让交回证据进仓库。
 
@@ -616,19 +599,6 @@ def main(argv=None) -> int:
             from shiftboss.workers.codex import EFFORTS
             if pairs[EFFORT_KEY] not in EFFORTS:
                 print(f"{EFFORT_KEY}只能是 {'、'.join(EFFORTS)}（max、ultra 会触发执行方自身的 plan 模式）：{pairs[EFFORT_KEY]}")
-                return 2
-        if SCOPE_KEY in pairs:
-            pairs[SCOPE_KEY] = dependency_list(pairs[SCOPE_KEY])
-            # 推送守卫只认显式写出的受保护目录：父目录（如 engine/）不授予其下的受保护目录写权，
-            # 写成父目录的线做完才在推送时被拒（派活方两次因此让执行方白做一轮）。
-            from shiftboss.config import load
-            protected = load(repo).get("guard", {}).get("protected", [])
-            # 只查受保护目录：冻结的单个文件位于父目录下是常态，父目录范围即「除冻结文件外」，推送守卫照拦冻结文件。
-            implied = [p for p in protected if p.endswith("/") and p not in pairs[SCOPE_KEY]
-                       and any(p.startswith(s) and p != s for s in pairs[SCOPE_KEY])]
-            if implied:
-                print(f"写入范围的父目录不授予受保护目录写权（推送守卫只认显式写出的）：要改就把 "
-                      f"{'、'.join(implied)} 也写进去；不改则从父目录换成具体子目录")
                 return 2
         for key in DEPENDENCY_KEYS:
             if key in pairs:

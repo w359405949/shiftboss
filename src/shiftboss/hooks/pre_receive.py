@@ -1,11 +1,6 @@
-"""推送守卫：拒收与 main 冲突的执行方分支（README 2.3 第 1 条），以及越权改动受保护路径的分支。
+"""推送守卫：业务代码开放，检查代码按main任务书「改检查」授权。
 
-受保护路径由 main 上的 `shiftboss.toml` `[guard] protected` 给出；可改它们的线是 main 上任务书表头「写入范围」明确写出该受保护目录的（`[guard] owners` 存量名单照认）。
-
-交回顶部执行状态为「停下」的照收：卡点报告须能立即推送（4.2），解不了的冲突按 2.3 第 4 条标待议交回。
-未经用户同意的新增测试项（DONE.md 第 2 节第 7 条，口径见 `shiftboss.testguard`）拒收。
-推送照收时回显认领给该线、仍红的常驻验证票据（README 4.1 第 10 条），在跑的线由此得知。
-守卫自身出错时放行。
+同时保留实际合并冲突、新增测试审批、禁止写法与产物提交守卫。
 """
 
 import subprocess
@@ -18,6 +13,7 @@ from shiftboss import config
 from shiftboss.paths import PLANS_DIR
 from shiftboss.state import read_state
 from shiftboss.taskbook import execution_status
+from shiftboss.permissions import CHECKS_KEY, check_hits, check_paths
 
 
 def git(*args: str) -> subprocess.CompletedProcess:
@@ -36,12 +32,6 @@ def main_config() -> dict:
     """main 上的 `shiftboss.toml`；读不到时为空。"""
     shown = git("show", "refs/heads/main:shiftboss.toml")
     return {} if shown.returncode else tomllib.loads(shown.stdout)
-
-
-def guard_rules(settings: dict) -> tuple[list[str], set[str]]:
-    """受保护路径前缀与可改它们的任务书名；没配时不设防。"""
-    guard = settings.get("guard", {})
-    return list(guard.get("protected", [])), set(guard.get("owners", []))
 
 
 def red_notice(name: str, settings: dict) -> None:
@@ -63,85 +53,8 @@ def red_notice(name: str, settings: dict) -> None:
         print(f"  [{item['ticket']}] {item['id'][:160]}\n    筛查：{state / 'findings' / (item['ticket'] + '.md')}", file=sys.stderr)
 
 
-def granted_prefixes(name: str, protected: list[str]) -> list[str]:
-    """main 上任务书表头「写入范围」里明确写出的受保护目录（或其子目录）：即授予该线写权。
-
-    写权跟着任务书走，不改 `shiftboss.toml`：该文件是生成输入，每改一次都触发大批生成阶段重跑。
-    范围须是受保护文件本身，或受保护目录下的目录与文件，才算授权；写更宽的目录（如 `engine/`）不授予其下受保护路径。
-    """
-    import json
-    from shiftboss.taskbook import SCOPE_KEY, dependency_list
-    shown = git("show", f"refs/heads/main:{PLANS_DIR}/{name}/meta.json")
-    if shown.returncode:
-        return []
-    scope = dependency_list(json.loads(shown.stdout).get(SCOPE_KEY))
-    return [item for item in scope if any(
-        item == prefix or (prefix.endswith("/") and item.startswith(prefix)) for prefix in protected)]
-
-
-def trespass(new: str, protected: list[str], granted: list[str] = ()) -> list[str]:
-    """分支自与 main 分叉以来改动的、未经表头授权的受保护路径。"""
-    done = git("diff", "--name-only", "--no-renames", "refs/heads/main..." + new)
-    if done.returncode:
-        return []
-    return [path for path in done.stdout.splitlines()
-            if any(path == prefix or (prefix.endswith("/") and path.startswith(prefix)) for prefix in protected)
-            and not any(path == item or (item.endswith("/") and path.startswith(item)) for item in granted)]
-
-
-def scope_trespass(name: str, new: str) -> list[str]:
-    """分支自与 main 分叉以来写到 main 上任务书表头「写入范围」之外的路径。"""
-    import json
-    from shiftboss.taskbook import out_of_scope
-    shown = git("show", f"refs/heads/main:{PLANS_DIR}/{name}/meta.json")
-    if shown.returncode:
-        return []
-    # 按自分叉点起的净改动算：经合并带进来的 main 提交不算，先写后撤回（如误提交的证据）也不算。
-    done = git("diff", "--name-only", "--no-renames", "refs/heads/main..." + new)
-    if done.returncode:
-        return []
-    return out_of_scope(name, json.loads(shown.stdout), sorted({line for line in done.stdout.splitlines() if line}))
-
-
-CHECKS_KEY = "改检查"
-LAYOUT_KEY = "改布局"
-
-
-def layout_trespass(name: str, new: str, settings: dict) -> list[str]:
-    """表头未声明「改布局：是」的线改到的页面布局基线（`[guard] layout_paths`）。
-
-    布局退化靠几何指纹基线拦：只有明确改页面布局的线才能更新基线（用户定 D45），其余线改基线即拒收。
-    """
-    import json
-    paths = settings.get("guard", {}).get("layout_paths", [])
-    if not paths:
-        return []
-    shown = git("show", f"refs/heads/main:{PLANS_DIR}/{name}/meta.json")
-    if shown.returncode or json.loads(shown.stdout).get(LAYOUT_KEY) == "是":
-        return []
-    done = git("diff", "--name-only", "--no-renames", "refs/heads/main..." + new)
-    if done.returncode:
-        return []
-    return [path for path in done.stdout.splitlines()
-            if path and any(path == p or (p.endswith("/") and path.startswith(p)) for p in paths)]
-
-
-def check_paths(settings: dict) -> list[str]:
-    """检查本身：快速检查运行的脚本、经用户同意登记的测试项、测试目录；基线文件另按文件名认定。"""
-    merge = settings.get("merge", {})
-    paths = {arg for item in merge.get("fast_commands", []) for arg in item.get("run", [])
-             if re.search(r"\.(mjs|js|py)$", arg) and "/" in arg}
-    paths |= {entry.split("::", 1)[0] for entry in settings.get("verify", {}).get("approved_tests", []) if "/" in entry}
-    paths |= {d.rstrip("/") + "/" for d in merge.get("assertion_dirs", [])}
-    return sorted(paths)
-
-
 def check_trespass(name: str, new: str, settings: dict) -> list[str]:
-    """表头未声明「改检查：是」的线改到的检查本身（检查脚本、测试与基线）。
-
-    写入范围常以目录授权（如生成器线授予 engine/tools/），目录里也放着检查脚本与基线；
-    派活时就分清本线是否改检查，改错了在推送时拒收，不等合并（用户提议）。
-    """
+    """检查授权只认main元数据，不认分支自授或旧路径清单。"""
     import json
     shown = git("show", f"refs/heads/main:{PLANS_DIR}/{name}/meta.json")
     if shown.returncode or json.loads(shown.stdout).get(CHECKS_KEY) == "是":
@@ -149,12 +62,7 @@ def check_trespass(name: str, new: str, settings: dict) -> list[str]:
     done = git("diff", "--name-only", "--no-renames", "refs/heads/main..." + new)
     if done.returncode:
         return []
-    guarded = check_paths(settings)
-    layout = settings.get("guard", {}).get("layout_paths", [])
-    return [path for path in done.stdout.splitlines() if path
-            and not any(path == p or (p.endswith("/") and path.startswith(p)) for p in layout) and (
-        any(path == g or (g.endswith("/") and path.startswith(g)) for g in guarded)
-        or re.search(r"(^|/)[^/]*baseline[^/]*\.json$", path))]
+    return check_hits(done.stdout.splitlines(), settings)
 
 
 def ignored_additions(new: str) -> list[str]:
@@ -202,7 +110,6 @@ def forbidden(new: str, settings: dict) -> list[str]:
 
 def main() -> int:
     settings = main_config()
-    protected, owners = guard_rules(settings)
     rejected = []
     trespassed = False
     for row in sys.stdin.read().splitlines():
@@ -211,25 +118,6 @@ def main() -> int:
             continue
         _old, new, ref = parts
         name = ref[len("refs/heads/codex/"):]
-        if protected and name not in owners and (paths := trespass(new, protected, granted_prefixes(name, protected))):
-            print(f"拒收 {ref}：改动了受保护路径，表头「写入范围」未授予；缺测试或构建改动写进交回，由派活方转交。", file=sys.stderr)
-            for path in paths:
-                print(f"  {path}", file=sys.stderr)
-            trespassed = True
-            continue
-        if outside := scope_trespass(name, new):
-            print(f"拒收 {ref}：写到了任务书表头「写入范围」之外，撤回这些改动或请派活方调整范围：", file=sys.stderr)
-            for path in outside[:40]:
-                print(f"  {path}", file=sys.stderr)
-            trespassed = True
-            continue
-        if layout := layout_trespass(name, new, settings):
-            print(f"拒收 {ref}：改动了页面布局基线，任务书表头未声明「改布局：是」；"
-                  "布局指纹不符即退化，修正页面而非改基线；确为布局改动的写进交回由派活方定：", file=sys.stderr)
-            for path in layout[:40]:
-                print(f"  {path}", file=sys.stderr)
-            trespassed = True
-            continue
         if touched := check_trespass(name, new, settings):
             print(f"拒收 {ref}：改动了检查本身（检查脚本、测试或基线），任务书表头未声明「改检查：是」；"
                   "撤回这些改动，确需改检查的写进交回由派活方定：", file=sys.stderr)

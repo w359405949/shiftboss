@@ -723,36 +723,12 @@ def copies_by_preference(executor: str) -> list[Path]:
     return inside + [p for p in existing if p not in inside]
 
 
-def granted_protected(book) -> list[str]:
-    """写入范围里落在受保护目录（`shiftboss.toml` `[guard]`）下的项。"""
-    from shiftboss.config import load
-    protected = load(REPO).get("guard", {}).get("protected", [])
-    scope = book.meta().get("写入范围") or []
-    return [s for s in scope if any(s == p or s.startswith(p) for p in protected)]
-
-
 def contract_scope_reason(book) -> str | None:
-    """合同「要求」行点名的受保护路径须在表头写入范围内；引用别线提交不许写 git merge。
-
-    派活方多次在要求里点名生成器、检查、基线或布局指纹，却漏改写入范围，推送守卫拒收白跑一轮；
-    写「git merge <提交>」则会把那条线未验收的整段历史带进本分支。只读引用的路径写在背景里。
-    """
-    from shiftboss.config import load
+    """仅保留未接受历史的引用规则；业务路径不作派发前置分析。"""
     contract = book.contract_text()
     if found := re.findall(r"git merge\s+`?[0-9a-f]{7,40}", contract):
         return (f"派活拒绝：合同写了「{found[0]}」；引用别的在办线的提交只写 cherry-pick，"
                 "merge 会带入那条线的整段历史")
-    guard = load(REPO).get("guard", {})
-    protected = [*guard.get("protected", []), *guard.get("layout_paths", [])]
-    scope = book.meta().get("写入范围") or []
-    required = "\n".join(line for line in contract.splitlines() if line.lstrip().startswith("- 要求"))
-    paths = sorted({p.rstrip("/.，。；") for p in re.findall(r"`((?:engine|game|docs)/[^`\s]+|regen\.json)`", required)})
-    granted = [s.rstrip("/") for s in scope]
-    missing = [p for p in paths if any(p == g.rstrip("/") or p.startswith(g) for g in protected)
-               and not any(p == s or p.startswith(s + "/") for s in granted)]
-    if missing:
-        return (f"派活拒绝：合同要求点名的受保护路径不在表头写入范围：{'、'.join(missing)}；"
-                f"要改就补进写入范围（shiftboss taskbook set {book.name} --field 写入范围=…），只读引用就移到背景")
     return None
 
 
@@ -774,12 +750,9 @@ def write_note(book, message: str, executor: str = "codex") -> None:
             "而它手上有现场、有更细的检查，甲方只有二手资料。\n"
             "把那几段删掉，改写成「要成立什么」与「算不算做到了」；\n"
             "字节表、地址、发布数据的形状是事实，用 ```text 或不带标签的围栏照写不误。")
-    # 写入范围含受保护目录即授予测试与构建线写权（DONE.md 第 2 节首段）。执行方曾多次把自己读成
-    # 不许写检查的开发线而停下，所以由派活在交代末尾写明，不靠它自己对照 [guard]。
-    if granted := granted_protected(book):
+    if book.meta().get("改检查") == "是":
         message = (message.rstrip() + "\n\n" if message.strip() else "") + (
-            f"写入范围含受保护路径 {'、'.join(f'`{p}`' for p in granted)}：按 DONE.md 第 2 节首段，"
-            "本线对这些路径持测试与构建线写权，可按合同修改。")
+            "本线已声明改检查：是，可按合同修改检查脚本、测试及基线；业务代码不按文件分配独占写权。")
     n = round_number(book)
     book.append_round(f"{'#' * level} 第 {n} 轮派出时的交代（{today()}，{executor}）", message)
     if book.is_dir:
@@ -833,8 +806,8 @@ def publish_note(book, message: str, executor: str = "codex", copy: str = "") ->
 
 def publish_locked(book, message: str, executor: str, copy: str) -> None:
     base = publication_base()
-    # 首轮不带交代时也要写一条：写权说明只经轮次记录送达，缺了执行方会把自己读成不许改检查与生成器的开发线。
-    if message or granted_protected(book):
+    # 无交代的检查线仍需发表权限类别。
+    if message or book.meta().get("改检查") == "是":
         write_note(book, message, executor)
     if copy:
         book.set_meta(你的工作副本=copy)
@@ -1061,16 +1034,6 @@ def _main(argv: list[str] | None = None) -> int:
             kind, words = wrong[0]
             print(f"合同判据含「{'／'.join(w for w in words if w in contract)}」，属 `{kind}` 子类型的活"
                   f"（TEMPLATE.md 子类型表），开发线不能做；改：shiftboss taskbook set {args.taskbook} --field 子类型={kind}")
-            return 2
-
-    # 「改检查」为是却不授予任何检查脚本或基线的写权，执行方只能停下交回（派活方两次漏改范围）。
-    if not args.close and cells.get("改检查") == "是":
-        from shiftboss.merge import guarded_check_paths
-        scope = [s.rstrip("/") + "/" if not Path(s).suffix else s for s in book.meta().get("写入范围", [])] if book else []
-        if not any("baseline" in s for s in scope) and not any(
-                g == s or g.startswith(s) or s.startswith(g) for g in guarded_check_paths() for s in scope):
-            print(f"表头「改检查」为是，但写入范围 {scope} 不含任何检查脚本（{'、'.join(guarded_check_paths())}）；"
-                  f"改：shiftboss taskbook set {args.taskbook} --field 写入范围=<含检查脚本所在目录>")
             return 2
 
     # 性能判据只写要消除的不合理写法、算法或架构，不写耗时门槛（TEMPLATE 第 15 条）：
