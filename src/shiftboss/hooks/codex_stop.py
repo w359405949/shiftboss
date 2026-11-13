@@ -1,4 +1,4 @@
-"""Render the registered dispatcher's complete Stop brief exactly once per turn.
+"""Return the registered dispatcher's complete brief on each final Stop.
 
 The project-local launcher delegates here. Hook failures are visible and retain
 their complete output; they never masquerade as an empty successful brief.
@@ -26,22 +26,18 @@ def deliver(directory: Path, payload: dict, response: dict) -> dict:
     response = dict(response)
     text = response["systemMessage"]
     snapshot = directory / "shiftboss-stop-brief.json"
-    previous = json.loads(snapshot.read_text(encoding="utf-8")) if snapshot.exists() else {}
-    turn_id = payload.get("turn_id")
-    already_displayed = (bool(turn_id)
-                         and previous.get("session_id") == payload.get("session_id")
-                         and previous.get("turn_id") == turn_id
-                         and previous.get("brief_displayed", False))
-    display = not already_displayed and response.get("decision") != "block"
-    if not display:
+    # There is no host acknowledgement that systemMessage reached the UI.
+    # A repeated Stop must return the current brief, even for the same turn.
+    returned = response.get("decision") != "block"
+    if not returned:
         response.pop("systemMessage", None)
-    entry = {"session_id": payload.get("session_id"), "turn_id": turn_id,
+    entry = {"session_id": payload.get("session_id"), "turn_id": payload.get("turn_id"),
              "at": datetime.now(timezone.utc).isoformat(), "brief": text,
-             "brief_displayed": already_displayed or display}
+             "brief_returned": returned}
     temporary = snapshot.with_suffix(".tmp")
     temporary.write_text(json.dumps(entry, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(snapshot)
-    record(directory, payload, "delivery", displayed=display,
+    record(directory, payload, "delivery", returned=returned,
            stop_hook_active=bool(payload.get("stop_hook_active")))
     return response
 

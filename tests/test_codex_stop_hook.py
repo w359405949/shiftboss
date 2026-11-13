@@ -31,13 +31,17 @@ class CodexStopHook(unittest.TestCase):
     def result(self, response):
         return subprocess.CompletedProcess([], 0, json.dumps(response, ensure_ascii=False), '')
 
-    def test_complete_brief_is_not_truncated_and_shows_once_per_turn(self):
+    def test_complete_brief_is_returned_on_same_turn_retry_without_ui_ack(self):
         text = '【时间】现在\n' + '完整信息中文\n' * 5000
         result = self.result({'systemMessage': text})
         first, _ = self.run_hook(result)
         self.assertEqual(first['systemMessage'], text)
+        # Returning JSON is not acknowledgement that the UI displayed it.
         second, _ = self.run_hook(result)
-        self.assertNotIn('systemMessage', second)
+        self.assertEqual(second['systemMessage'], text)
+        updated = text + '本轮最新状态\n'
+        retry, _ = self.run_hook(self.result({'systemMessage': updated}))
+        self.assertEqual(retry['systemMessage'], updated)
         next_turn, _ = self.run_hook(result, payload={**self.payload, 'turn_id': 'turn-two'})
         self.assertEqual(next_turn['systemMessage'], text)
         self.assertEqual(json.loads((self.directory / 'shiftboss-stop-brief.json').read_text())['brief'], text)
@@ -45,7 +49,7 @@ class CodexStopHook(unittest.TestCase):
     def test_block_keeps_full_snapshot_until_final_stop(self):
         response, _ = self.run_hook(self.result({'systemMessage': '完整简报', 'decision': 'block', 'reason': '处理事项'}))
         self.assertEqual(response, {'decision': 'block', 'reason': '处理事项'})
-        self.assertFalse(json.loads((self.directory / 'shiftboss-stop-brief.json').read_text())['brief_displayed'])
+        self.assertFalse(json.loads((self.directory / 'shiftboss-stop-brief.json').read_text())['brief_returned'])
         final, _ = self.run_hook(self.result({'systemMessage': '完整简报'}))
         self.assertEqual(final['systemMessage'], '完整简报')
 
